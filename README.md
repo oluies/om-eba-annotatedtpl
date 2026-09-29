@@ -102,10 +102,10 @@ one. `import_to_openmetadata.py` creates it if missing. To do it by hand:
 AUTH="Authorization: Bearer $OM_JWT_TOKEN"
 
 # 1. create the glossary (the CSV import only creates terms inside it)
-curl -X POST "$OM_HOST/v1/glossaries" -H "$AUTH" -H 'Content-Type: application/json' -d '{"name": "PAY 4.2", "displayName": "PAY 4.2 (FRPPAY 4.2)"}'
+curl -X POST "$OM_HOST/v1/glossaries" -H "$AUTH" -H 'Content-Type: application/json' -d '{"name": "PAY_4_2", "displayName": "PAY 4.2 (FRPPAY 4.2)", "description": "..."}'
 
 # 2. dry run the terms, read the response, then re-run with dryRun=false
-curl -X PUT "$OM_HOST/v1/glossaries/name/PAY%204.2/import?dryRun=true" -H "$AUTH" -H 'Content-Type: text/plain' --data-binary @06-openmetadata-glossary.csv
+curl -X PUT "$OM_HOST/v1/glossaries/name/PAY_4_2/import?dryRun=true" -H "$AUTH" -H 'Content-Type: text/plain' --data-binary @06-openmetadata-glossary.csv
 ```
 
 The header is taken from `json/data/glossary/glossaryCsvDocumentation.json` in the
@@ -118,6 +118,11 @@ run with `dryRun=true` first and read the response.
 
 An empty `parent` puts a term directly under the glossary. `glossaryStatus` takes
 `Draft`, `Approved` or `Deprecated`.
+
+The glossary is named `PAY_4_2`, not `PAY 4.2`, and carries the readable form in its
+displayName. OpenMetadata quotes any FQN part containing a dot, so a glossary called
+`PAY 4.2` is addressed as `"PAY 4.2".Domains`; a parent column written `PAY 4.2.Domains`
+then matches nothing and every child row fails with `Entity ... not found`.
 
 Terms are created as `Draft` except the three grouping terms. Promote them once a domain
 expert has checked the definitions: the descriptions here are structural - they say where

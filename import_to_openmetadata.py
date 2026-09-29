@@ -43,7 +43,10 @@ class Settings(BaseSettings):
 
     host: str = "http://localhost:8585/api"
     jwt_token: str
-    glossary: str = "PAY 4.2"
+    # No dot in the NAME: OpenMetadata quotes FQN parts containing one, so a glossary
+    # called "PAY 4.2" is addressed as "PAY 4.2".Term and the CSV parent column stops
+    # matching. The readable form is the displayName.
+    glossary: str = "PAY_4_2"
     ca_bundle: str | None = None
 
 

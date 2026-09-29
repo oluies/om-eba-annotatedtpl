@@ -561,7 +561,17 @@ def write_csvs() -> None:
         "extension",
     ]
     WIDTH = len(header)
-    GLOSSARY = "PAY 4.2"
+    # The glossary NAME carries no dot. OpenMetadata's FullyQualifiedName.quoteName wraps
+    # any part containing a dot in double quotes, so a glossary called "PAY 4.2" is stored
+    # as "PAY 4.2".Domains while a parent column written as PAY 4.2.Domains does not match
+    # it - the import then fails with "Entity PAY 4.2.Domains ... not found". The readable
+    # form lives in displayName instead.
+    GLOSSARY = "PAY_4_2"
+
+    def fqn(*parts: str) -> str:
+        """Join FQN parts the way OpenMetadata does, quoting the ones that need it."""
+        quoted = [f'"{p.replace(chr(34), chr(34) * 2)}"' if ("." in p or '"' in p) else p for p in parts]
+        return ".".join(quoted)
 
     def row(parent, name, display, desc, synonyms="", related="", status="Draft"):
         out = [parent, name, display, desc, synonyms, related, "", "", "", "", status]
@@ -575,7 +585,7 @@ def write_csvs() -> None:
         dom_name = DOMAIN_NAMES.get(dom, dom)
         rows.append(
             row(
-                f"{GLOSSARY}.Domains",
+                fqn(GLOSSARY, "Domains"),
                 dom_name,
                 dom_name,
                 f"Domain `{dom}` of PAY 4.2: the {len(members)} allowed values for the dimensions that draw on it.",
@@ -592,18 +602,18 @@ def write_csvs() -> None:
                 + (f"Appears in template(s): {', '.join(tpls)}. " if tpls else "")
                 + f"Label transcribed verbatim from the layout; for a definition see {AUTHORITY}."
             )
-            rows.append(row(f"{GLOSSARY}.Domains.{dom_name}", label, label, desc, synonyms=code))
+            rows.append(row(fqn(GLOSSARY, "Domains", dom_name), label, label, desc, synonyms=code))
 
     for code, d in sorted(VOCAB["dimensions"].items(), key=lambda kv: kv[1]["label"]):
         dom_name = DOMAIN_NAMES.get(d["domain"], d["domain"])
         rows.append(
             row(
-                f"{GLOSSARY}.Dimensions",
+                fqn(GLOSSARY, "Dimensions"),
                 d["label"],
                 d["label"],
                 f"Dimension `{code}` of PAY 4.2. Draws its values from domain `{d['domain']}` ({dom_name}).",
                 synonyms=code,
-                related=f"{GLOSSARY}.Domains.{dom_name}",
+                related=fqn(GLOSSARY, "Domains", dom_name),
             )
         )
 
@@ -611,7 +621,7 @@ def write_csvs() -> None:
         units = sorted({d["unit"] for d in DPS if d["metric"] == label})
         rows.append(
             row(
-                f"{GLOSSARY}.Metrics",
+                fqn(GLOSSARY, "Metrics"),
                 label,
                 label,
                 f"Metric `{code}` of PAY 4.2. Unit: {', '.join(units) or 'n/a'}. Non-negative.",
@@ -736,10 +746,10 @@ one. `import_to_openmetadata.py` creates it if missing. To do it by hand:
 AUTH="Authorization: Bearer $OM_JWT_TOKEN"
 
 # 1. create the glossary (the CSV import only creates terms inside it)
-curl -X POST "$OM_HOST/v1/glossaries" -H "$AUTH" -H 'Content-Type: application/json' -d '{{"name": "PAY 4.2", "displayName": "PAY 4.2 (FRPPAY 4.2)"}}'
+curl -X POST "$OM_HOST/v1/glossaries" -H "$AUTH" -H 'Content-Type: application/json' -d '{{"name": "PAY_4_2", "displayName": "PAY 4.2 (FRPPAY 4.2)", "description": "..."}}'
 
 # 2. dry run the terms, read the response, then re-run with dryRun=false
-curl -X PUT "$OM_HOST/v1/glossaries/name/PAY%204.2/import?dryRun=true" -H "$AUTH" -H 'Content-Type: text/plain' --data-binary @06-openmetadata-glossary.csv
+curl -X PUT "$OM_HOST/v1/glossaries/name/PAY_4_2/import?dryRun=true" -H "$AUTH" -H 'Content-Type: text/plain' --data-binary @06-openmetadata-glossary.csv
 ```
 
 The header is taken from `json/data/glossary/glossaryCsvDocumentation.json` in the
@@ -752,6 +762,11 @@ run with `dryRun=true` first and read the response.
 
 An empty `parent` puts a term directly under the glossary. `glossaryStatus` takes
 `Draft`, `Approved` or `Deprecated`.
+
+The glossary is named `PAY_4_2`, not `PAY 4.2`, and carries the readable form in its
+displayName. OpenMetadata quotes any FQN part containing a dot, so a glossary called
+`PAY 4.2` is addressed as `"PAY 4.2".Domains`; a parent column written `PAY 4.2.Domains`
+then matches nothing and every child row fails with `Entity ... not found`.
 
 Terms are created as `Draft` except the three grouping terms. Promote them once a domain
 expert has checked the definitions: the descriptions here are structural - they say where
