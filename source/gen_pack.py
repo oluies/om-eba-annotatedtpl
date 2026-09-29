@@ -718,7 +718,8 @@ def write_csvs() -> None:
 
 write_framework()
 write_agent_instructions()
-n = write_csvs()
+GLOSSARY_TERMS = write_csvs()
+n = GLOSSARY_TERMS
 print(f"framework + agent instructions written; glossary CSV rows: {n}")
 
 
@@ -730,9 +731,37 @@ The EBA **PAY 4.2 (FRPPAY 4.2)** annotated table layout — payment and fraud re
 under PSD2 — normalised from a 55-sheet spreadsheet into documentation an agent can use
 when describing tables, columns and glossary terms in OpenMetadata.
 
-**1830 datapoints, 14 templates, 14 dimensions over 4 domains, 54 controlled values.**
+**{len(DPS)} datapoints · {len(TEMPLATES)} templates · {len(VOCAB["dimensions"])} dimensions over
+{len(VOCAB["domains"])} domains · {sum(len(m) for m in VOCAB["domains"].values())} controlled values.**
 
 ![The pack loaded as Knowledge Pages in OpenMetadata](docs/knowledge-pages.png)
+
+## What is in here
+
+| File | What it is | Read it when |
+|---|---|---|
+| `01-framework.md` | What PAY 4.2 is, the {len(TEMPLATES)} templates, the shape of the data | You need orientation |
+| `02-agent-instructions.md` | How to decode an identifier and write a description | **Start here** |
+| `03-glossary/domains-and-members.md` | The {sum(len(m) for m in VOCAB["domains"].values())} controlled values across {len(VOCAB["domains"])} domains | You need the vocabulary |
+| `03-glossary/dimensions.md` | The {len(VOCAB["dimensions"])} breakdown axes | You need to know which axis a value belongs to |
+| `03-glossary/metrics.md` | The {len(VOCAB["properties"])} metrics and their units | You need the unit |
+| `04-tables/<TEMPLATE>.md` | One per template: variants, columns, rows, datapoint ids | You are describing a table |
+| `05-datapoints.csv` | All {len(DPS)} datapoints, keyed by `table_name` and `column_name` | You have a column to describe |
+| `06-openmetadata-glossary.csv` | Bulk glossary import, {GLOSSARY_TERMS} terms | You are loading the glossary |
+
+## Warehouse column names
+
+One table per template — `Y_01.01` lands in `Y_01_01` — with datapoint columns named
+`Y0101_r0010_c0010`: template with its separators stripped, then row and column code.
+`05-datapoints.csv` is keyed by both, as its first two fields.
+
+Everything that does not match `^[A-Za-z][0-9]{{4}}_r[0-9]{{4}}_c[0-9]{{4}}$` is warehouse
+context (`Period_SK`, `Company_BK`, `Taxonomy_Name`, ...) and has no framework meaning.
+
+A column name carries no variant, so 302 of the 320 distinct names map to six datapoints
+each — two metrics across three geographies — and the 18 from the `.02` loss templates
+map to one. The variant is a property of the table, not the column.
+`02-agent-instructions.md` has the worked example.
 
 ## Reproducing
 
@@ -751,17 +780,25 @@ extraction uses openpyxl — a plain cell reader gives you the values but not th
 ## Importing into OpenMetadata
 
 ```bash
-export OM_HOST=http://localhost:8585/api OM_JWT_TOKEN=...
-uv run import_to_openmetadata.py --dry-run     # print the page tree, contact nothing
-uv run import_to_openmetadata.py               # write 22 Knowledge Pages, dry run the glossary
-uv run import_to_openmetadata.py --commit      # ... and write the glossary terms
+export OM_HOST=https://your-host/api      # the /api suffix is required
+export OM_JWT_TOKEN=...
+uv run import_to_openmetadata.py --dry-run
+uv run import_to_openmetadata.py --pages-only
+uv run import_to_openmetadata.py --glossary-only --commit
 ```
 
-`OM_HOST` must include `/api` - OpenMetadata serves its API under `/api/v1/...`. The
-script preflights the base URL, the server version and the Knowledge Page endpoint, and
-fails with a diagnosis instead of an opaque 405.
+| Flag | Effect |
+|---|---|
+| `--dry-run` | Print the page tree and stop. Contacts nothing. |
+| `--pages-only` | Knowledge Pages only, skip the glossary |
+| `--glossary-only` | Glossary only, skip the pages |
+| `--commit` | Actually write the glossary terms. Without it, only the first pass is dry run. |
+| `--reset-glossary` | **Destructive.** Hard-delete the glossary and its terms first. |
+| `--verify` | Compare the database listing with the search-index listing, then stop |
+| `--no-reindex` | Do not reindex after writing pages |
 
-Pages land under an `EBA` root, so a later framework can be loaded beside this one:
+Markdown goes to Knowledge Pages (`PUT /v1/contextCenter/pages`) under an `EBA` root, so
+a later framework can be loaded beside this one:
 
     EBA
     └── PAY 4.2 (FRPPAY 4.2)
@@ -770,153 +807,95 @@ Pages land under an `EBA` root, so a later framework can be loaded beside this o
         ├── Glossary      (dimensions, domains and members, metrics)
         └── Templates     (one page per template)
 
-### A re-run does not change the page
+There is no bulk file upload and no document library — `docStore/document.json` is a
+generic JSON payload store the UI uses for persona layouts.
 
-`EntityRepository.updateDescription` reverts a PUT that would replace a non-empty
-description when the caller is a **bot**, and answers 200 as if it had worked. So a
-second import from a bot token leaves the old text in place while every line prints a
-tick. The importer detects this and falls back to PATCH, which the server's own comment
-names as the way round it; if that is refused too, the run ends by naming the pages that
-kept their old body.
+![An article page](docs/agent-instructions-page.png)
 
-If you see that, use a user token rather than a bot one, or delete the pages and let
-them be created fresh.
+### The glossary import runs in passes
 
-### Why the markdown is written the way it is
+The CSV holds glossary **terms**; it does not create the glossary, so the importer does
+that first. Then it sends the terms one level at a time.
 
-Descriptions are sanitised on write by an OWASP HTML policy, which HTML-escapes as it
-goes: a plus sign comes back as a numeric character reference, and a greater-than sign
-as `&gt;`. ASCII tree connectors and markdown blockquotes therefore do not survive. The
-generator draws with box characters, uses fenced blocks instead of quotes, and fails the
-build if a plus sign reaches any page.
+A term's parent is resolved against the database, and a dry run persists nothing, so a
+term whose parent sits in the same file can never validate — on a freshly created, empty
+glossary the import answers `Entity not found: glossaryTerm <uuid>`, naming a reference
+that only ever existed in memory. The passes are therefore:
 
-### Pages written but missing from the list
-
-The UI lists pages through `/search/hierarchy`, which reads the search index, while the
-write goes to the database. Indexing is asynchronous, so a fresh import can be invisible
-in every list view. The importer reindexes the ids it wrote; `--verify` shows the two
-counts side by side, and `--no-reindex` skips the call.
-
-    uv run import_to_openmetadata.py --verify
-
-## Licence
-
-The code is MIT (see `LICENSE`). The PAY 4.2 content - codes, labels, datapoint ids,
-structure and the source workbook - is EBA material, reproduced under the EBA legal
-notice, which authorises reproduction provided the source is acknowledged. That is a
-permission with an attribution condition, not a named open licence, and the MIT licence
-does not extend to it. See `NOTICE`.
-
-Not affiliated with or endorsed by the EBA.
-
-Markdown goes to Knowledge Pages (`PUT /v1/contextCenter/pages`); the vocabulary goes to
-the glossary CSV import. There is no bulk file upload and no document library —
-`docStore/document.json` is a generic JSON payload store the UI uses for persona layouts.
-
-`--commit` always dry runs first and refuses to write if that comes back with anything
-other than `success` and zero rejected rows.
-
----
-
-# PAY 4.2 documentation pack for OpenMetadata
-
-Reference material for describing assets derived from the EBA **PAY 4.2 (FRPPAY 4.2)**
-payment and fraud reporting framework under PSD2, written to be read by an agent that
-writes table, column and glossary descriptions.
-
-Generated from `{SOURCE}`.
-
-## Files
-
-| File | What it is | Read it when |
+| Pass | Terms | |
 |---|---|---|
-| `01-framework.md` | What PAY 4.2 is, the {len(TEMPLATES)} templates, the shape of the data | You need orientation |
-| `02-agent-instructions.md` | How to decode an identifier and write a description | **Start here** |
-| `03-glossary/domains-and-members.md` | The {sum(len(m) for m in VOCAB["domains"].values())} controlled values across {len(VOCAB["domains"])} domains | You need the vocabulary |
-| `03-glossary/dimensions.md` | The {len(VOCAB["dimensions"])} breakdown axes | You need to know which axis a value belongs to |
-| `03-glossary/metrics.md` | The {len(VOCAB["properties"])} metrics and their units | You need the unit |
-| `04-tables/<TEMPLATE>.md` | One per template: variants, columns, rows, datapoint ids, ready-to-paste descriptions | You are describing a table |
-| `05-datapoints.csv` | All {len(DPS)} datapoints, keyed by warehouse `column_name` and datapoint id | You have a column to describe |
-| `06-openmetadata-glossary.csv` | Bulk glossary import | You are loading the glossary |
+| 1 | 3 | `Domains`, `Dimensions`, `Metrics` |
+| 2 | 21 | the domains, dimensions and metrics themselves |
+| 3 | 54 | the members |
+| 4 | 14 | the rows carrying `relatedTerms`, which point from a dimension to a domain on the same level |
 
-## Loading the glossary
+Each pass is dry run and then committed before the next begins, so **without `--commit`
+only the first pass can be checked** — the later ones have nothing to resolve against yet.
 
-The CSV holds glossary **terms only** - it populates a glossary, it does not create
-one. `import_to_openmetadata.py` creates it if missing. To do it by hand:
+Terms are created as `Draft` except the three grouping terms. Promote them once a domain
+expert has checked the definitions: the descriptions here are structural, they say where
+a term is used, not what it legally means.
+
+### Doing it by hand
 
 ```bash
 AUTH="Authorization: Bearer $OM_JWT_TOKEN"
 
-# 1. create the glossary (the CSV import only creates terms inside it)
 curl -X POST "$OM_HOST/v1/glossaries" -H "$AUTH" -H 'Content-Type: application/json' -d '{{"name": "PAY_4_2", "displayName": "PAY 4.2 (FRPPAY 4.2)", "description": "..."}}'
 
-# 2. dry run the terms, read the response, then re-run with dryRun=false
 curl -X PUT "$OM_HOST/v1/glossaries/name/PAY_4_2/import?dryRun=true" -H "$AUTH" -H 'Content-Type: text/plain' --data-binary @06-openmetadata-glossary.csv
 ```
 
-The header is taken from `json/data/glossary/glossaryCsvDocumentation.json` in the
-OpenMetadata source: `parent, name*, displayName, description, synonyms, relatedTerms,
-references, tags, reviewers, owner, glossaryStatus, color, iconURL, domains, extension`.
-
-**Check that against your own instance** - the columns change between versions.
-`GET /v1/glossaries/documentation/csv` returns the header your server expects. Always
-run with `dryRun=true` first and read the response.
-
-An empty `parent` puts a term directly under the glossary. `glossaryStatus` takes
-`Draft`, `Approved` or `Deprecated`.
-
-### `Entity not found: glossaryTerm <uuid>`
-
-A half-finished import can leave the glossary pointing at a term that no longer
-resolves - the import looks terms up excluding soft-deleted ones, so a soft-deleted
-term reads as missing and the whole import 404s. Clear it out and rebuild:
-
-    uv run import_to_openmetadata.py --glossary-only --reset-glossary
-
-That hard-deletes the glossary and everything under it, so only use it on a glossary
-this pack owns.
+The second call imports the whole file at once and **will fail** for the reason above;
+split it by level first, or use the script. The header comes from
+`json/data/glossary/glossaryCsvDocumentation.json` in the OpenMetadata source:
+`parent, name*, displayName, description, synonyms, relatedTerms, references, tags,
+reviewers, owner, glossaryStatus, color, iconURL, domains, extension`. Check it against
+your own instance — `GET /v1/glossaries/documentation/csv` returns what your server
+expects. An empty `parent` puts a term directly under the glossary.
 
 The glossary is named `PAY_4_2`, not `PAY 4.2`, and carries the readable form in its
 displayName. OpenMetadata quotes any FQN part containing a dot, so a glossary called
 `PAY 4.2` is addressed as `"PAY 4.2".Domains`; a parent column written `PAY 4.2.Domains`
 then matches nothing and every child row fails with `Entity ... not found`.
 
-### The import runs in passes
-
-A term's parent is resolved against the database, and a dry run persists nothing, so a
-term whose parent sits in the same file can never validate - on a freshly created, empty
-glossary the import answers `Entity not found: glossaryTerm <uuid>`, naming a reference
-that only ever existed in memory. The importer therefore sends one level at a time:
-3 grouping terms, then 21 domains, dimensions and metrics, then 54 members, and finally
-the 14 rows carrying `relatedTerms`, which point from a dimension to a domain on the
-same level.
-
-Each pass is dry run and then committed before the next begins, so without `--commit`
-only the first pass can be checked - the later ones have nothing to resolve against yet.
-
-Terms are created as `Draft` except the three grouping terms. Promote them once a domain
-expert has checked the definitions: the descriptions here are structural - they say where
-a term is used, not what it legally means.
-
 `Payment related parties` appears twice, once as a domain and once as a dimension. That
-is deliberate - dimension `qKKL` carries the same label as its domain `qRP` - and the two
+is deliberate — dimension `qKKL` carries the same label as its domain `qRP` — and the two
 have different parents, so the FQNs do not collide.
 
-## Warehouse column names
+## Troubleshooting
 
-One table per template - `Y_01.01` lands in `Y_01_01` - with datapoint columns named
-`Y0101_r0010_c0010`: template with its separators stripped, then row and column code.
-`05-datapoints.csv` is keyed by both, as its first two fields.
+### A re-run does not change a page
 
-Everything that does not match `^[A-Za-z][0-9]{4}_r[0-9]{4}_c[0-9]{4}$` is warehouse context
-(`Period_SK`, `Company_BK`, `Taxonomy_Name`, ...) and has no framework meaning.
+`EntityRepository.updateDescription` reverts a PUT that would replace a non-empty
+description when the caller is a **bot**, and answers 200 as if it had worked. A second
+import from a bot token therefore leaves the old text in place while every line prints a
+tick. The importer detects this and falls back to PATCH, which the server's own comment
+names as the way round it; if that is refused too, the run ends by naming the pages that
+kept their old body. Use a user token, or delete the pages so they are created fresh.
 
-The name carries no variant, so 302 of the 320 distinct names map to six datapoints each
-(two metrics x three geographies); the 18 from the `.02` loss templates map to one. The
-variant is a property of the table, not the column. `02-agent-instructions.md` has the
-worked example.
+### Pages written but missing from the list
 
-![An article page](docs/agent-instructions-page.png)
+The UI lists pages through `/search/hierarchy`, which reads the search index, while the
+write goes to the database. Indexing is asynchronous, so a fresh import can be invisible
+in every list view. The importer reindexes the ids it wrote; `--verify` shows the two
+counts side by side.
+
+### The diagrams or quotes look wrong
+
+Descriptions are sanitised on write by an OWASP HTML policy, which HTML-escapes as it
+goes: a plus sign comes back as a numeric character reference, and a greater-than sign as
+`&gt;`. ASCII tree connectors and markdown blockquotes do not survive. The generator
+draws with box characters, uses fenced blocks instead of quotes, and fails the build if a
+plus sign reaches any page.
+
+## Licence
+
+The code is MIT (see `LICENSE`). The PAY 4.2 content — codes, labels, datapoint ids,
+structure and the source workbook — is EBA material, reproduced under the EBA legal
+notice, which authorises reproduction provided the source is acknowledged. That is a
+permission with an attribution condition, not a named open licence, and the MIT licence
+does not extend to it. See `NOTICE`. Not affiliated with or endorsed by the EBA.
 
 ## The one thing to get right
 
