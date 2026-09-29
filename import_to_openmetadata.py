@@ -454,38 +454,81 @@ def reset_glossary(client: httpx.Client, glossary: str) -> None:
             raise SystemExit(f"  Deleting {glossary!r} failed: {response.status_code}\n  {response.text[:500]}")
 
 
+def term_level(row: dict[str, str]) -> int:
+    """Depth of a term: 1 directly under the glossary, then one per dot in its parent."""
+    parent = (row.get("parent") or "").strip()
+    return 1 if not parent else parent.count(".") + 1
+
+
+def csv_passes(csv_text: str) -> list[tuple[str, str]]:
+    """Split the term CSV into passes that can each be imported on its own.
+
+    The import resolves a parent against the database, and a dry run persists nothing, so
+    a term whose parent is created in the same file can never validate - the reference
+    exists only in memory and the lookup fails with `Entity not found: glossaryTerm
+    <uuid>` on a freshly created, empty glossary. One level per pass means every parent
+    is already there.
+
+    `relatedTerms` are held back to a final pass for the same reason: on this pack they
+    point from a dimension to a domain, and both sit on level 2.
+    """
+    reader = csv.DictReader(io.StringIO(csv_text))
+    fields = list(reader.fieldnames or [])
+    rows = list(reader)
+
+    def render(subset: list[dict[str, str]], *, keep_related: bool) -> str:
+        out = io.StringIO()
+        writer = csv.DictWriter(out, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(subset if keep_related else [row | {"relatedTerms": ""} for row in subset])
+        return out.getvalue()
+
+    passes = [
+        (f"level {level} ({len(subset)} terms)", render(subset, keep_related=False))
+        for level in sorted({term_level(row) for row in rows})
+        if (subset := [row for row in rows if term_level(row) == level])
+    ]
+    if related := [row for row in rows if (row.get("relatedTerms") or "").strip()]:
+        passes.append((f"related terms ({len(related)})", render(related, keep_related=True)))
+    return passes
+
+
 def run_glossary_import(
     client: httpx.Client, glossary: str, csv_path: Path, *, commit: bool, reset: bool = False
 ) -> None:
-    """Always dry run first; only write when that came back clean and --commit was given."""
-    csv_text = csv_path.read_text(encoding="utf-8")
+    """Import the terms one level at a time, dry running each pass before writing it."""
+    passes = csv_passes(csv_path.read_text(encoding="utf-8"))
 
-    print(f"\nGlossary dry run ({glossary}):")
+    print(f"\nGlossary import ({glossary}), {len(passes)} passes:")
     if reset:
         reset_glossary(client, glossary)
     ensure_glossary(client, glossary)
-    dry = import_glossary(client, glossary, csv_text, dry_run=True)
-    print(f"  {dry.summary()}")
-    for line in dry.failures():
-        print(f"  ✗ {line}")
 
-    match (commit, dry.clean):
-        case (False, _):
-            print("\n  Nothing written. Re-run with --commit once the dry run looks right.")
-        case (True, False):
+    for label, chunk in passes:
+        print(f"\n  {label}")
+        dry = import_glossary(client, glossary, chunk, dry_run=True)
+        print(f"    dry run: {dry.summary()}")
+        for line in dry.failures():
+            print(f"    ✗ {line}")
+
+        if not commit:
+            print("    Not written. Later passes cannot be validated until this one is committed.")
+            return
+        if not dry.clean:
             raise SystemExit(
                 f"\n  Refusing to commit: the dry run reported status={dry.status} with "
-                f"{dry.number_of_rows_failed} rejected row(s). Fix the CSV and try again."
+                f"{dry.number_of_rows_failed} rejected row(s). Nothing further was written."
             )
-        case (True, True):
-            print("\n  Dry run clean, committing:")
-            result = import_glossary(client, glossary, csv_text, dry_run=False)
-            print(f"  {result.summary()}")
-            for line in result.failures():
-                print(f"  ✗ {line}")
-            if not result.clean:
-                raise SystemExit("\n  The commit did not come back clean. Check the glossary in the UI.")
-            print(f"  {result.number_of_rows_passed} terms written to glossary {glossary!r}.")
+
+        result = import_glossary(client, glossary, chunk, dry_run=False)
+        print(f"    committed: {result.summary()}")
+        for line in result.failures():
+            print(f"    ✗ {line}")
+        if not result.clean:
+            raise SystemExit("\n  The commit did not come back clean. Check the glossary in the UI.")
+
+    if commit:
+        print(f"\n  Glossary {glossary!r} loaded.")
 
 
 def main() -> None:

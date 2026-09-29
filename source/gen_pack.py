@@ -881,6 +881,19 @@ displayName. OpenMetadata quotes any FQN part containing a dot, so a glossary ca
 `PAY 4.2` is addressed as `"PAY 4.2".Domains`; a parent column written `PAY 4.2.Domains`
 then matches nothing and every child row fails with `Entity ... not found`.
 
+### The import runs in passes
+
+A term's parent is resolved against the database, and a dry run persists nothing, so a
+term whose parent sits in the same file can never validate - on a freshly created, empty
+glossary the import answers `Entity not found: glossaryTerm <uuid>`, naming a reference
+that only ever existed in memory. The importer therefore sends one level at a time:
+3 grouping terms, then 21 domains, dimensions and metrics, then 54 members, and finally
+the 14 rows carrying `relatedTerms`, which point from a dimension to a domain on the
+same level.
+
+Each pass is dry run and then committed before the next begins, so without `--commit`
+only the first pass can be checked - the later ones have nothing to resolve against yet.
+
 Terms are created as `Draft` except the three grouping terms. Promote them once a domain
 expert has checked the definitions: the descriptions here are structural - they say where
 a term is used, not what it legally means.
