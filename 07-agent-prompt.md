@@ -10,6 +10,16 @@ When describing a table or column from an EBA reporting framework - table names 
 Y_01_01 or A_00_01, columns like Y0101_r0010_c0010 - first read the article "How to
 describe PAY 4.2 assets in OpenMetadata" (find_context) and follow it.
 
+A datapoint column splits as:
+
+  ^(?P<prefix>[A-Za-z]{1,})(?P<major>[0-9]{2})(?P<minor>[0-9]{2})_r(?P<row>[0-9]{4})_c(?P<col>[0-9]{4})$
+
+major and minor are two digits each, row and col are four. The same identity has three
+forms and only the punctuation differs: column prefix Y0101, template code Y_01.01,
+table name Y_01_01. Build the template code from the column name and read the Context
+Center page with that title - that page holds the row and column grid with the datapoint
+ids. You do not have 05-datapoints.csv; it is what describe_table.py uses.
+
 These hold regardless of what you find:
 
 - Never create a table or column. Ingestion owns them. If the target does not exist,
@@ -25,8 +35,9 @@ These hold regardless of what you find:
 - A column name carries no variant. If the metric and geography cannot be established
   from the table, describe what holds across all six variants and say the variant is
   set by the table.
-- Columns that do not match ^[A-Za-z][0-9]{4}_r[0-9]{4}_c[0-9]{4}$ are warehouse
-  context. They have no framework meaning - do not describe them from the framework.
+- Columns that do not match that pattern are warehouse context - Period_SK,
+  Company_BK, Taxonomy_Name and the like. They have no framework meaning, so do not
+  describe them from the framework.
 ```
 
 ## Where to put it instead

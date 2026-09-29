@@ -27,8 +27,38 @@ from its row or column code alone.
 One table per template, named for the template with its dot as an underscore, so
 `Y_01.01` lands in `Y_01_01`. A row is one submission. Columns come in two kinds.
 
-**Datapoint columns** match `^[A-Za-z][0-9]4_r[0-9]4_c[0-9]4$` - for example
-`Y0101_r0010_c0010`. These are the reported figures and the ones this pack describes.
+**Datapoint columns** match this, with named groups so nothing has to be inferred:
+
+```text
+^(?P<prefix>[A-Za-z]{1,})(?P<major>[0-9]{2})(?P<minor>[0-9]{2})_r(?P<row>[0-9]{4})_c(?P<col>[0-9]{4})$
+```
+
+Note the group widths: `major` and `minor` are **two** digits each, `row` and `col` are
+four. For `Y0101_r0010_c0010` that gives `prefix=Y`, `major=01`, `minor=01`, `row=0010`,
+`col=0010`.
+
+The same identity appears in three forms. The only difference between them is
+punctuation, and the column prefix is the one that has none:
+
+| Form | Example | Shape |
+|---|---|---|
+| Column prefix | `Y0101` | prefix, major, minor, run together, no separator |
+| Template code | `Y_01.01` | underscore after the prefix, dot between major and minor |
+| Table name | `Y_01_01` | underscore after the prefix, underscore between major and minor |
+
+So going from a column name to either of the others is substitution, not inference:
+
+| From | To | Rule |
+|---|---|---|
+| `Y0101` | `Y_01.01` | join prefix, major, minor with underscore then dot |
+| `Y0101` | `Y_01_01` | join prefix, major, minor with underscore then underscore |
+| `A0001` | `A_00.01`, `A_00_01` | the same, nothing about it is PAY-specific |
+
+Verified against all 320 distinct column names in this framework: no exceptions. The
+prefix is a single letter in everything seen so far, but the pattern allows more so a
+framework that uses two is not silently rejected.
+
+These are the reported figures and the ones this pack describes.
 They are typically stored as `varchar`, so an amount or a count is text in the database
 even though the framework types it as monetary or numeric. Describe what the value is;
 leave the storage type to whatever profiles the column.
@@ -93,15 +123,23 @@ dimension members. That common part is what a description can always state.
 
 ## Lookup procedure
 
-1. If you have a warehouse column name, match it against `column_name` in
-   `05-datapoints.csv`. Six rows come back for a `.01` template; establish the variant
-   from the table, then use that row.
-2. If you have a datapoint id, look it up in `05-datapoints.csv`. That row gives you the
-   template, the variant, the metric, the geography, the row and column labels and every
-   dimension member. Write the description from those fields and stop.
-3. If you have a template code, read `04-tables/<TEMPLATE>.md`.
-4. If you have a label but no code, search `05-datapoints.csv` on `row_label`. Labels
-   repeat across templates, so confirm against the template before you commit.
+**Where the data is.** If you are reading this through MCP you do **not** have
+`05-datapoints.csv` - it lives in the repository and is what `describe_table.py` uses.
+What you have is this article and one page per template, loaded into the Context Center
+under `EBA` then `PAY 4.2 (FRPPAY 4.2)` then `Templates`. Each template page carries its
+full row and column grid with the datapoint ids. That is your lookup table.
+
+1. Split the column name with the pattern above and build the template code:
+   `Y0101_r0010_c0010` gives template `Y_01.01`, row `0010`, column `0010`.
+2. Read the page titled with that template code — `find_context` on `Y_01.01`, or
+   `get_entity_details` if you already hold its FQN. Do not search for the column name
+   itself; it appears nowhere in the pages.
+3. In that page, find the row whose code is `row` and read the datapoint id under the
+   column whose code is `col`. The row's label and dimension members are on the same
+   line, and the column's fixed members are in the Columns table above it.
+4. Establish the variant from the table, not the column. The page's Variants table lists
+   all six with their metric and geography. If the table does not tell you which one it
+   holds, describe what is true of all six and say so.
 5. If you cannot resolve an identifier, say so in the description rather than guessing.
    A wrong regulatory description is worse than a missing one.
 
