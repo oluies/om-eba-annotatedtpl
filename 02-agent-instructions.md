@@ -129,6 +129,73 @@ Rules:
   column is named after a datapoint but contains something else, that is a data quality
   finding, not a description.
 
+## Writing the description back over MCP
+
+Three tools, in this order. Tool names and argument shapes are as the OpenMetadata MCP
+server defines them.
+
+**1. Find the table.** `search_metadata` or `semantic_search`. Use the
+`fullyQualifiedName` and `entityType` from the result verbatim - do not assemble an FQN
+yourself.
+
+**2. Read it.** `get_entity_details` with `entityType: "table"` and that `fqn`. Never
+patch a field you have not read: the patch paths are positional and the current values
+decide whether you are adding or replacing.
+
+A PAY 4.2 table is wide - up to about a hundred columns once the context columns are
+counted - so the response paginates. When it sets `columnsTruncated`, keep calling with
+`columnOffset` set to the previous `columnOffset` plus `returnedColumns` until
+`hasMoreColumns` is false.
+
+**3. Patch it.** `patch_entity` with `entityType`, `fqn` and `patch`, an RFC 6902 array
+as a JSON string:
+
+```json
+[
+  {"op": "replace", "path": "/description", "value": "Credit transfers transactions..."},
+  {"op": "replace", "path": "/columns/20/description", "value": "Amount of credit..."},
+  {"op": "replace", "path": "/columns/21/description", "value": "Amount of credit..."}
+]
+```
+
+Use `replace` when the field came back in step 2 and `add` when it did not. Put every
+column of one table in a single patch rather than one call per column.
+
+### The index is absolute, the page is not
+
+`/columns/N/description` counts from the start of the **whole** columns array, but a
+paginated response starts at `columnOffset`. The index to patch is
+`columnOffset` plus the position in the returned array. Getting this wrong writes a correct
+description onto the wrong column, and nothing will complain.
+
+Re-read the table after patching a wide one and confirm the text landed where you meant.
+
+### Linking the glossary
+
+A column can carry the matching glossary term instead of repeating its definition:
+
+```json
+[{"op": "add", "path": "/columns/20/tags/-", "value": {
+    "tagFQN": "PAY_4_2.Domains.Payment transaction characteristics.Credit transfers",
+    "source": "Glossary", "labelType": "Manual", "state": "Suggested"}}]
+```
+
+All four of `tagFQN`, `source`, `labelType` and `state` are required. `Suggested` leaves
+it for a stewards' review; use `Confirmed` only when you resolved the term from a
+datapoint id rather than from a label match.
+
+### What not to do
+
+- **Never `create_entity` for a table or column.** They come from ingestion. If the
+  target does not exist, say so - do not create it.
+- **Do not patch a context column** against this pack. `Period_SK` has no framework
+  meaning.
+- **Confirm before writing.** Writes take effect immediately and overwrite what is
+  there. A table that already has a human-written description is not yours to replace
+  without being asked.
+- **Do not guess the variant.** If the table does not establish the metric and geography,
+  describe what holds across all six and say the variant is set by the table.
+
 ## Glossary and ontology
 
 `06-openmetadata-glossary.csv` is a bulk import of the controlled vocabulary: one parent
