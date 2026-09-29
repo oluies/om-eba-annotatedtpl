@@ -1,0 +1,25 @@
+[project]
+name = "om-eba-annotatedtpl"
+version = "0.1.0"
+description = "EBA PAY 4.2 annotated table layout, normalised into OpenMetadata documentation"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx",
+    "openpyxl",
+    "pydantic>=2",
+    "pydantic-settings",
+]
+
+[dependency-groups]
+dev = ["ruff"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# gen_pack.py embeds the generated Markdown as string literals. Wrapping those lines
+# would wrap the output, so the limit applies to the code around them, not to prose.
+"source/gen_pack.py" = ["E501"]

@@ -1,0 +1,9 @@
+# Intermediate artefacts of the extraction pipeline; regenerate with source/extract_dpm.py.
+source/dpm.json
+source/vocab.json
+
+.venv/
+__pycache__/
+.ruff_cache/
+*.pyc
+.env

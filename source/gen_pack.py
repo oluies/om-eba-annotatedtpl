@@ -1,0 +1,730 @@
+"""Generate the OpenMetadata documentation pack from the normalised DPM data."""
+
+import csv
+import json
+import re
+from collections import defaultdict
+from pathlib import Path
+
+# Paths resolve against the repository root so the pipeline reproduces from a fresh
+# clone: `uv run source/extract_dpm.py && uv run source/vocab.py && uv run source/gen_pack.py`.
+REPO = Path(__file__).resolve().parent.parent
+SOURCE = REPO / "source"
+XLSX = SOURCE / "20260106_Annotated_Table_Layout__PAY_4.2_PSD_FRPPAY_4.2.xlsx"
+DPM_JSON = SOURCE / "dpm.json"
+VOCAB_JSON = SOURCE / "vocab.json"
+
+OUT = REPO
+DATA = json.loads(DPM_JSON.read_text(encoding="utf-8"))
+VOCAB = json.loads(VOCAB_JSON.read_text(encoding="utf-8"))
+
+LEADING_CODE = re.compile(r"^(?P<code>\d{4})\s+(?P<label>.+)$")
+PAIR_RE = re.compile(r"^\((?P<a>[A-Za-z0-9]+):(?P<b>[A-Za-z0-9]+)\)\s*(?P<label>.+)$")
+SOURCE = "EBA PAY 4.2 (FRPPAY 4.2) annotated table layout, 2026-01-06"
+AUTHORITY = "EBA Guidelines on fraud reporting under PSD2 (EBA/GL/2018/05, as amended)"
+
+
+def strip_code(label: str) -> tuple[str, str]:
+    m = LEADING_CODE.match(label)
+    return (m["code"], m["label"]) if m else ("", label)
+
+
+def member_label(text: str) -> str:
+    return text.split(") ", 1)[-1] if ") " in text else text
+
+
+def by_template() -> dict[str, list[dict]]:
+    groups = defaultdict(list)
+    for s in DATA["sheets"]:
+        groups[s["sheet"].split("(")[0]].append(s)
+    return groups
+
+
+def dim_label(code: str) -> str:
+    return VOCAB["dimensions"].get(code, {}).get("label", code)
+
+
+# --------------------------------------------------------------------------------------
+# Flat datapoint table - the lookup every other file points at
+# --------------------------------------------------------------------------------------
+
+
+def datapoint_rows() -> list[dict]:
+    out = []
+    for s in DATA["sheets"]:
+        template = s["sheet"].split("(")[0]
+        variant = s["sheet"][len(template) + 1 : -1] if "(" in s["sheet"] else ""
+        metric = member_label(s["main_property"]) or next(
+            (
+                member_label(f["per_column"].get(next(iter(f["per_column"]), ""), ""))
+                for f in s["footer"]
+                if f["name"] == "Main Property"
+            ),
+            "",
+        )
+        geography = "; ".join(member_label(z["member"]) for z in s["z_axis"]) or "not broken down"
+        col_members = {}
+        for f in s["footer"]:
+            if f["name"] == "Main Property":
+                continue
+            for col_code, val in f["per_column"].items():
+                col_members.setdefault(col_code, []).append(f"{member_label(f['name'])}={member_label(val)}")
+        for r in s["rows"]:
+            row_code, row_label = (r["code"], r["label"]) if r["code"] else strip_code(r["label"])
+            row_dims = "; ".join(f"{m.get('dimension') or dim_label(m['dim'])}={m['label']}" for m in r["members"])
+            for col_code, dp in r["datapoints"].items():
+                col = next((c for c in s["columns"] if c["code"] == col_code), {})
+                out.append(
+                    {
+                        "datapoint_id": dp["id"],
+                        "template": template,
+                        "template_name": s["title"].split(" - ", 1)[-1],
+                        "variant": variant,
+                        "variant_label": s["sheet_label"],
+                        "metric": metric,
+                        "geography": geography,
+                        "row_code": row_code,
+                        "row_label": row_label,
+                        "column_code": col_code,
+                        "column_label": col.get("label", ""),
+                        "row_dimensions": row_dims,
+                        "column_dimensions": "; ".join(col_members.get(col_code, [])),
+                        "unit": dp["unit"],
+                        "sign": dp["sign"],
+                    }
+                )
+    return out
+
+
+DPS = datapoint_rows()
+
+
+# --------------------------------------------------------------------------------------
+# Writers
+# --------------------------------------------------------------------------------------
+
+TEMPLATES = by_template()
+DP_BY_TEMPLATE = defaultdict(list)
+for d in DPS:
+    DP_BY_TEMPLATE[d["template"]].append(d)
+
+NOTE = (
+    "> **Definitions.** The labels below are transcribed verbatim from the annotated table\n"
+    "> layout. They are the framework's own wording, not a legal definition. Where a precise\n"
+    f"> definition is needed, cite {AUTHORITY} rather than paraphrasing this file.\n"
+)
+
+
+def write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text.rstrip() + "\n", encoding="utf-8")
+
+
+def md_table(headers: list[str], rows: list[list[str]]) -> str:
+    def esc(cell: object) -> str:
+        return str(cell).replace("|", "\\|").replace("\n", " ")
+
+    out = ["| " + " | ".join(headers) + " |", "|" + "|".join(["---"] * len(headers)) + "|"]
+    out += ["| " + " | ".join(esc(c) for c in r) + " |" for r in rows]
+    return "\n".join(out)
+
+
+def write_tables() -> None:
+    for template, sheets in TEMPLATES.items():
+        base = sheets[0]
+        name = base["title"].split(" - ", 1)[-1]
+        dps = DP_BY_TEMPLATE[template]
+        kind = "losses" if template.endswith(".02") else "transactions"
+
+        variants = md_table(
+            ["Sheet", "Variant", "Metric", "Geography", "Datapoints"],
+            [
+                [
+                    s["sheet"],
+                    s["sheet_label"] or "—",
+                    member_label(s["main_property"]) or "see footer",
+                    "; ".join(member_label(z["member"]) for z in s["z_axis"]) or "not broken down",
+                    str(sum(len(r["datapoints"]) for r in s["rows"])),
+                ]
+                for s in sheets
+            ],
+        )
+
+        col_members = defaultdict(list)
+        for f in base["footer"]:
+            if f["name"] == "Main Property":
+                continue
+            for cc, val in f["per_column"].items():
+                col_members[cc].append(f"{member_label(f['name'])} = {member_label(val)}")
+        columns = md_table(
+            ["Code", "Label", "Fixed dimension members"],
+            [[c["code"], c["label"], "; ".join(col_members.get(c["code"], [])) or "—"] for c in base["columns"]],
+        )
+
+        col_codes = [c["code"] for c in base["columns"]]
+        row_rows = []
+        for r in base["rows"]:
+            code, label = (r["code"], r["label"]) if r["code"] else strip_code(r["label"])
+            dims = "; ".join(f"{m.get('dimension', m['dim'])} = {m['label']}" for m in r["members"]) or "—"
+            ids = [r["datapoints"].get(cc, {}).get("id", "—") for cc in col_codes]
+            row_rows.append([code or "—", label, dims, *ids])
+        rows_tbl = md_table(["Row", "Label", "Dimension members", *[f"DP col {c}" for c in col_codes]], row_rows)
+
+        geo = (
+            "domestic, cross-border within the EEA, and cross-border outside the EEA"
+            if len(sheets) > 1
+            else "no geographical breakdown"
+        )
+        metrics = sorted({member_label(s["main_property"]) for s in sheets if s["main_property"]})
+        metric_txt = " and ".join(metrics) if metrics else "amount of losses"
+
+        body = f"""# {template} — {name}
+
+| | |
+|---|---|
+| **Framework** | PAY 4.2 (FRPPAY 4.2), payment and fraud reporting under PSD2 |
+| **Template** | `{template}` |
+| **Reports** | {kind} |
+| **Variants** | {len(sheets)} |
+| **Datapoints** | {len(dps)} |
+| **Source** | {SOURCE} |
+
+{NOTE}
+
+## What this template reports
+
+`{template}` reports **{name.lower()}**, measured as {metric_txt}, split across {geo}.
+Each reported figure is one datapoint identified by a stable numeric id; the id is the
+only identifier that is unique on its own, because row and column codes repeat across
+templates and variants.
+
+## Variants
+
+Each variant is one sheet in the layout. Together the variant, the row code and the
+column code pin down a single datapoint.
+
+{variants}
+
+## Columns
+
+{columns}
+
+## Rows
+
+Rows without a code are section headers in the layout; they carry no datapoint. A row's
+dimension members are cumulative with the column's and the variant's.
+
+{rows_tbl}
+
+## Suggested OpenMetadata description for the table
+
+> {name}, template `{template}` of the EBA PAY 4.2 (FRPPAY 4.2) framework for payment and
+> fraud reporting under PSD2. Reports {kind} as {metric_txt}, across {len(sheets)} variant(s)
+> covering {geo}. Contains {len(dps)} datapoints. Row and column codes follow the annotated
+> table layout; the numeric datapoint id is the stable key. Source: {SOURCE}.
+
+## Suggested column descriptions
+
+""" + "\n".join(
+            f"- **`{c['code']}` {c['label']}** — {c['label']} in `{template}`."
+            + (
+                f" Fixed dimension members: {'; '.join(col_members.get(c['code'], []))}."
+                if col_members.get(c["code"])
+                else ""
+            )
+            for c in base["columns"]
+        )
+        write(OUT / "04-tables" / f"{template}.md", body)
+
+
+write_tables()
+print(f"wrote {len(TEMPLATES)} table files")
+
+
+# --------------------------------------------------------------------------------------
+# Glossary
+# --------------------------------------------------------------------------------------
+
+DOMAIN_NAMES = {
+    "qPY": "Payment transaction characteristics",
+    "qET": "Fraud event types",
+    "qRP": "Payment related parties",
+    "GA": "Geographical breakdown",
+}
+
+member_usage: dict[tuple[str, str], set[str]] = defaultdict(set)
+member_dimension: dict[tuple[str, str], set[str]] = defaultdict(set)
+for s in DATA["sheets"]:
+    template = s["sheet"].split("(")[0]
+    for r in s["rows"]:
+        for m in r["members"]:
+            member_usage[(m["dim"], m["member"])].add(template)
+            if m.get("dimension"):
+                member_dimension[(m["dim"], m["member"])].add(m["dimension"])
+    # z-axis members (the sheet variant) and footer members (the column axis) carry their
+    # dimension in the adjacent label, not in the member cell.
+    for z in s["z_axis"]:
+        d = z["dim"]
+        if d and d.get("member"):
+            member_usage[(d["dim"], d["member"])].add(template)
+            member_dimension[(d["dim"], d["member"])].add(member_label(z["name"]))
+    for f in s["footer"]:
+        if f["name"] == "Main Property":
+            continue
+        for val in f["per_column"].values():
+            m = PAIR_RE.match(val)
+            if m:
+                member_usage[(m["a"], m["b"])].add(template)
+                member_dimension[(m["a"], m["b"])].add(member_label(f["name"]))
+
+
+def write_glossary() -> None:
+    lines = [
+        "# PAY 4.2 glossary — domains and members",
+        "",
+        f"Controlled vocabulary of the EBA PAY 4.2 (FRPPAY 4.2) framework, transcribed from\n{SOURCE}.",
+        "",
+        "A **domain** is a set of allowed values. A **dimension** is an axis that draws its",
+        "values from one domain — several dimensions share a domain, which is why a member code",
+        "alone does not tell you which dimension it belongs to. The member's position in the",
+        "layout does.",
+        "",
+        NOTE,
+    ]
+    for dom, members in sorted(VOCAB["domains"].items()):
+        dims = sorted(c for c, d in VOCAB["dimensions"].items() if d["domain"] == dom)
+        lines += [
+            f"\n## Domain `{dom}` — {DOMAIN_NAMES.get(dom, dom)}",
+            "",
+            f"{len(members)} members, used by {len(dims)} dimension(s): "
+            + ", ".join(f"`{c}` {VOCAB['dimensions'][c]['label']}" for c in dims),
+            "",
+            md_table(
+                ["Member", "Label", "Used as dimension", "Templates"],
+                [
+                    [
+                        f"`{code}`",
+                        label,
+                        "; ".join(sorted(member_dimension.get((dom, code), set()))) or "—",
+                        ", ".join(sorted(member_usage.get((dom, code), set()))) or "—",
+                    ]
+                    for code, label in sorted(members.items(), key=lambda kv: kv[1])
+                ],
+            ),
+        ]
+    write(OUT / "03-glossary" / "domains-and-members.md", "\n".join(lines))
+
+    # Members actually observed on each dimension - NOT the domain size, which is shared
+    # by every dimension drawing on that domain and would read as 31 across the board.
+    used_by_dim: dict[str, set[str]] = defaultdict(set)
+    for (_dom, code), dim_labels in member_dimension.items():
+        for dl in dim_labels:
+            used_by_dim[dl].add(code)
+
+    dim_rows = [
+        [
+            f"`{c}`",
+            d["label"],
+            f"`{d['domain']}`",
+            DOMAIN_NAMES.get(d["domain"], ""),
+            str(len(used_by_dim.get(d["label"], set()))) or "0",
+            str(len(VOCAB["domains"].get(d["domain"], {}))),
+        ]
+        for c, d in sorted(VOCAB["dimensions"].items(), key=lambda kv: (kv[1]["domain"], kv[1]["label"]))
+    ]
+    write(
+        OUT / "03-glossary" / "dimensions.md",
+        "\n".join(
+            [
+                "# PAY 4.2 glossary — dimensions",
+                "",
+                f"The {len(VOCAB['dimensions'])} axes a datapoint can be broken down by. Each draws its allowed",
+                "values from one domain; see `domains-and-members.md` for the values themselves.",
+                "",
+                NOTE,
+                "",
+                md_table(["Dimension", "Label", "Domain", "Domain name", "Members used", "Domain size"], dim_rows),
+                "",
+                "## Note on `Card funtion in payment`",
+                "",
+                "The label is spelled that way in the source layout (`funtion`). It is transcribed",
+                "verbatim here so a search against the framework matches. Use the corrected spelling in",
+                "user-facing descriptions and keep the original as a synonym.",
+            ]
+        ),
+    )
+
+    metric_rows = []
+    for code, label in sorted(VOCAB["properties"].items()):
+        used = sorted({d["template"] for d in DPS if d["metric"] == label})
+        unit = sorted({d["unit"] for d in DPS if d["metric"] == label})
+        metric_rows.append([f"`{code}`", label, ", ".join(unit) or "—", ", ".join(used) or "—"])
+    write(
+        OUT / "03-glossary" / "metrics.md",
+        "\n".join(
+            [
+                "# PAY 4.2 glossary — metrics",
+                "",
+                "What a datapoint measures. Every datapoint carries exactly one of these.",
+                "",
+                NOTE,
+                "",
+                md_table(["Code", "Metric", "Unit", "Templates"], metric_rows),
+                "",
+                "`€£$` marks a monetary amount reported in the reporting currency; `#` marks a count.",
+                "All datapoints in this framework are constrained to non-negative values.",
+            ]
+        ),
+    )
+
+
+write_glossary()
+print("glossary written")
+
+
+# --------------------------------------------------------------------------------------
+# Framework overview, agent instructions, README, CSVs
+# --------------------------------------------------------------------------------------
+
+
+def write_framework() -> None:
+    rows = []
+    for t, sheets in TEMPLATES.items():
+        rows.append(
+            [
+                f"`{t}`",
+                DATA["toc"].get(t, sheets[0]["title"].split(" - ", 1)[-1]),
+                "losses" if t.endswith(".02") else "transactions",
+                str(len(sheets)),
+                str(len(DP_BY_TEMPLATE[t])),
+            ]
+        )
+    write(
+        OUT / "01-framework.md",
+        "\n".join(
+            [
+                "# PAY 4.2 (FRPPAY 4.2) — framework overview",
+                "",
+                f"Transcribed from {SOURCE}.",
+                "",
+                "## What this framework is",
+                "",
+                "PAY 4.2 is the EBA reporting framework for **payment and fraud statistics under PSD2**.",
+                "Payment service providers report, per reporting period, the volume and value of payment",
+                "transactions and the subset of those that were fraudulent, broken down by payment",
+                "instrument, authentication method, initiation channel, counterparty geography and fraud",
+                "event type.",
+                "",
+                "## Shape of the data",
+                "",
+                f"- **{len(TEMPLATES)} templates**, paired: a `.01` template reports transactions and the",
+                "  matching `.02` template reports the monetary losses due to fraud for the same instrument.",
+                "- **Up to 6 variants per `.01` template**, one sheet each, being the cross product of",
+                "  2 metrics (amount of payment, number of transactions) and 3 geographies (domestic,",
+                "  cross-border within the EEA, cross-border outside the EEA).",
+                f"- **{len(DPS)} datapoints** in total, each with a stable numeric id.",
+                "",
+                md_table(["Template", "Subject", "Reports", "Variants", "Datapoints"], rows),
+                "",
+                "## Axes",
+                "",
+                f"A datapoint is pinned down by {len(VOCAB['dimensions'])} possible dimensions drawn from",
+                f"{len(VOCAB['domains'])} domains, plus one of {len(VOCAB['properties'])} metrics. See",
+                "`03-glossary/`.",
+                "",
+                "## What is not in here",
+                "",
+                "The layout carries labels, codes and structure. It does **not** carry the regulatory",
+                "definitions, the validation rules between datapoints, or the submission schedule.",
+                f"For those, go to {AUTHORITY}.",
+            ]
+        ),
+    )
+
+
+def write_agent_instructions() -> None:
+    write(
+        OUT / "02-agent-instructions.md",
+        f"""# How to describe PAY 4.2 assets in OpenMetadata
+
+Instructions for an agent writing table, column and glossary descriptions for assets
+derived from the EBA PAY 4.2 (FRPPAY 4.2) reporting framework.
+
+## Anatomy of an identifier
+
+A fully qualified datapoint has four parts. Physical table and column names usually
+encode some of them:
+
+    Y_03.01 ( 0010 )      R0080          C0020            437613
+    template  variant     row code       column code      datapoint id
+    |         |           |              |                |
+    |         |           |              |                +-- unique on its own
+    |         |           |              +-- only unique within a template
+    |         |           +-- only unique within a template
+    |         +-- metric x geography; only unique within a template
+    +-- subject area
+
+**The numeric datapoint id is the only part that is unique on its own.** Row code `0010`
+exists in every template and means something different in each. Never describe a column
+from its row or column code alone.
+
+
+## Lookup procedure
+
+1. If you have a datapoint id, look it up in `05-datapoints.csv`. That row gives you the
+   template, the variant, the metric, the geography, the row and column labels and every
+   dimension member. Write the description from those fields and stop.
+2. If you have a template code, read `04-tables/<TEMPLATE>.md`.
+3. If you have a label but no code, search `05-datapoints.csv` on `row_label`. Labels
+   repeat across templates, so confirm against the template before you commit.
+4. If you cannot resolve an identifier, say so in the description rather than guessing.
+   A wrong regulatory description is worse than a missing one.
+
+## Writing the description
+
+State, in this order: what is measured, for which payment instrument, under which
+breakdown, and the source. Keep it to two or three sentences.
+
+> Number of fraudulent card-based payment transactions initiated electronically and
+> authenticated via strong customer authentication, reported by the issuing payment
+> service provider, for transactions cross-border within the EEA. Datapoint 437613 of
+> template Y_03.01 (EBA PAY 4.2), row 0080, column 0020. Unit: count, non-negative.
+
+Rules:
+
+- **Do not invent regulatory definitions.** The labels here are the framework's own
+  wording. Where a precise definition is needed, cite {AUTHORITY} rather than paraphrasing.
+- **Do not silently correct the source.** `Card funtion in payment` is misspelled in the
+  layout. Use the corrected spelling in prose, keep the original as a synonym so a search
+  against the framework still matches.
+- **Keep the codes in the text.** They are what a reporting analyst greps for.
+- **Do not assert the physical column's semantics** beyond what the datapoint says. If a
+  column is named after a datapoint but contains something else, that is a data quality
+  finding, not a description.
+
+## Glossary and ontology
+
+`06-openmetadata-glossary.csv` is a bulk import of the controlled vocabulary: one parent
+term per domain, one child term per member, plus the dimensions and metrics. Link a
+column to a term rather than repeating the definition in the column description.
+
+The hierarchy to expect in the ontology explorer:
+
+    PAY 4.2
+    |-- Domains
+    |   |-- Payment transaction characteristics (31 members)
+    |   |-- Fraud event types (12 members)
+    |   |-- Payment related parties (8 members)
+    |   +-- Geographical breakdown (3 members)
+    |-- Dimensions ({len(VOCAB["dimensions"])}, each drawing values from one domain)
+    +-- Metrics ({len(VOCAB["properties"])})
+
+Several dimensions share a domain, so a member code alone does not identify a dimension.
+`Form of payment` and `Type of authentication` both draw on domain `qPY`. Resolve the
+dimension from the datapoint row, never from the member code.
+""",
+    )
+
+
+def write_csvs() -> None:
+    fields = list(DPS[0].keys())
+    with (OUT / "05-datapoints.csv").open("w", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=fields)
+        w.writeheader()
+        w.writerows(DPS)
+
+    # Header copied from openmetadata-service json/data/glossary/glossaryCsvDocumentation.json.
+    # The import takes glossary TERMS only - the glossary itself must already exist, and an
+    # empty `parent` puts a term directly under it. glossaryStatus takes Draft, Approved or
+    # Deprecated.
+    header = [
+        "parent",
+        "name*",
+        "displayName",
+        "description",
+        "synonyms",
+        "relatedTerms",
+        "references",
+        "tags",
+        "reviewers",
+        "owner",
+        "glossaryStatus",
+        "color",
+        "iconURL",
+        "domains",
+        "extension",
+    ]
+    WIDTH = len(header)
+    GLOSSARY = "PAY 4.2"
+
+    def row(parent, name, display, desc, synonyms="", related="", status="Draft"):
+        out = [parent, name, display, desc, synonyms, related, "", "", "", "", status]
+        return out + [""] * (WIDTH - len(out))
+
+    rows = [
+        row("", g, g, f"{g} of the PAY 4.2 framework.", status="Approved") for g in ("Domains", "Dimensions", "Metrics")
+    ]
+
+    for dom, members in sorted(VOCAB["domains"].items()):
+        dom_name = DOMAIN_NAMES.get(dom, dom)
+        rows.append(
+            row(
+                f"{GLOSSARY}.Domains",
+                dom_name,
+                dom_name,
+                f"Domain `{dom}` of PAY 4.2: the {len(members)} allowed values for the dimensions that draw on it.",
+                synonyms=dom,
+                status="Approved",
+            )
+        )
+        for code, label in sorted(members.items(), key=lambda kv: kv[1]):
+            dims = sorted(member_dimension.get((dom, code), set()))
+            tpls = sorted(member_usage.get((dom, code), set()))
+            desc = (
+                f"Member `{code}` of domain `{dom}` ({dom_name}) in PAY 4.2. "
+                + (f"Used as a value of: {', '.join(dims)}. " if dims else "")
+                + (f"Appears in template(s): {', '.join(tpls)}. " if tpls else "")
+                + f"Label transcribed verbatim from the layout; for a definition see {AUTHORITY}."
+            )
+            rows.append(row(f"{GLOSSARY}.Domains.{dom_name}", label, label, desc, synonyms=code))
+
+    for code, d in sorted(VOCAB["dimensions"].items(), key=lambda kv: kv[1]["label"]):
+        dom_name = DOMAIN_NAMES.get(d["domain"], d["domain"])
+        rows.append(
+            row(
+                f"{GLOSSARY}.Dimensions",
+                d["label"],
+                d["label"],
+                f"Dimension `{code}` of PAY 4.2. Draws its values from domain `{d['domain']}` ({dom_name}).",
+                synonyms=code,
+                related=f"{GLOSSARY}.Domains.{dom_name}",
+            )
+        )
+
+    for code, label in sorted(VOCAB["properties"].items()):
+        units = sorted({d["unit"] for d in DPS if d["metric"] == label})
+        rows.append(
+            row(
+                f"{GLOSSARY}.Metrics",
+                label,
+                label,
+                f"Metric `{code}` of PAY 4.2. Unit: {', '.join(units) or 'n/a'}. Non-negative.",
+                synonyms=code,
+            )
+        )
+
+    with (OUT / "06-openmetadata-glossary.csv").open("w", encoding="utf-8", newline="") as fh:
+        csv.writer(fh).writerows([header, *rows])
+    return len(rows)
+
+
+write_framework()
+write_agent_instructions()
+n = write_csvs()
+print(f"framework + agent instructions written; glossary CSV rows: {n}")
+
+
+write(
+    OUT / "README.md",
+    f"""# om-eba-annotatedtpl
+
+The EBA **PAY 4.2 (FRPPAY 4.2)** annotated table layout — payment and fraud reporting
+under PSD2 — normalised from a 55-sheet spreadsheet into documentation an agent can use
+when describing tables, columns and glossary terms in OpenMetadata.
+
+**1830 datapoints, 14 templates, 14 dimensions over 4 domains, 54 controlled values.**
+
+## Reproducing
+
+```bash
+uv sync
+uv run source/extract_dpm.py    # xlsx  -> source/dpm.json      (structure)
+uv run source/vocab.py          # dpm   -> source/vocab.json    (vocabulary)
+uv run source/gen_pack.py       # both  -> the markdown and CSV in this repo
+```
+
+The spreadsheet is built on merged-cell blocks: the row axis sits to the right of the
+data columns, the column axis in a footer block, and the sheet axis in the header. The
+merge *spans* are what identify where each block starts and ends, which is why the
+extraction uses openpyxl — a plain cell reader gives you the values but not the geometry.
+
+## Importing into OpenMetadata
+
+```bash
+export OM_HOST=http://localhost:8585/api OM_JWT_TOKEN=...
+uv run import_to_openmetadata.py --dry-run     # print the page tree, contact nothing
+uv run import_to_openmetadata.py               # write 22 Knowledge Pages, dry run the glossary
+uv run import_to_openmetadata.py --commit      # ... and write the glossary terms
+```
+
+Markdown goes to Knowledge Pages (`PUT /v1/contextCenter/pages`); the vocabulary goes to
+the glossary CSV import. There is no bulk file upload and no document library —
+`docStore/document.json` is a generic JSON payload store the UI uses for persona layouts.
+
+`--commit` always dry runs first and refuses to write if that comes back with anything
+other than `success` and zero rejected rows.
+
+---
+
+# PAY 4.2 documentation pack for OpenMetadata
+
+Reference material for describing assets derived from the EBA **PAY 4.2 (FRPPAY 4.2)**
+payment and fraud reporting framework under PSD2, written to be read by an agent that
+writes table, column and glossary descriptions.
+
+Generated from `{SOURCE}`.
+
+## Files
+
+| File | What it is | Read it when |
+|---|---|---|
+| `01-framework.md` | What PAY 4.2 is, the {len(TEMPLATES)} templates, the shape of the data | You need orientation |
+| `02-agent-instructions.md` | How to decode an identifier and write a description | **Start here** |
+| `03-glossary/domains-and-members.md` | The {sum(len(m) for m in VOCAB["domains"].values())} controlled values across {len(VOCAB["domains"])} domains | You need the vocabulary |
+| `03-glossary/dimensions.md` | The {len(VOCAB["dimensions"])} breakdown axes | You need to know which axis a value belongs to |
+| `03-glossary/metrics.md` | The {len(VOCAB["properties"])} metrics and their units | You need the unit |
+| `04-tables/<TEMPLATE>.md` | One per template: variants, columns, rows, datapoint ids, ready-to-paste descriptions | You are describing a table |
+| `05-datapoints.csv` | All {len(DPS)} datapoints, one row each, fully resolved | You have a datapoint id |
+| `06-openmetadata-glossary.csv` | Bulk glossary import | You are loading the glossary |
+
+## Loading the glossary
+
+The CSV holds glossary **terms only**. Create the glossary itself first, then import:
+
+```bash
+AUTH="Authorization: Bearer $OM_JWT_TOKEN"
+
+# 1. create the glossary (the CSV import only creates terms inside it)
+curl -X POST "$OM_HOST/v1/glossaries" -H "$AUTH" -H 'Content-Type: application/json' -d '{{"name": "PAY 4.2", "displayName": "PAY 4.2 (FRPPAY 4.2)"}}'
+
+# 2. dry run the terms, read the response, then re-run with dryRun=false
+curl -X PUT "$OM_HOST/v1/glossaries/name/PAY%204.2/import?dryRun=true" -H "$AUTH" -H 'Content-Type: text/plain' --data-binary @06-openmetadata-glossary.csv
+```
+
+The header is taken from `json/data/glossary/glossaryCsvDocumentation.json` in the
+OpenMetadata source: `parent, name*, displayName, description, synonyms, relatedTerms,
+references, tags, reviewers, owner, glossaryStatus, color, iconURL, domains, extension`.
+
+**Check that against your own instance** - the columns change between versions.
+`GET /v1/glossaries/documentation/csv` returns the header your server expects. Always
+run with `dryRun=true` first and read the response.
+
+An empty `parent` puts a term directly under the glossary. `glossaryStatus` takes
+`Draft`, `Approved` or `Deprecated`.
+
+Terms are created as `Draft` except the three grouping terms. Promote them once a domain
+expert has checked the definitions: the descriptions here are structural - they say where
+a term is used, not what it legally means.
+
+`Payment related parties` appears twice, once as a domain and once as a dimension. That
+is deliberate - dimension `qKKL` carries the same label as its domain `qRP` - and the two
+have different parents, so the FQNs do not collide.
+
+## The one thing to get right
+
+Row code `0010` and column code `0010` exist in every template and mean something
+different in each. Only the numeric **datapoint id** is unique on its own. Resolve to a
+datapoint id before writing any description.
+""",
+)
+print("README written")
