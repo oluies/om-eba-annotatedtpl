@@ -12,9 +12,9 @@ when describing tables, columns and glossary terms in OpenMetadata.
 
 ```bash
 uv sync
-uv run source/extract_dpm.py    # xlsx  -> source/dpm.json      (structure)
-uv run source/vocab.py          # dpm   -> source/vocab.json    (vocabulary)
-uv run source/gen_pack.py       # both  -> the markdown and CSV in this repo
+uv run source/extract_dpm.py    # xlsx  → source/dpm.json      (structure)
+uv run source/vocab.py          # dpm   → source/vocab.json    (vocabulary)
+uv run source/gen_pack.py       # both  → the markdown and CSV in this repo
 ```
 
 The spreadsheet is built on merged-cell blocks: the row axis sits to the right of the
@@ -38,11 +38,11 @@ fails with a diagnosis instead of an opaque 405.
 Pages land under an `EBA` root, so a later framework can be loaded beside this one:
 
     EBA
-    +-- PAY 4.2 (FRPPAY 4.2)
-        +-- Framework
-        +-- Agent instructions
-        +-- Glossary      (dimensions, domains and members, metrics)
-        +-- Templates     (one page per template)
+    └── PAY 4.2 (FRPPAY 4.2)
+        ├── Framework
+        ├── Agent instructions
+        ├── Glossary      (dimensions, domains and members, metrics)
+        └── Templates     (one page per template)
 
 ### Pages written but missing from the list
 

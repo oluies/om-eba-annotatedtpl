@@ -461,12 +461,12 @@ encode some of them:
 
     Y_03.01 ( 0010 )      R0080          C0020            437613
     template  variant     row code       column code      datapoint id
-    |         |           |              |                |
-    |         |           |              |                +-- unique on its own
-    |         |           |              +-- only unique within a template
-    |         |           +-- only unique within a template
-    |         +-- metric x geography; only unique within a template
-    +-- subject area
+    │         │           │              │                │
+    │         │           │              │                └── unique on its own
+    │         │           │              └── only unique within a template
+    │         │           └── only unique within a template
+    │         └── metric x geography; only unique within a template
+    └── subject area
 
 **The numeric datapoint id is the only part that is unique on its own.** Row code `0010`
 exists in every template and means something different in each. Never describe a column
@@ -517,13 +517,13 @@ column to a term rather than repeating the definition in the column description.
 The hierarchy to expect in the ontology explorer:
 
     PAY 4.2
-    |-- Domains
-    |   |-- Payment transaction characteristics (31 members)
-    |   |-- Fraud event types (12 members)
-    |   |-- Payment related parties (8 members)
-    |   +-- Geographical breakdown (3 members)
-    |-- Dimensions ({len(VOCAB["dimensions"])}, each drawing values from one domain)
-    +-- Metrics ({len(VOCAB["properties"])})
+    ├── Domains
+    │   ├── Payment transaction characteristics (31 members)
+    │   ├── Fraud event types (12 members)
+    │   ├── Payment related parties (8 members)
+    │   └── Geographical breakdown (3 members)
+    ├── Dimensions ({len(VOCAB["dimensions"])}, each drawing values from one domain)
+    └── Metrics ({len(VOCAB["properties"])})
 
 Several dimensions share a domain, so a member code alone does not identify a dimension.
 `Form of payment` and `Type of authentication` both draw on domain `qPY`. Resolve the
@@ -656,9 +656,9 @@ when describing tables, columns and glossary terms in OpenMetadata.
 
 ```bash
 uv sync
-uv run source/extract_dpm.py    # xlsx  -> source/dpm.json      (structure)
-uv run source/vocab.py          # dpm   -> source/vocab.json    (vocabulary)
-uv run source/gen_pack.py       # both  -> the markdown and CSV in this repo
+uv run source/extract_dpm.py    # xlsx  → source/dpm.json      (structure)
+uv run source/vocab.py          # dpm   → source/vocab.json    (vocabulary)
+uv run source/gen_pack.py       # both  → the markdown and CSV in this repo
 ```
 
 The spreadsheet is built on merged-cell blocks: the row axis sits to the right of the
@@ -682,11 +682,11 @@ fails with a diagnosis instead of an opaque 405.
 Pages land under an `EBA` root, so a later framework can be loaded beside this one:
 
     EBA
-    +-- PAY 4.2 (FRPPAY 4.2)
-        +-- Framework
-        +-- Agent instructions
-        +-- Glossary      (dimensions, domains and members, metrics)
-        +-- Templates     (one page per template)
+    └── PAY 4.2 (FRPPAY 4.2)
+        ├── Framework
+        ├── Agent instructions
+        ├── Glossary      (dimensions, domains and members, metrics)
+        └── Templates     (one page per template)
 
 ### Pages written but missing from the list
 

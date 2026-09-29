@@ -10,12 +10,12 @@ encode some of them:
 
     Y_03.01 ( 0010 )      R0080          C0020            437613
     template  variant     row code       column code      datapoint id
-    |         |           |              |                |
-    |         |           |              |                +-- unique on its own
-    |         |           |              +-- only unique within a template
-    |         |           +-- only unique within a template
-    |         +-- metric x geography; only unique within a template
-    +-- subject area
+    │         │           │              │                │
+    │         │           │              │                └── unique on its own
+    │         │           │              └── only unique within a template
+    │         │           └── only unique within a template
+    │         └── metric x geography; only unique within a template
+    └── subject area
 
 **The numeric datapoint id is the only part that is unique on its own.** Row code `0010`
 exists in every template and means something different in each. Never describe a column
@@ -66,13 +66,13 @@ column to a term rather than repeating the definition in the column description.
 The hierarchy to expect in the ontology explorer:
 
     PAY 4.2
-    |-- Domains
-    |   |-- Payment transaction characteristics (31 members)
-    |   |-- Fraud event types (12 members)
-    |   |-- Payment related parties (8 members)
-    |   +-- Geographical breakdown (3 members)
-    |-- Dimensions (14, each drawing values from one domain)
-    +-- Metrics (3)
+    ├── Domains
+    │   ├── Payment transaction characteristics (31 members)
+    │   ├── Fraud event types (12 members)
+    │   ├── Payment related parties (8 members)
+    │   └── Geographical breakdown (3 members)
+    ├── Dimensions (14, each drawing values from one domain)
+    └── Metrics (3)
 
 Several dimensions share a domain, so a member code alone does not identify a dimension.
 `Form of payment` and `Type of authentication` both draw on domain `qPY`. Resolve the
