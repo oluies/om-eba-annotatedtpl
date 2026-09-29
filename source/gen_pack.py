@@ -770,6 +770,26 @@ Pages land under an `EBA` root, so a later framework can be loaded beside this o
         ├── Glossary      (dimensions, domains and members, metrics)
         └── Templates     (one page per template)
 
+### A re-run does not change the page
+
+`EntityRepository.updateDescription` reverts a PUT that would replace a non-empty
+description when the caller is a **bot**, and answers 200 as if it had worked. So a
+second import from a bot token leaves the old text in place while every line prints a
+tick. The importer detects this and falls back to PATCH, which the server's own comment
+names as the way round it; if that is refused too, the run ends by naming the pages that
+kept their old body.
+
+If you see that, use a user token rather than a bot one, or delete the pages and let
+them be created fresh.
+
+### Why the markdown is written the way it is
+
+Descriptions are sanitised on write by an OWASP HTML policy, which HTML-escapes as it
+goes: a plus sign comes back as a numeric character reference, and a greater-than sign
+as `&gt;`. ASCII tree connectors and markdown blockquotes therefore do not survive. The
+generator draws with box characters, uses fenced blocks instead of quotes, and fails the
+build if a plus sign reaches any page.
+
 ### Pages written but missing from the list
 
 The UI lists pages through `/search/hierarchy`, which reads the search index, while the

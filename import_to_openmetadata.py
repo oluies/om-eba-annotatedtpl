@@ -24,6 +24,7 @@ Usage:
 import argparse
 import csv
 import io
+import json
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Literal
@@ -211,6 +212,10 @@ def page_payload(page: Page, parent_id: str | None) -> dict[str, object]:
 
 PAGES_PATH = "/v1/contextCenter/pages"
 
+# Pages whose body the server would not take. Collected so the run ends with a verdict
+# rather than a "!" somewhere up the scrollback.
+STALE: list[str] = []
+
 
 def preflight(client: httpx.Client, *, check_pages: bool) -> str:
     """Fail with a diagnosis rather than an opaque 4xx from the first write.
@@ -253,10 +258,44 @@ def preflight(client: httpx.Client, *, check_pages: bool) -> str:
     return server
 
 
-def upsert_page(client: httpx.Client, page: Page, parent_id: str | None) -> str:
+def body_matches(sent: str, stored: str | None) -> bool:
+    """Did the server keep the body we sent?
+
+    It sanitises on write - the OWASP policy HTML-escapes characters like `>` and `+` -
+    so the stored text is never byte-identical. Compare on a marker instead: the first
+    non-blank line, with the escapes undone.
+    """
+    if stored is None:
+        return False
+    unescaped = stored.replace("&amp;", "&").replace("&gt;", ">").replace("&lt;", "<").replace("&#43;", "+")
+    marker = next((line.strip() for line in sent.splitlines() if line.strip()), "")
+    return marker[:80] in unescaped
+
+
+def upsert_page(client: httpx.Client, page: Page, parent_id: str | None) -> tuple[str, bool]:
+    """Write a page. Returns its id and whether the body actually landed.
+
+    A PUT from a bot token will not replace a description that is already non-empty:
+    EntityRepository.updateDescription reverts it and answers 200 as if it had worked.
+    Falling back to PATCH is what the server's own comment says to do.
+    """
     response = client.put(PAGES_PATH, json=page_payload(page, parent_id))
     response.raise_for_status()
-    return response.json()["id"]
+    stored = response.json()
+    page_id = stored["id"]
+
+    if body_matches(page.body, stored.get("description")):
+        return page_id, True
+
+    patched = client.patch(
+        f"{PAGES_PATH}/{page_id}",
+        content=json.dumps([{"op": "replace", "path": "/description", "value": page.body}]),
+        headers={"Content-Type": "application/json-patch+json"},
+    )
+    if patched.status_code >= 400:
+        print(f"    PATCH of the body failed: {patched.status_code} {patched.text[:200]}")
+        return page_id, False
+    return page_id, body_matches(page.body, patched.json().get("description"))
 
 
 def upsert_tree(client: httpx.Client, page: Page, parent_id: str | None = None, depth: int = 0) -> list[str]:
@@ -264,8 +303,10 @@ def upsert_tree(client: httpx.Client, page: Page, parent_id: str | None = None, 
 
     Returns every id written, which is what the reindex call needs.
     """
-    page_id = upsert_page(client, page, parent_id)
-    print(f"{'  ' * depth}✓ {page.display_name}  ({page_id})")
+    page_id, ok = upsert_page(client, page, parent_id)
+    if not ok:
+        STALE.append(page.display_name)
+    print(f"{'  ' * depth}{'✓' if ok else '!'} {page.display_name}  ({page_id})")
     return [page_id, *(i for child in page.children for i in upsert_tree(client, child, page_id, depth + 1))]
 
 
@@ -499,6 +540,13 @@ def main() -> None:
         if not args.glossary_only:
             page_ids = upsert_tree(client, tree)
             print(f"\n{len(page_ids)} pages written.")
+            if STALE:
+                print(
+                    f"  {len(STALE)} page(s) kept their old body, e.g. {STALE[0]!r}.\n"
+                    "  A PUT from a bot token will not replace a non-empty description, and the\n"
+                    "  PATCH fallback did not take either. Use a user token, or delete the pages\n"
+                    "  and re-run so they are created fresh."
+                )
             if not args.no_reindex:
                 reindex(client, page_ids)
 
