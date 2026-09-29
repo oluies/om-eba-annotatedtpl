@@ -161,14 +161,42 @@ as a JSON string:
 Use `replace` when the field came back in step 2 and `add` when it did not. Put every
 column of one table in a single patch rather than one call per column.
 
-### The index is absolute, the page is not
+### Do not patch columns by index
 
-`/columns/N/description` counts from the start of the **whole** columns array, but a
-paginated response starts at `columnOffset`. The index to patch is
-`columnOffset` plus the position in the returned array. Getting this wrong writes a correct
-description onto the wrong column, and nothing will complain.
+`/columns/N/description` addresses the array positionally, and the array you read back
+from `get_entity_details` is **not** the stored one — it is paginated and trimmed for
+context, as that tool's own description says. Index 17 in what you read is not index 17
+in the entity, so a correct description lands silently on the wrong column. No error is
+raised. This is not something careful counting fixes.
 
-Re-read the table after patching a wide one and confirm the text landed where you meant.
+Use the name-keyed path instead. Tables have a CSV export and import that address
+columns by `column.name`:
+
+    GET /v1/tables/name/{fqn}/export           text/plain CSV of the current columns
+    PUT /v1/tables/name/{fqn}/import?dryRun=   the same CSV back
+
+Header, from `json/data/table/tableCsvDocumentation.json` in the server source:
+`column.name*, column.displayName, column.description, column.dataTypeDisplay,
+column.dataType*, column.arrayDataType, column.dataLength, column.tags,
+column.glossaryTerms`.
+
+Read the export, change only `column.description` and `column.glossaryTerms` on the rows
+whose name matches a datapoint, leave every other row byte-for-byte as it came back, and
+write it home. `column.dataType` is required, so round-tripping the export rather than
+composing a CSV is what keeps it correct.
+
+`describe_table.py` in this pack does exactly that:
+
+    uv run describe_table.py SQLSASTest.FIDW_BI.dbo.Y_01_01 --variant 0010 --commit
+
+Prefer it over doing this by hand. It resolves each column against `05-datapoints.csv`,
+refuses to guess a variant, and never touches a context column.
+
+`patch_entity` is still right for the **table's own** description, which is not an array:
+
+```json
+[{"op": "replace", "path": "/description", "value": "Credit transfers transactions..."}]
+```
 
 ### Linking the glossary
 

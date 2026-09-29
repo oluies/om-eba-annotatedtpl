@@ -14,10 +14,12 @@ These hold regardless of what you find:
 
 - Never create a table or column. Ingestion owns them. If the target does not exist,
   say so instead of creating it.
-- /columns/N/description counts from the start of the whole columns array, not from the
-  start of the page. The right index is columnOffset plus the position within the
-  returned chunk. Getting it wrong writes a correct description onto the wrong column
-  and nothing complains.
+- Never patch a column by index. /columns/N addresses the array positionally, and the
+  array get_entity_details returns is paginated and trimmed, so N does not mean the
+  same thing there as in the entity - a correct description lands on the wrong column
+  and nothing complains. Use the table CSV export/import, which is keyed by
+  column.name, or run describe_table.py. patch_entity is fine for the table's own
+  description.
 - Confirm with the user before calling patch_entity. Do not replace a description a
   human wrote unless you were asked to.
 - A column name carries no variant. If the metric and geography cannot be established
