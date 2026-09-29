@@ -131,17 +131,20 @@ full row and column grid with the datapoint ids. That is your lookup table.
 
 1. Split the column name with the pattern above and build the template code:
    `Y0101_r0010_c0010` gives template `Y_01.01`, row `0010`, column `0010`.
-2. Read the page titled with that template code — `find_context` on `Y_01.01`, or
-   `get_entity_details` if you already hold its FQN. Do not search for the column name
+2. **If a `lookup_datapoint` tool is available, call it and skip to step 5.** It answers
+   from `pay42.duckdb` and cannot land on the wrong row. Reading the grid by eye is the
+   fallback, not the method.
+3. Otherwise read the page titled with that template code — `find_context` on `Y_01.01`,
+   or `get_entity_details` if you already hold its FQN. Do not search for the column name
    itself; it appears nowhere in the pages.
-3. In that page, find the row whose code is `row` and read the datapoint id under the
+4. In that page, find the row whose code is `row` and read the datapoint id under the
    column whose code is `col`. The row's label and dimension members are on the same
    line, and the column's fixed members are in the Columns table above it.
-4. **Check what you read.** The row code printed on the line you used must equal the
+5. **Check what you read.** The row code printed on the line you used must equal the
    `row` group from the column name, and the column code must equal `col`. If you took
    `Y0101_r0010_c0010` and are looking at row 0030, you are one line off - a real failure
    seen in practice, where the description was correct prose about the wrong datapoint.
-5. Establish the variant from the table, not the column. The page's Variants table lists
+6. Establish the variant from the table, not the column. The page's Variants table lists
    all six with their metric and geography.
 
    If the table does not tell you which one it holds, say so and write only what is
@@ -157,7 +160,7 @@ full row and column grid with the datapoint ids. That is your lookup table.
    So with no variant you have **no datapoint id and no unit**. Stating either is
    inventing one of six answers. Name the row, the column, the dimension members and the
    template, and say the variant is set by the table.
-6. If you cannot resolve an identifier, say so in the description rather than guessing.
+7. If you cannot resolve an identifier, say so in the description rather than guessing.
    A wrong regulatory description is worse than a missing one.
 
 ## Writing the description

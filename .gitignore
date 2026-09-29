@@ -7,3 +7,6 @@ __pycache__/
 .ruff_cache/
 *.pyc
 .env
+
+# Derived store; rebuild with source/build_duckdb.py
+pay42.duckdb
