@@ -74,8 +74,13 @@ def datapoint_rows() -> list[dict]:
             row_dims = "; ".join(f"{m.get('dimension') or dim_label(m['dim'])}={m['label']}" for m in r["members"])
             for col_code, dp in r["datapoints"].items():
                 col = next((c for c in s["columns"] if c["code"] == col_code), {})
+                # The warehouse column name: template without its separators, then the
+                # row and column code. It carries no variant, so one name covers all
+                # six metric x geography variants of a .01 template.
+                column_name = f"{template.replace('.', '').replace('_', '')}_r{row_code}_c{col_code}"
                 out.append(
                     {
+                        "column_name": column_name,
                         "datapoint_id": dp["id"],
                         "template": template,
                         "template_name": s["title"].split(" - ", 1)[-1],
@@ -473,15 +478,56 @@ exists in every template and means something different in each. Never describe a
 from its row or column code alone.
 
 
+## Warehouse column names
+
+Columns in the warehouse are named `<TEMPLATE><ROW><COLUMN>`, with the template's
+separators removed:
+
+    Y0101_r0010_c0010
+    │     │     └── column code 0010
+    │     └── row code 0010
+    └── template Y_01.01, dots and underscores stripped
+
+`05-datapoints.csv` carries this as its first field, `column_name`, so a column resolves
+with one lookup.
+
+**A column name does not identify a single datapoint.** It carries no variant, and a
+`.01` template has six of them - two metrics crossed with three geographies. 302 of the
+320 distinct column names map to six datapoints each; only the 18 from the `.02` loss
+templates, which have no variants, map to one.
+
+So `Y0101_r0010_c0010` is all six of these:
+
+| Datapoint | Variant | Metric | Geography | Unit |
+|---|---|---|---|---|
+| 437810 | 0010 | Amount of payment | Domestic | €£$ |
+| 436590 | 0020 | Number of transactions | Domestic | # |
+| 437768 | 0030 | Amount of payment | European Economic Area (EEA) | €£$ |
+| 436548 | 0040 | Number of transactions | European Economic Area (EEA) | # |
+| 437789 | 0050 | Amount of payment | Non-European Economic Area (EEA) | €£$ |
+| 436569 | 0060 | Number of transactions | Non-European Economic Area (EEA) | # |
+
+Resolve the variant from the table, not the column: which metric and which geography the
+table holds is a property of the table, whether that is in its name, a partition, or a
+filter in the pipeline that loads it. If you cannot establish it, describe what the
+column means across all six and say the variant is set by the table - do not pick one.
+
+The row and column parts are shared, so everything except metric, geography, unit and
+the datapoint id is the same for all six: same row label, same column label, same
+dimension members. That common part is what a description can always state.
+
 ## Lookup procedure
 
-1. If you have a datapoint id, look it up in `05-datapoints.csv`. That row gives you the
+1. If you have a warehouse column name, match it against `column_name` in
+   `05-datapoints.csv`. Six rows come back for a `.01` template; establish the variant
+   from the table, then use that row.
+2. If you have a datapoint id, look it up in `05-datapoints.csv`. That row gives you the
    template, the variant, the metric, the geography, the row and column labels and every
    dimension member. Write the description from those fields and stop.
-2. If you have a template code, read `04-tables/<TEMPLATE>.md`.
-3. If you have a label but no code, search `05-datapoints.csv` on `row_label`. Labels
+3. If you have a template code, read `04-tables/<TEMPLATE>.md`.
+4. If you have a label but no code, search `05-datapoints.csv` on `row_label`. Labels
    repeat across templates, so confirm against the template before you commit.
-4. If you cannot resolve an identifier, say so in the description rather than guessing.
+5. If you cannot resolve an identifier, say so in the description rather than guessing.
    A wrong regulatory description is worse than a missing one.
 
 ## Writing the description
@@ -734,7 +780,7 @@ Generated from `{SOURCE}`.
 | `03-glossary/dimensions.md` | The {len(VOCAB["dimensions"])} breakdown axes | You need to know which axis a value belongs to |
 | `03-glossary/metrics.md` | The {len(VOCAB["properties"])} metrics and their units | You need the unit |
 | `04-tables/<TEMPLATE>.md` | One per template: variants, columns, rows, datapoint ids, ready-to-paste descriptions | You are describing a table |
-| `05-datapoints.csv` | All {len(DPS)} datapoints, one row each, fully resolved | You have a datapoint id |
+| `05-datapoints.csv` | All {len(DPS)} datapoints, keyed by warehouse `column_name` and datapoint id | You have a column to describe |
 | `06-openmetadata-glossary.csv` | Bulk glossary import | You are loading the glossary |
 
 ## Loading the glossary
@@ -786,6 +832,18 @@ a term is used, not what it legally means.
 `Payment related parties` appears twice, once as a domain and once as a dimension. That
 is deliberate - dimension `qKKL` carries the same label as its domain `qRP` - and the two
 have different parents, so the FQNs do not collide.
+
+## Warehouse column names
+
+Columns are named `Y0101_r0010_c0010` - template with its separators stripped, then row
+code and column code. `05-datapoints.csv` carries that as its first field.
+
+The name carries no variant, so 302 of the 320 distinct names map to six datapoints each
+(two metrics x three geographies); the 18 from the `.02` loss templates map to one. The
+variant is a property of the table, not the column. `02-agent-instructions.md` has the
+worked example.
+
+![An article page](docs/agent-instructions-page.png)
 
 ## The one thing to get right
 

@@ -90,7 +90,7 @@ Generated from `EBA PAY 4.2 (FRPPAY 4.2) annotated table layout, 2026-01-06`.
 | `03-glossary/dimensions.md` | The 14 breakdown axes | You need to know which axis a value belongs to |
 | `03-glossary/metrics.md` | The 3 metrics and their units | You need the unit |
 | `04-tables/<TEMPLATE>.md` | One per template: variants, columns, rows, datapoint ids, ready-to-paste descriptions | You are describing a table |
-| `05-datapoints.csv` | All 1830 datapoints, one row each, fully resolved | You have a datapoint id |
+| `05-datapoints.csv` | All 1830 datapoints, keyed by warehouse `column_name` and datapoint id | You have a column to describe |
 | `06-openmetadata-glossary.csv` | Bulk glossary import | You are loading the glossary |
 
 ## Loading the glossary
@@ -142,6 +142,18 @@ a term is used, not what it legally means.
 `Payment related parties` appears twice, once as a domain and once as a dimension. That
 is deliberate - dimension `qKKL` carries the same label as its domain `qRP` - and the two
 have different parents, so the FQNs do not collide.
+
+## Warehouse column names
+
+Columns are named `Y0101_r0010_c0010` - template with its separators stripped, then row
+code and column code. `05-datapoints.csv` carries that as its first field.
+
+The name carries no variant, so 302 of the 320 distinct names map to six datapoints each
+(two metrics x three geographies); the 18 from the `.02` loss templates map to one. The
+variant is a property of the table, not the column. `02-agent-instructions.md` has the
+worked example.
+
+![An article page](docs/agent-instructions-page.png)
 
 ## The one thing to get right
 

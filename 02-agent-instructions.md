@@ -22,15 +22,56 @@ exists in every template and means something different in each. Never describe a
 from its row or column code alone.
 
 
+## Warehouse column names
+
+Columns in the warehouse are named `<TEMPLATE><ROW><COLUMN>`, with the template's
+separators removed:
+
+    Y0101_r0010_c0010
+    │     │     └── column code 0010
+    │     └── row code 0010
+    └── template Y_01.01, dots and underscores stripped
+
+`05-datapoints.csv` carries this as its first field, `column_name`, so a column resolves
+with one lookup.
+
+**A column name does not identify a single datapoint.** It carries no variant, and a
+`.01` template has six of them - two metrics crossed with three geographies. 302 of the
+320 distinct column names map to six datapoints each; only the 18 from the `.02` loss
+templates, which have no variants, map to one.
+
+So `Y0101_r0010_c0010` is all six of these:
+
+| Datapoint | Variant | Metric | Geography | Unit |
+|---|---|---|---|---|
+| 437810 | 0010 | Amount of payment | Domestic | €£$ |
+| 436590 | 0020 | Number of transactions | Domestic | # |
+| 437768 | 0030 | Amount of payment | European Economic Area (EEA) | €£$ |
+| 436548 | 0040 | Number of transactions | European Economic Area (EEA) | # |
+| 437789 | 0050 | Amount of payment | Non-European Economic Area (EEA) | €£$ |
+| 436569 | 0060 | Number of transactions | Non-European Economic Area (EEA) | # |
+
+Resolve the variant from the table, not the column: which metric and which geography the
+table holds is a property of the table, whether that is in its name, a partition, or a
+filter in the pipeline that loads it. If you cannot establish it, describe what the
+column means across all six and say the variant is set by the table - do not pick one.
+
+The row and column parts are shared, so everything except metric, geography, unit and
+the datapoint id is the same for all six: same row label, same column label, same
+dimension members. That common part is what a description can always state.
+
 ## Lookup procedure
 
-1. If you have a datapoint id, look it up in `05-datapoints.csv`. That row gives you the
+1. If you have a warehouse column name, match it against `column_name` in
+   `05-datapoints.csv`. Six rows come back for a `.01` template; establish the variant
+   from the table, then use that row.
+2. If you have a datapoint id, look it up in `05-datapoints.csv`. That row gives you the
    template, the variant, the metric, the geography, the row and column labels and every
    dimension member. Write the description from those fields and stop.
-2. If you have a template code, read `04-tables/<TEMPLATE>.md`.
-3. If you have a label but no code, search `05-datapoints.csv` on `row_label`. Labels
+3. If you have a template code, read `04-tables/<TEMPLATE>.md`.
+4. If you have a label but no code, search `05-datapoints.csv` on `row_label`. Labels
    repeat across templates, so confirm against the template before you commit.
-4. If you cannot resolve an identifier, say so in the description rather than guessing.
+5. If you cannot resolve an identifier, say so in the description rather than guessing.
    A wrong regulatory description is worse than a missing one.
 
 ## Writing the description
