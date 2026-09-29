@@ -661,6 +661,24 @@ uv run import_to_openmetadata.py --commit      # ... and write the glossary term
 script preflights the base URL, the server version and the Knowledge Page endpoint, and
 fails with a diagnosis instead of an opaque 405.
 
+Pages land under an `EBA` root, so a later framework can be loaded beside this one:
+
+    EBA
+    +-- PAY 4.2 (FRPPAY 4.2)
+        +-- Framework
+        +-- Agent instructions
+        +-- Glossary      (dimensions, domains and members, metrics)
+        +-- Templates     (one page per template)
+
+### Pages written but missing from the list
+
+The UI lists pages through `/search/hierarchy`, which reads the search index, while the
+write goes to the database. Indexing is asynchronous, so a fresh import can be invisible
+in every list view. The importer reindexes the ids it wrote; `--verify` shows the two
+counts side by side, and `--no-reindex` skips the call.
+
+    uv run import_to_openmetadata.py --verify
+
 ## Licence
 
 The code is MIT (see `LICENSE`). The PAY 4.2 content - codes, labels, datapoint ids,

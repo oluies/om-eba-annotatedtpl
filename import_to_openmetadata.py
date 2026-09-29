@@ -124,11 +124,15 @@ def section(name: str, display_name: str, body: str, children: tuple[Page, ...])
 
 
 def build_tree(pack: Path) -> Page:
-    """Mirror the pack layout as a page hierarchy."""
+    """Mirror the pack layout as a page hierarchy.
+
+    An `EBA` root sits above the framework so COREP, FINREP or a later PAY release can
+    be loaded alongside this one instead of each landing at the top level.
+    """
     tables = tuple(leaf(p) for p in sorted((pack / "04-tables").glob("*.md")))
     glossary = tuple(leaf(p) for p in sorted((pack / "03-glossary").glob("*.md")))
 
-    return section(
+    pay42 = section(
         name="PAY 4.2",
         display_name="PAY 4.2 (FRPPAY 4.2)",
         body=(pack / "README.md").read_text(encoding="utf-8"),
@@ -150,6 +154,19 @@ def build_tree(pack: Path) -> Page:
                 tables,
             ),
         ),
+    )
+
+    return section(
+        name="EBA",
+        display_name="EBA reporting frameworks",
+        body=(
+            "Reporting frameworks published by the European Banking Authority, as\n"
+            "annotated table layouts normalised for use in this catalogue.\n\n"
+            "Content reproduced under the EBA legal notice, which authorises\n"
+            "reproduction provided the source is acknowledged. Not affiliated with or\n"
+            "endorsed by the EBA.\n"
+        ),
+        children=(pay42,),
     )
 
 
@@ -226,11 +243,62 @@ def upsert_page(client: httpx.Client, page: Page, parent_id: str | None) -> str:
     return response.json()["id"]
 
 
-def upsert_tree(client: httpx.Client, page: Page, parent_id: str | None = None, depth: int = 0) -> int:
-    """Parents before children, because a child needs its parent's id."""
+def upsert_tree(client: httpx.Client, page: Page, parent_id: str | None = None, depth: int = 0) -> list[str]:
+    """Parents before children, because a child needs its parent's id.
+
+    Returns every id written, which is what the reindex call needs.
+    """
     page_id = upsert_page(client, page, parent_id)
     print(f"{'  ' * depth}✓ {page.display_name}  ({page_id})")
-    return 1 + sum(upsert_tree(client, child, page_id, depth + 1) for child in page.children)
+    return [page_id, *(i for child in page.children for i in upsert_tree(client, child, page_id, depth + 1))]
+
+
+def reindex(client: httpx.Client, page_ids: list[str]) -> None:
+    """Push the written pages into the search index.
+
+    The UI lists pages through `/search/hierarchy`, which reads the search index, while
+    the write goes to the database. Indexing is asynchronous, so freshly written pages
+    can be absent from every list view while `/hierarchy` shows them. Reindexing the
+    specific ids closes that gap without a full cluster reindex.
+    """
+    response = client.post(
+        "/v1/search/reindexEntities",
+        params={"timeoutMinutes": 5},
+        json=[{"id": page_id, "type": "page"} for page_id in page_ids],
+    )
+    if response.status_code == 403:
+        print("  Reindex needs an admin or bot token; skipped. The pages exist either way.")
+        return
+    if response.status_code == 404:
+        print("  No /v1/search/reindexEntities on this server; skipped.")
+        return
+    response.raise_for_status()
+    print(f"  Reindex requested for {len(page_ids)} pages.")
+
+
+def verify_listing(client: httpx.Client) -> None:
+    """Report the database count against the search-index count.
+
+    A gap between the two is the reason pages exist but do not show up in a list.
+    """
+
+    def count(path: str) -> int | str:
+        response = client.get(path, params={"limit": 100})
+        if response.status_code != 200:
+            return f"HTTP {response.status_code}"
+        payload = response.json()
+        return len(payload.get("data", payload if isinstance(payload, list) else []))
+
+    db = count(f"{PAGES_PATH}/hierarchy")
+    search = count(f"{PAGES_PATH}/search/hierarchy")
+    print(f"\n  database  /hierarchy:        {db}")
+    print(f"  search    /search/hierarchy: {search}")
+    if isinstance(db, int) and isinstance(search, int) and db > search:
+        print(
+            f"\n  {db - search} root page(s) are in the database but not in the search index,\n"
+            "  which is why they do not appear in the UI list. Re-run without --dry-run to\n"
+            "  reindex, or wait for the indexing job to catch up."
+        )
 
 
 def import_glossary(client: httpx.Client, glossary: str, csv_text: str, *, dry_run: bool) -> ImportResult:
@@ -284,6 +352,13 @@ def main() -> None:
         "The dry run happens either way, and a commit is refused if it is not clean.",
     )
     parser.add_argument("--pages-only", action="store_true", help="skip the glossary")
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="compare the database listing against the search-index listing and stop. "
+        "Use when pages exist but do not show up in the UI.",
+    )
+    parser.add_argument("--no-reindex", action="store_true", help="do not reindex after writing pages")
     parser.add_argument("--glossary-only", action="store_true", help="skip the Knowledge Pages")
     args = parser.parse_args()
 
@@ -306,9 +381,15 @@ def main() -> None:
         server = preflight(client, check_pages=not args.glossary_only)
         print(f"OpenMetadata {server} at {settings.host}")
 
+        if args.verify:
+            verify_listing(client)
+            return
+
         if not args.glossary_only:
-            total = upsert_tree(client, tree)
-            print(f"\n{total} pages written.")
+            page_ids = upsert_tree(client, tree)
+            print(f"\n{len(page_ids)} pages written.")
+            if not args.no_reindex:
+                reindex(client, page_ids)
 
         if not args.pages_only:
             run_glossary_import(
