@@ -390,11 +390,38 @@ def ensure_glossary(client: httpx.Client, glossary: str) -> None:
         )
 
 
-def run_glossary_import(client: httpx.Client, glossary: str, csv_path: Path, *, commit: bool) -> None:
+def reset_glossary(client: httpx.Client, glossary: str) -> None:
+    """Hard-delete the glossary and everything under it. Destructive, hence the flag.
+
+    A half-finished import can leave the glossary referencing a term that no longer
+    resolves; the next import then fails with `Entity not found: glossaryTerm <uuid>`
+    because the lookup excludes soft-deleted entities. Removing the glossary outright
+    takes its relationships with it.
+    """
+    response = client.delete(
+        f"/v1/glossaries/name/{glossary}",
+        params={"recursive": "true", "hardDelete": "true"},
+    )
+    match response.status_code:
+        case 200 | 204:
+            print(f"  Deleted glossary {glossary!r} and everything under it.")
+        case 404:
+            print(f"  No glossary {glossary!r} to delete.")
+        case 403:
+            raise SystemExit(f"  Not permitted to delete glossary {glossary!r}.")
+        case _:
+            raise SystemExit(f"  Deleting {glossary!r} failed: {response.status_code}\n  {response.text[:500]}")
+
+
+def run_glossary_import(
+    client: httpx.Client, glossary: str, csv_path: Path, *, commit: bool, reset: bool = False
+) -> None:
     """Always dry run first; only write when that came back clean and --commit was given."""
     csv_text = csv_path.read_text(encoding="utf-8")
 
     print(f"\nGlossary dry run ({glossary}):")
+    if reset:
+        reset_glossary(client, glossary)
     ensure_glossary(client, glossary)
     dry = import_glossary(client, glossary, csv_text, dry_run=True)
     print(f"  {dry.summary()}")
@@ -437,6 +464,12 @@ def main() -> None:
         "Use when pages exist but do not show up in the UI.",
     )
     parser.add_argument("--no-reindex", action="store_true", help="do not reindex after writing pages")
+    parser.add_argument(
+        "--reset-glossary",
+        action="store_true",
+        help="DESTRUCTIVE: hard-delete the glossary and all its terms before importing. "
+        "Use when a half-finished import left a dangling term reference.",
+    )
     parser.add_argument("--glossary-only", action="store_true", help="skip the Knowledge Pages")
     args = parser.parse_args()
 
@@ -475,6 +508,7 @@ def main() -> None:
                 settings.glossary,
                 PACK / "06-openmetadata-glossary.csv",
                 commit=args.commit,
+                reset=args.reset_glossary,
             )
 
 

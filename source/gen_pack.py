@@ -763,6 +763,17 @@ run with `dryRun=true` first and read the response.
 An empty `parent` puts a term directly under the glossary. `glossaryStatus` takes
 `Draft`, `Approved` or `Deprecated`.
 
+### `Entity not found: glossaryTerm <uuid>`
+
+A half-finished import can leave the glossary pointing at a term that no longer
+resolves - the import looks terms up excluding soft-deleted ones, so a soft-deleted
+term reads as missing and the whole import 404s. Clear it out and rebuild:
+
+    uv run import_to_openmetadata.py --glossary-only --reset-glossary
+
+That hard-deletes the glossary and everything under it, so only use it on a glossary
+this pack owns.
+
 The glossary is named `PAY_4_2`, not `PAY 4.2`, and carries the readable form in its
 displayName. OpenMetadata quotes any FQN part containing a dot, so a glossary called
 `PAY 4.2` is addressed as `"PAY 4.2".Domains`; a parent column written `PAY 4.2.Domains`
