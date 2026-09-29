@@ -93,7 +93,8 @@ Generated from `EBA PAY 4.2 (FRPPAY 4.2) annotated table layout, 2026-01-06`.
 
 ## Loading the glossary
 
-The CSV holds glossary **terms only**. Create the glossary itself first, then import:
+The CSV holds glossary **terms only** - it populates a glossary, it does not create
+one. `import_to_openmetadata.py` creates it if missing. To do it by hand:
 
 ```bash
 AUTH="Authorization: Bearer $OM_JWT_TOKEN"

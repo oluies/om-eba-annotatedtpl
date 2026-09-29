@@ -313,11 +313,50 @@ def import_glossary(client: httpx.Client, glossary: str, csv_text: str, *, dry_r
     return ImportResult.model_validate(response.json())
 
 
+GLOSSARY_DESCRIPTION = (
+    "Controlled vocabulary of the EBA PAY 4.2 (FRPPAY 4.2) framework for payment and fraud "
+    "reporting under PSD2: the domains and their members, the dimensions that draw on them, "
+    "and the metrics. Transcribed from the annotated table layout of 2026-01-06. Reproduced "
+    "under the EBA legal notice, which authorises reproduction provided the source is "
+    "acknowledged."
+)
+
+
+def ensure_glossary(client: httpx.Client, glossary: str) -> None:
+    """Create the glossary if it is not there.
+
+    The CSV import populates an existing glossary; it does not create one. Without this
+    the import returns a bare 404 that reads like a wrong URL.
+    """
+    existing = client.get(f"/v1/glossaries/name/{glossary}")
+    if existing.status_code == 200:
+        return
+    if existing.status_code != 404:
+        existing.raise_for_status()
+
+    print(f"  Glossary {glossary!r} does not exist; creating it.")
+    created = client.put(
+        "/v1/glossaries",
+        json={
+            "name": glossary,
+            "displayName": "PAY 4.2 (FRPPAY 4.2)",
+            "description": GLOSSARY_DESCRIPTION,
+        },
+    )
+    if created.status_code == 403:
+        raise SystemExit(
+            f"  Not permitted to create glossary {glossary!r}. Create it in the UI, or use a\n"
+            "  token with rights to create glossaries, then re-run."
+        )
+    created.raise_for_status()
+
+
 def run_glossary_import(client: httpx.Client, glossary: str, csv_path: Path, *, commit: bool) -> None:
     """Always dry run first; only write when that came back clean and --commit was given."""
     csv_text = csv_path.read_text(encoding="utf-8")
 
     print(f"\nGlossary dry run ({glossary}):")
+    ensure_glossary(client, glossary)
     dry = import_glossary(client, glossary, csv_text, dry_run=True)
     print(f"  {dry.summary()}")
     for line in dry.failures():
@@ -373,13 +412,13 @@ def main() -> None:
 
     settings = Settings()  # type: ignore[call-arg]  # jwt_token comes from the environment
     with httpx.Client(
-        base_url=settings.host,
+        base_url=settings.host.rstrip("/"),
         headers={"Authorization": f"Bearer {settings.jwt_token}"},
         verify=settings.ca_bundle or True,
         timeout=60.0,
     ) as client:
         server = preflight(client, check_pages=not args.glossary_only)
-        print(f"OpenMetadata {server} at {settings.host}")
+        print(f"OpenMetadata {server} at {str(client.base_url).rstrip('/')}")
 
         if args.verify:
             verify_listing(client)
