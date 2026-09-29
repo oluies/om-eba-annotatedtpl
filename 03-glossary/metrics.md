@@ -2,9 +2,7 @@
 
 What a datapoint measures. Every datapoint carries exactly one of these.
 
-> **Definitions.** The labels below are transcribed verbatim from the annotated table
-> layout. They are the framework's own wording, not a legal definition. Where a precise
-> definition is needed, cite EBA Guidelines on fraud reporting under PSD2 (EBA/GL/2018/05, as amended) rather than paraphrasing this file.
+**Definitions.** The labels below are transcribed verbatim from the annotated table layout. They are the framework's own wording, not a legal definition. Where a precise definition is needed, cite EBA Guidelines on fraud reporting under PSD2 (EBA/GL/2018/05, as amended) rather than paraphrasing this file.
 
 
 | Code | Metric | Unit | Templates |

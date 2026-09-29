@@ -109,14 +109,27 @@ class ImportResult(BaseModel):
 # --------------------------------------------------------------------------------------
 
 
-def title_of(markdown: str, fallback: str) -> str:
-    """The first level-1 heading, else the fallback."""
-    return next((line[2:].strip() for line in markdown.splitlines() if line.startswith("# ")), fallback)
+def split_title(markdown: str, fallback: str) -> tuple[str, str]:
+    """Separate the leading level-1 heading from the body.
+
+    OpenMetadata renders the page's displayName as the heading above the content, so a
+    body that starts with the same `# ...` shows the title twice. Take it for the
+    displayName and drop it from the body; a file with no leading H1 is left alone.
+    """
+    lines = markdown.splitlines()
+    head = next((i for i, line in enumerate(lines) if line.strip()), None)
+    if head is None or not lines[head].startswith("# "):
+        return fallback, markdown
+
+    rest = lines[head + 1 :]
+    while rest and not rest[0].strip():
+        rest = rest[1:]
+    return lines[head][2:].strip(), "\n".join(rest) + "\n"
 
 
 def leaf(path: Path, name: str | None = None) -> Page:
-    body = path.read_text(encoding="utf-8")
-    return Page(name=name or path.stem, display_name=title_of(body, path.stem), body=body)
+    title, body = split_title(path.read_text(encoding="utf-8"), path.stem)
+    return Page(name=name or path.stem, display_name=title, body=body)
 
 
 def section(name: str, display_name: str, body: str, children: tuple[Page, ...]) -> Page:

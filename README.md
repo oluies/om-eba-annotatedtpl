@@ -6,6 +6,8 @@ when describing tables, columns and glossary terms in OpenMetadata.
 
 **1830 datapoints, 14 templates, 14 dimensions over 4 domains, 54 controlled values.**
 
+![The pack loaded as Knowledge Pages in OpenMetadata](docs/knowledge-pages.png)
+
 ## Reproducing
 
 ```bash

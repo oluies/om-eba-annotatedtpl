@@ -108,10 +108,12 @@ DP_BY_TEMPLATE = defaultdict(list)
 for d in DPS:
     DP_BY_TEMPLATE[d["template"]].append(d)
 
+# Plain paragraph rather than a blockquote: OpenMetadata's markdown viewer renders
+# "> " as a literal character instead of a quote block.
 NOTE = (
-    "> **Definitions.** The labels below are transcribed verbatim from the annotated table\n"
-    "> layout. They are the framework's own wording, not a legal definition. Where a precise\n"
-    f"> definition is needed, cite {AUTHORITY} rather than paraphrasing this file.\n"
+    "**Definitions.** The labels below are transcribed verbatim from the annotated table "
+    "layout. They are the framework's own wording, not a legal definition. Where a precise "
+    f"definition is needed, cite {AUTHORITY} rather than paraphrasing this file.\n"
 )
 
 
@@ -218,10 +220,12 @@ dimension members are cumulative with the column's and the variant's.
 
 ## Suggested OpenMetadata description for the table
 
-> {name}, template `{template}` of the EBA PAY 4.2 (FRPPAY 4.2) framework for payment and
-> fraud reporting under PSD2. Reports {kind} as {metric_txt}, across {len(sheets)} variant(s)
-> covering {geo}. Contains {len(dps)} datapoints. Row and column codes follow the annotated
-> table layout; the numeric datapoint id is the stable key. Source: {SOURCE}.
+```text
+{name}, template {template} of the EBA PAY 4.2 (FRPPAY 4.2) framework for payment and
+fraud reporting under PSD2. Reports {kind} as {metric_txt}, across {len(sheets)} variant(s)
+covering {geo}. Contains {len(dps)} datapoints. Row and column codes follow the annotated
+table layout; the numeric datapoint id is the stable key. Source: {SOURCE}.
+```
 
 ## Suggested column descriptions
 
@@ -485,10 +489,12 @@ from its row or column code alone.
 State, in this order: what is measured, for which payment instrument, under which
 breakdown, and the source. Keep it to two or three sentences.
 
-> Number of fraudulent card-based payment transactions initiated electronically and
-> authenticated via strong customer authentication, reported by the issuing payment
-> service provider, for transactions cross-border within the EEA. Datapoint 437613 of
-> template Y_03.01 (EBA PAY 4.2), row 0080, column 0020. Unit: count, non-negative.
+```text
+Number of fraudulent card-based payment transactions initiated electronically and
+authenticated via strong customer authentication, reported by the issuing payment
+service provider, for transactions cross-border within the EEA. Datapoint 437613 of
+template Y_03.01 (EBA PAY 4.2), row 0080, column 0020. Unit: count, non-negative.
+```
 
 Rules:
 
@@ -633,6 +639,8 @@ under PSD2 — normalised from a 55-sheet spreadsheet into documentation an agen
 when describing tables, columns and glossary terms in OpenMetadata.
 
 **1830 datapoints, 14 templates, 14 dimensions over 4 domains, 54 controlled values.**
+
+![The pack loaded as Knowledge Pages in OpenMetadata](docs/knowledge-pages.png)
 
 ## Reproducing
 

@@ -38,10 +38,12 @@ from its row or column code alone.
 State, in this order: what is measured, for which payment instrument, under which
 breakdown, and the source. Keep it to two or three sentences.
 
-> Number of fraudulent card-based payment transactions initiated electronically and
-> authenticated via strong customer authentication, reported by the issuing payment
-> service provider, for transactions cross-border within the EEA. Datapoint 437613 of
-> template Y_03.01 (EBA PAY 4.2), row 0080, column 0020. Unit: count, non-negative.
+```text
+Number of fraudulent card-based payment transactions initiated electronically and
+authenticated via strong customer authentication, reported by the issuing payment
+service provider, for transactions cross-border within the EEA. Datapoint 437613 of
+template Y_03.01 (EBA PAY 4.2), row 0080, column 0020. Unit: count, non-negative.
+```
 
 Rules:
 
