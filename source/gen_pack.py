@@ -488,7 +488,7 @@ from its row or column code alone.
 One table per template, named for the template with its dot as an underscore, so
 `Y_01.01` lands in `Y_01_01`. A row is one submission. Columns come in two kinds.
 
-**Datapoint columns** match `[A-Za-z]+NNNN_rNNNN_cNNNN` - for example
+**Datapoint columns** match `^[A-Za-z][0-9]{4}_r[0-9]{4}_c[0-9]{4}$` - for example
 `Y0101_r0010_c0010`. These are the reported figures and the ones this pack describes.
 They are typically stored as `varchar`, so an amount or a count is text in the database
 even though the framework types it as monetary or numeric. Describe what the value is;
@@ -507,6 +507,8 @@ form frame around the figures. A real table looks like
 **Do not resolve a context column against this pack.** `Period_SK` is not a datapoint
 and has no framework meaning; describing it from here would be wrong. A column that does
 not match the datapoint pattern is warehouse context - describe it as such or leave it.
+The pattern matches all 320 datapoint column names in this framework and none of the
+context columns above.
 
 Check `Taxonomy_Name` first. A warehouse holding several EBA taxonomies uses the same
 naming convention for all of them, so a `Y0101_...` column only means PAY 4.2 when the
@@ -873,7 +875,7 @@ One table per template - `Y_01.01` lands in `Y_01_01` - with datapoint columns n
 `Y0101_r0010_c0010`: template with its separators stripped, then row and column code.
 `05-datapoints.csv` is keyed by both, as its first two fields.
 
-Everything that does not match `[A-Za-z]+NNNN_rNNNN_cNNNN` is warehouse context
+Everything that does not match `^[A-Za-z][0-9]{4}_r[0-9]{4}_c[0-9]{4}$` is warehouse context
 (`Period_SK`, `Company_BK`, `Taxonomy_Name`, ...) and has no framework meaning.
 
 The name carries no variant, so 302 of the 320 distinct names map to six datapoints each
@@ -891,3 +893,24 @@ datapoint id before writing any description.
 """,
 )
 print("README written")
+
+
+# --------------------------------------------------------------------------------------
+# Guard
+# --------------------------------------------------------------------------------------
+
+# OpenMetadata's markdown viewer turns '+' into &#43; and then escapes the ampersand
+# again, so it shows up as a literal &amp;#43; on the page. Nothing generated here needs
+# one, and it has crept back in twice, so fail the build rather than ship it.
+_OFFENDERS = {"+": "renders as &amp;#43; in OpenMetadata"}
+_problems = [
+    f"{path.relative_to(OUT)}:{n}: {reason}\n    {line.strip()[:100]}"
+    for path in sorted(OUT.rglob("*.md"))
+    if "source" not in path.parts
+    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+    for char, reason in _OFFENDERS.items()
+    if char in line
+]
+if _problems:
+    raise SystemExit("Characters that do not survive the OpenMetadata viewer:\n  " + "\n  ".join(_problems))
+print(f"guard: no offending characters in {len(list(OUT.rglob('*.md')))} markdown files")

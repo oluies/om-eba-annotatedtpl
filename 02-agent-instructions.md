@@ -27,7 +27,7 @@ from its row or column code alone.
 One table per template, named for the template with its dot as an underscore, so
 `Y_01.01` lands in `Y_01_01`. A row is one submission. Columns come in two kinds.
 
-**Datapoint columns** match `[A-Za-z]+NNNN_rNNNN_cNNNN` - for example
+**Datapoint columns** match `^[A-Za-z][0-9]4_r[0-9]4_c[0-9]4$` - for example
 `Y0101_r0010_c0010`. These are the reported figures and the ones this pack describes.
 They are typically stored as `varchar`, so an amount or a count is text in the database
 even though the framework types it as monetary or numeric. Describe what the value is;
@@ -46,6 +46,8 @@ form frame around the figures. A real table looks like
 **Do not resolve a context column against this pack.** `Period_SK` is not a datapoint
 and has no framework meaning; describing it from here would be wrong. A column that does
 not match the datapoint pattern is warehouse context - describe it as such or leave it.
+The pattern matches all 320 datapoint column names in this framework and none of the
+context columns above.
 
 Check `Taxonomy_Name` first. A warehouse holding several EBA taxonomies uses the same
 naming convention for all of them, so a `Y0101_...` column only means PAY 4.2 when the

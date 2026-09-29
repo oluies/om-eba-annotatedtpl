@@ -149,7 +149,7 @@ One table per template - `Y_01.01` lands in `Y_01_01` - with datapoint columns n
 `Y0101_r0010_c0010`: template with its separators stripped, then row and column code.
 `05-datapoints.csv` is keyed by both, as its first two fields.
 
-Everything that does not match `[A-Za-z]+NNNN_rNNNN_cNNNN` is warehouse context
+Everything that does not match `^[A-Za-z][0-9]4_r[0-9]4_c[0-9]4$` is warehouse context
 (`Period_SK`, `Company_BK`, `Taxonomy_Name`, ...) and has no framework meaning.
 
 The name carries no variant, so 302 of the 320 distinct names map to six datapoints each
