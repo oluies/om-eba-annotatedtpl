@@ -767,6 +767,84 @@ dimension from the datapoint row, never from the member code.
     )
 
 
+def write_lookup_tool_doc() -> None:
+    """How to wire the lookup into an agent that has a local tool list."""
+    write(
+        OUT / "08-lookup-tool.md",
+        """# Adding the lookup as an agent tool
+
+`pay42_lookup.py` resolves a warehouse column name to its datapoint without anyone
+counting rows on a page. Wiring it in takes three steps.
+
+## 1. Build the store
+
+```bash
+uv sync
+uv run source/build_duckdb.py
+```
+
+`pay42.duckdb` is derived and gitignored. Rebuild it after `gen_pack.py`; the lookup
+refuses to run without it rather than answering from a stale file.
+
+## 2. Register the tool
+
+`pay42_lookup.TOOL_DEFINITION` is the OpenAI function schema. Add it to the list the
+agent sends as `tools`:
+
+```python
+from pay42_lookup import TOOL_DEFINITION as PAY42_LOOKUP_TOOL
+
+TOOLS = [
+    *EXISTING_TOOLS,
+    PAY42_LOOKUP_TOOL,
+]
+```
+
+## 3. Dispatch it
+
+Wherever local tool calls are executed - the counterpart to whatever handles the MCP
+ones - add a branch that calls the function and returns its dict:
+
+```python
+from pay42_lookup import lookup_datapoint
+
+
+async def run_tool(name: str, arguments: dict):
+    match name:
+        case "lookup_datapoint":
+            return lookup_datapoint(arguments["column_name"], arguments.get("variant"))
+        case _:
+            ...
+```
+
+It is synchronous and reads a local file, so it needs no await and no client.
+
+## What it answers
+
+With a variant, the resolved datapoint. Without one, the fields common to all six plus
+the six candidates, and a message saying not to state a datapoint id or a unit - those
+are exactly what differs. It never picks a variant on its own.
+
+For a name that resolves to nothing it says so and repeats the pattern, so a context
+column like `Period_SK` comes back as a refusal rather than a guess.
+
+## Two notes on the store
+
+Compression is automatic and per column; DuckDB chooses Dictionary for these strings and
+there is no maximum to turn up. The block size is what matters at this size - the 256 KiB
+default rounds a 1830-row database up past the CSV it came from, so the build uses 16 KiB
+and a CHECKPOINT, which brings it to about 490 KiB with the indexes.
+
+The same file answers ad-hoc SQL, which is often quicker than asking an agent:
+
+```bash
+duckdb pay42.duckdb -c "SELECT * FROM datapoints WHERE row_label ILIKE '%fraud%' LIMIT 5"
+duckdb pay42.duckdb -c "SELECT term_fqn FROM column_terms WHERE column_name = 'Y0101_r0020_c0010'"
+```
+""",
+    )
+
+
 def write_agent_prompt() -> None:
     """The short stanza that goes into an agent's system prompt.
 
@@ -946,6 +1024,7 @@ def write_csvs() -> None:
 write_framework()
 write_agent_instructions()
 write_agent_prompt()
+write_lookup_tool_doc()
 GLOSSARY_TERMS = write_csvs()
 n = GLOSSARY_TERMS
 print(f"framework + agent instructions written; glossary CSV rows: {n}")
@@ -973,6 +1052,7 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `07-agent-prompt.md` | The stanza to paste into an agent's system prompt | You are configuring an agent |
 | `describe_table.py` | Writes descriptions and glossary terms onto a table's columns, by name | You are describing a real table |
 | `pay42_lookup.py` | Deterministic datapoint lookup over DuckDB, and its tool definition | You are giving an agent a lookup tool |
+| `08-lookup-tool.md` | How to register and dispatch that tool | You are wiring it into an agent |
 | `03-glossary/domains-and-members.md` | The {sum(len(m) for m in VOCAB["domains"].values())} controlled values across {len(VOCAB["domains"])} domains | You need the vocabulary |
 | `03-glossary/dimensions.md` | The {len(VOCAB["dimensions"])} breakdown axes | You need to know which axis a value belongs to |
 | `03-glossary/metrics.md` | The {len(VOCAB["properties"])} metrics and their units | You need the unit |

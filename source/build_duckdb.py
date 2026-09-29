@@ -22,8 +22,19 @@ DOMAIN_OF_DIMENSION = {
     "Payment transactions geographical breakdown": "Geographical breakdown",
 }
 
+# Compression is automatic and per column - DuckDB picks Dictionary for these strings on
+# its own, and there is no "maximum" to turn up. What does matter at this size is the
+# block size: at the 256 KiB default a 1830-row database rounds up to 1.8 MiB, larger
+# than the CSV it came from. 16 KiB blocks bring it to about 270 KiB.
+#
+# A database written with a non-default block size needs a DuckDB new enough to read it,
+# which any version that can write one is.
+BLOCK_SIZE = 16384
+
 DB.unlink(missing_ok=True)
-con = duckdb.connect(str(DB))
+con = duckdb.connect()
+con.execute(f"ATTACH '{DB}' AS pay42 (BLOCK_SIZE {BLOCK_SIZE})")
+con.execute("USE pay42")
 
 con.execute(f"CREATE TABLE datapoints AS SELECT * FROM read_csv('{REPO / '05-datapoints.csv'}', header=true)")
 con.execute(f"CREATE TABLE terms AS SELECT * FROM read_csv('{REPO / '06-openmetadata-glossary.csv'}', header=true)")
@@ -57,5 +68,7 @@ counts = {
     name: con.execute(f"SELECT count(*) FROM {name}").fetchone()[0]  # noqa: S608 - fixed names above
     for name in ("datapoints", "terms", "column_terms")
 }
+con.execute("CHECKPOINT")  # compress and compact before the handle closes
 con.close()
-print(f"{DB.name}: " + ", ".join(f"{n} {c}" for n, c in counts.items()))
+size = DB.stat().st_size / 1024
+print(f"{DB.name}: " + ", ".join(f"{n} {c}" for n, c in counts.items()) + f"  ({size:.0f} KiB)")
