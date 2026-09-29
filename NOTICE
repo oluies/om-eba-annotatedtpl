@@ -1,0 +1,45 @@
+This repository contains two kinds of material under two different terms.
+
+1. Software — MIT, see LICENSE
+-------------------------------
+
+    source/extract_dpm.py
+    source/vocab.py
+    source/gen_pack.py
+    import_to_openmetadata.py
+    pyproject.toml
+
+Copyright (c) 2026 Örjan Lundberg.
+
+
+2. EBA reporting-framework content — EBA terms, attribution required
+--------------------------------------------------------------------
+
+    source/20260106_Annotated_Table_Layout__PAY_4.2_PSD_FRPPAY_4.2.xlsx
+    01-framework.md, 02-agent-instructions.md
+    03-glossary/*.md
+    04-tables/*.md
+    05-datapoints.csv
+    06-openmetadata-glossary.csv
+
+These reproduce the template codes, row and column codes, datapoint
+identifiers, dimension and member labels, and the structure of the annotated
+table layout published by the European Banking Authority for PAY 4.2
+(FRPPAY 4.2), the payment and fraud reporting framework under PSD2.
+
+The EBA legal notice states:
+
+    "Reproduction of all EBA material on this site is authorised, provided the
+    source is acknowledged, save where otherwise stated."
+    -- https://www.eba.europa.eu/legal-notice
+
+That is a permission conditional on attribution, not a named open licence. The
+MIT licence in LICENSE does not extend to this material, and nothing here
+relicenses it.
+
+Source: EBA PAY 4.2 (FRPPAY 4.2) annotated table layout, 2026-01-06.
+
+This repository is not affiliated with, endorsed by, or published by the EBA.
+The labels are transcribed verbatim and carry no interpretation; for the
+regulatory definitions and the validation rules see the EBA Guidelines on
+fraud reporting under PSD2 (EBA/GL/2018/05, as amended).

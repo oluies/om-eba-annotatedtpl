@@ -657,6 +657,20 @@ uv run import_to_openmetadata.py               # write 22 Knowledge Pages, dry r
 uv run import_to_openmetadata.py --commit      # ... and write the glossary terms
 ```
 
+`OM_HOST` must include `/api` - OpenMetadata serves its API under `/api/v1/...`. The
+script preflights the base URL, the server version and the Knowledge Page endpoint, and
+fails with a diagnosis instead of an opaque 405.
+
+## Licence
+
+The code is MIT (see `LICENSE`). The PAY 4.2 content - codes, labels, datapoint ids,
+structure and the source workbook - is EBA material, reproduced under the EBA legal
+notice, which authorises reproduction provided the source is acknowledged. That is a
+permission with an attribution condition, not a named open licence, and the MIT licence
+does not extend to it. See `NOTICE`.
+
+Not affiliated with or endorsed by the EBA.
+
 Markdown goes to Knowledge Pages (`PUT /v1/contextCenter/pages`); the vocabulary goes to
 the glossary CSV import. There is no bulk file upload and no document library —
 `docStore/document.json` is a generic JSON payload store the UI uses for persona layouts.

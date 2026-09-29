@@ -176,8 +176,52 @@ def page_payload(page: Page, parent_id: str | None) -> dict[str, object]:
     return body if parent_id is None else body | {"parent": {"id": parent_id, "type": "page"}}
 
 
+PAGES_PATH = "/v1/contextCenter/pages"
+
+
+def preflight(client: httpx.Client, *, check_pages: bool) -> str:
+    """Fail with a diagnosis rather than an opaque 4xx from the first write.
+
+    Three things go wrong here and they look alike in a stack trace: a base URL without
+    `/api` (the ingress answers the path but rejects the method, which surfaces as 405),
+    a server too old to have the Knowledge Page API, and a token that is not accepted.
+    """
+    base = str(client.base_url).rstrip("/")
+    if not base.endswith("/api"):
+        raise SystemExit(
+            f"OM_HOST is {base!r}, but OpenMetadata serves its API under /api.\n"
+            f"This should almost certainly be {base}/api - without it the ingress answers\n"
+            "the request and rejects the method, which looks like a 405 on a valid path."
+        )
+
+    version = client.get("/v1/system/version")
+    if version.status_code == 401:
+        raise SystemExit("Authentication failed against /v1/system/version. Check OM_JWT_TOKEN.")
+    if version.status_code != 200:
+        raise SystemExit(
+            f"GET {base}/v1/system/version returned {version.status_code}, so this is probably\n"
+            "not an OpenMetadata API root. Check OM_HOST."
+        )
+    server = version.json().get("version", "unknown")
+
+    if not check_pages:
+        return server
+
+    probe = client.get(PAGES_PATH, params={"limit": 1})
+    if probe.status_code == 404:
+        raise SystemExit(
+            f"Server {server} has no {PAGES_PATH}. The Knowledge Page API is not in this\n"
+            "release, so the markdown cannot be imported as pages. Re-run with\n"
+            "--glossary-only to load the controlled vocabulary on its own."
+        )
+    if probe.status_code not in (200, 403):
+        probe.raise_for_status()
+
+    return server
+
+
 def upsert_page(client: httpx.Client, page: Page, parent_id: str | None) -> str:
-    response = client.put("/v1/contextCenter/pages", json=page_payload(page, parent_id))
+    response = client.put(PAGES_PATH, json=page_payload(page, parent_id))
     response.raise_for_status()
     return response.json()["id"]
 
@@ -259,6 +303,9 @@ def main() -> None:
         verify=settings.ca_bundle or True,
         timeout=60.0,
     ) as client:
+        server = preflight(client, check_pages=not args.glossary_only)
+        print(f"OpenMetadata {server} at {settings.host}")
+
         if not args.glossary_only:
             total = upsert_tree(client, tree)
             print(f"\n{total} pages written.")
