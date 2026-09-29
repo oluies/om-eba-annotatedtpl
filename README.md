@@ -15,6 +15,7 @@ when describing tables, columns and glossary terms in OpenMetadata.
 |---|---|---|
 | `01-framework.md` | What PAY 4.2 is, the 14 templates, the shape of the data | You need orientation |
 | `02-agent-instructions.md` | How to decode an identifier and write a description | **Start here** |
+| `07-agent-prompt.md` | The stanza to paste into an agent's system prompt | You are configuring an agent |
 | `03-glossary/domains-and-members.md` | The 54 controlled values across 4 domains | You need the vocabulary |
 | `03-glossary/dimensions.md` | The 14 breakdown axes | You need to know which axis a value belongs to |
 | `03-glossary/metrics.md` | The 3 metrics and their units | You need the unit |
@@ -77,6 +78,7 @@ a later framework can be loaded beside this one:
     └── PAY 4.2 (FRPPAY 4.2)
         ├── Framework
         ├── Agent instructions
+        ├── Agent prompt
         ├── Glossary      (dimensions, domains and members, metrics)
         └── Templates     (one page per template)
 

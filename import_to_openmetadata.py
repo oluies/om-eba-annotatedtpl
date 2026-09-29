@@ -156,6 +156,7 @@ def build_tree(pack: Path) -> Page:
         children=(
             leaf(pack / "01-framework.md", name="Framework"),
             leaf(pack / "02-agent-instructions.md", name="Agent instructions"),
+            leaf(pack / "07-agent-prompt.md", name="Agent prompt"),
             section(
                 "Glossary",
                 "Glossary",

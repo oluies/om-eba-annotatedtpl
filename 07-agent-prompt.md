@@ -1,0 +1,42 @@
+# Agent prompt for PAY 4.2 assets
+
+Paste the block below into the system prompt of an agent that describes assets in
+OpenMetadata. It is deliberately short: the trigger and the rules that must hold even if
+nothing is retrieved. The content lives in OpenMetadata as Context Center articles and
+glossary terms, reachable with `find_context`.
+
+```text
+When describing a table or column from an EBA reporting framework - table names like
+Y_01_01 or A_00_01, columns like Y0101_r0010_c0010 - first read the article "How to
+describe PAY 4.2 assets in OpenMetadata" (find_context) and follow it.
+
+These hold regardless of what you find:
+
+- Never create a table or column. Ingestion owns them. If the target does not exist,
+  say so instead of creating it.
+- /columns/N/description counts from the start of the whole columns array, not from the
+  start of the page. The right index is columnOffset plus the position within the
+  returned chunk. Getting it wrong writes a correct description onto the wrong column
+  and nothing complains.
+- Confirm with the user before calling patch_entity. Do not replace a description a
+  human wrote unless you were asked to.
+- A column name carries no variant. If the metric and geography cannot be established
+  from the table, describe what holds across all six variants and say the variant is
+  set by the table.
+- Columns that do not match ^[A-Za-z][0-9]{4}_r[0-9]{4}_c[0-9]{4}$ are warehouse
+  context. They have no framework meaning - do not describe them from the framework.
+```
+
+## Where to put it instead
+
+If the agent runs as an OpenMetadata persona, the same text can live in the persona
+context document and be fetched with `get_persona_context`. That keeps one copy for the
+organisation rather than one per agent. The trigger still belongs in the prompt, because
+the agent has to know to make that call.
+
+## Two things to check first
+
+Retrieval only works if the server supports it. `company_context` needs vector embeddings
+configured for its `query` mode - without them only `fqn` lookups work. And knowledge
+pills are extracted asynchronously, so confirm the articles reached
+`pageProcessingStatus: Processed` before relying on them being searchable.
