@@ -22,6 +22,35 @@ exists in every template and means something different in each. Never describe a
 from its row or column code alone.
 
 
+## Physical tables
+
+One table per template, named for the template with its dot as an underscore, so
+`Y_01.01` lands in `Y_01_01`. A row is one submission. Columns come in two kinds.
+
+**Datapoint columns** match `[A-Za-z]+NNNN_rNNNN_cNNNN` - for example
+`Y0101_r0010_c0010`. These are the reported figures and the ones this pack describes.
+They are typically stored as `varchar`, so an amount or a count is text in the database
+even though the framework types it as monetary or numeric. Describe what the value is;
+leave the storage type to whatever profiles the column.
+
+**Context columns** are everything else: the delivery, period, company, currency and
+form frame around the figures. A real table looks like
+
+    Data_Delivery_SK, Period_SK, Company_SK, Receive_Date,
+    Original_Currency_SK, Original_Currency, Exchange_Rate_SEK,
+    No_Of_Revisions, Form_BK, Form_Name, Taxonomy_Name,
+    Company_BK, Company_Name, Company_Type_Code, Company_Type_Label,
+    Period_Name, Period_Start_Date, Period_End_Date, Period_Type, ReferenceDate,
+    Y0101_r0010_c0010, Y0101_r0020_c0010, ...
+
+**Do not resolve a context column against this pack.** `Period_SK` is not a datapoint
+and has no framework meaning; describing it from here would be wrong. A column that does
+not match the datapoint pattern is warehouse context - describe it as such or leave it.
+
+Check `Taxonomy_Name` first. A warehouse holding several EBA taxonomies uses the same
+naming convention for all of them, so a `Y0101_...` column only means PAY 4.2 when the
+table is PAY 4.2.
+
 ## Warehouse column names
 
 Columns in the warehouse are named `<TEMPLATE><ROW><COLUMN>`, with the template's
