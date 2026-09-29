@@ -325,7 +325,14 @@ def import_glossary(client: httpx.Client, glossary: str, csv_text: str, *, dry_r
         content=csv_text,
         headers={"Content-Type": "text/plain"},
     )
-    response.raise_for_status()
+    if response.status_code >= 400:
+        # OpenMetadata puts the reason in the body. Raising bare for_status() throws it
+        # away and leaves a status code that could mean several different things.
+        raise SystemExit(
+            f"\n  {response.request.method} {response.request.url}\n"
+            f"  -> {response.status_code}\n"
+            f"  {response.text[:1000]}"
+        )
     return ImportResult.model_validate(response.json())
 
 
@@ -364,7 +371,23 @@ def ensure_glossary(client: httpx.Client, glossary: str) -> None:
             f"  Not permitted to create glossary {glossary!r}. Create it in the UI, or use a\n"
             "  token with rights to create glossaries, then re-run."
         )
-    created.raise_for_status()
+    if created.status_code >= 400:
+        raise SystemExit(f"  Creating glossary {glossary!r} failed: {created.status_code}\n  {created.text[:1000]}")
+
+    body = created.json()
+    print(f"    created name={body.get('name')!r} fqn={body.get('fullyQualifiedName')!r} id={body.get('id')}")
+
+    # Read it back rather than trusting the status code. A 2xx create followed by a 404
+    # from the import means the two are not addressing the same thing, and the name the
+    # server actually stored is what tells us why.
+    recheck = client.get(f"/v1/glossaries/name/{glossary}")
+    if recheck.status_code != 200:
+        raise SystemExit(
+            f"  Created glossary {glossary!r}, but GET /v1/glossaries/name/{glossary} still\n"
+            f"  returns {recheck.status_code}. The server stored it as name="
+            f"{body.get('name')!r}, fqn={body.get('fullyQualifiedName')!r}.\n"
+            f"  Set OM_GLOSSARY to that name and re-run.\n  {recheck.text[:500]}"
+        )
 
 
 def run_glossary_import(client: httpx.Client, glossary: str, csv_path: Path, *, commit: bool) -> None:
