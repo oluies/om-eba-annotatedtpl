@@ -598,10 +598,27 @@ full row and column grid with the datapoint ids. That is your lookup table.
 3. In that page, find the row whose code is `row` and read the datapoint id under the
    column whose code is `col`. The row's label and dimension members are on the same
    line, and the column's fixed members are in the Columns table above it.
-4. Establish the variant from the table, not the column. The page's Variants table lists
-   all six with their metric and geography. If the table does not tell you which one it
-   holds, describe what is true of all six and say so.
-5. If you cannot resolve an identifier, say so in the description rather than guessing.
+4. **Check what you read.** The row code printed on the line you used must equal the
+   `row` group from the column name, and the column code must equal `col`. If you took
+   `Y0101_r0010_c0010` and are looking at row 0030, you are one line off - a real failure
+   seen in practice, where the description was correct prose about the wrong datapoint.
+5. Establish the variant from the table, not the column. The page's Variants table lists
+   all six with their metric and geography.
+
+   If the table does not tell you which one it holds, say so and write only what is
+   constant. These are measured facts about this data, not a judgement call:
+
+   | Constant across all six variants | Differs per variant |
+   |---|---|
+   | row code, row label | **datapoint id** |
+   | column code, column label | **unit** (amount or count) |
+   | dimension members | **metric** |
+   | template code | **geography** |
+
+   So with no variant you have **no datapoint id and no unit**. Stating either is
+   inventing one of six answers. Name the row, the column, the dimension members and the
+   template, and say the variant is set by the table.
+6. If you cannot resolve an identifier, say so in the description rather than guessing.
    A wrong regulatory description is worse than a missing one.
 
 ## Writing the description
@@ -790,9 +807,15 @@ These hold regardless of what you find:
   description.
 - Confirm with the user before calling patch_entity. Do not replace a description a
   human wrote unless you were asked to.
-- A column name carries no variant. If the metric and geography cannot be established
-  from the table, describe what holds across all six variants and say the variant is
-  set by the table.
+- A column name carries no variant. Row code, row label, column code, column label,
+  dimension members and template code are the same for all six; the datapoint id, the
+  unit, the metric and the geography are not. So if the table does not establish the
+  variant, do not state a datapoint id or a unit - that picks one of six answers.
+  Describe the row, the column and the dimension members, and say the variant is set
+  by the table.
+- Before writing, check that the row and column codes on the line you read match the
+  row and col groups from the column name. Reading one line off produces correct prose
+  about the wrong datapoint, and nothing catches it.
 - Columns that do not match that pattern are warehouse context - Period_SK,
   Company_BK, Taxonomy_Name and the like. They have no framework meaning, so do not
   describe them from the framework.

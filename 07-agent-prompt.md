@@ -32,9 +32,15 @@ These hold regardless of what you find:
   description.
 - Confirm with the user before calling patch_entity. Do not replace a description a
   human wrote unless you were asked to.
-- A column name carries no variant. If the metric and geography cannot be established
-  from the table, describe what holds across all six variants and say the variant is
-  set by the table.
+- A column name carries no variant. Row code, row label, column code, column label,
+  dimension members and template code are the same for all six; the datapoint id, the
+  unit, the metric and the geography are not. So if the table does not establish the
+  variant, do not state a datapoint id or a unit - that picks one of six answers.
+  Describe the row, the column and the dimension members, and say the variant is set
+  by the table.
+- Before writing, check that the row and column codes on the line you read match the
+  row and col groups from the column name. Reading one line off produces correct prose
+  about the wrong datapoint, and nothing catches it.
 - Columns that do not match that pattern are warehouse context - Period_SK,
   Company_BK, Taxonomy_Name and the like. They have no framework meaning, so do not
   describe them from the framework.
