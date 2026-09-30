@@ -231,6 +231,15 @@ def lookup_dora(column_name: str, parts: dict[str, str]) -> dict[str, Any]:
         if chosen["row_kind"] == "open"
         else "This template has fixed rows, so the row code is a framework code."
     )
+
+    # The DPM writes an open row as r*, which is what a warehouse's form metadata keys on
+    # - not the ordinal the column name carries.
+    dpm_cell_code = (
+        "{"
+        + ", ".join([chosen["template"].replace("_", " "), f"r{chosen['row_code']}", f"c{chosen['column_code']}"])
+        + "}"
+    )
+
     return Resolved(
         found=True,
         column_name=column_name,
@@ -244,7 +253,9 @@ def lookup_dora(column_name: str, parts: dict[str, str]) -> dict[str, Any]:
             "column_label": chosen["column_label"],
             "row_kind": chosen["row_kind"],
             "row_code": chosen["row_code"],
-        },
+            "dpm_cell_code": dpm_cell_code,
+        }
+        | warehouse_context(dpm_cell_code),
         variant={"datapoint_id": chosen["datapoint_id"], "sign": chosen["sign"]},
     ).model_dump()
 
@@ -304,7 +315,7 @@ def lookup_datapoint(column_name: str, variant: str | None = None) -> dict[str, 
         return Resolved(
             found=True,
             column_name=column_name,
-            common=common,
+            common=common | warehouse_context(rows[0]["dpm_cell_code"]),
             variant={field: rows[0][field] for field in VARIES_BY_VARIANT},
         ).model_dump()
 
@@ -323,7 +334,14 @@ def lookup_datapoint(column_name: str, variant: str | None = None) -> dict[str, 
             "row, the column, the dimension members and the template are safe to describe. "
             "Do not characterise the variants from memory; use the wording above."
         ),
-        common=common | {"determining_the_variant": VARIANT_HINT.format(table=common["table_name"], n=len(rows))},
+        common=common
+        | {
+            "determining_the_variant": VARIANT_HINT.format(table=common["table_name"], n=len(rows)),
+            "warehouse": (
+                "not consulted - no single cell to look up until the variant is known. "
+                "Call again with one, and the warehouse's own datapoint key comes with it."
+            ),
+        },
         candidates=[{field: r[field] for field in VARIES_BY_VARIANT} for r in rows],
     ).model_dump()
 
