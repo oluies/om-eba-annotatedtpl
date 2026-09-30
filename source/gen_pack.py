@@ -678,9 +678,11 @@ full row and column grid with the datapoint ids. That is your lookup table.
    in EUR", which no variant is. Quote the labels you were given.
 
    `lookup_datapoint` returns them spelled out, and a `determining_the_variant` hint
-   saying how to settle it from the warehouse rather than by asking: count the datapoint
-   columns on the table. One variant's worth means the loader picked one and only the
-   pipeline knows which.
+   with the counts for that particular table. It cannot see the warehouse, and neither
+   can you: settle it from `get_entity_details`, which carries the column list and
+   `totalColumns` when it truncates. One variant's worth of datapoint columns means the
+   pipeline picked one and only a person knows which. MCP exposes no sample data, so
+   there is no third route.
 7. If you cannot resolve an identifier, say so in the description rather than guessing.
    A wrong regulatory description is worse than a missing one.
 

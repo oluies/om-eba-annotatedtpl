@@ -126,17 +126,24 @@ def split_column_name(column_name: str) -> dict[str, str] | None:
     }
 
 
-# How to settle the variant from the warehouse rather than by asking. A PAY .01 table
-# holds one variant per table, so the datapoint column count decides it: one variant's
-# worth means the loader picked one, six means the naming must encode it somehow.
+# How to settle the variant without warehouse access, which the agent calling this
+# probably does not have: this tool reads a local DuckDB file and knows nothing about the
+# database the table lives in. What the agent does have is get_entity_details, whose
+# response carries the column list and, when it truncates, totalColumns. Counting there
+# distinguishes a table holding one variant from one holding all six. MCP exposes no
+# sample data, so there is no third route - if the count says one variant, only the
+# pipeline that loaded it knows which, and that is a question for a person.
 VARIANT_HINT = (
-    "The variant is a property of the table, not the column. To settle it, count the "
-    "datapoint columns: SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME "
-    "= '{table}' AND COLUMN_NAME LIKE '%!_r%!_c%' ESCAPE '!'. A count matching one "
-    "variant means the table holds a single one and only the pipeline that loads it "
-    "knows which - ask. Six times that many means all six are present and the column "
-    "names must distinguish them, so check what they actually are. Anything else means "
-    "a context column discriminates; look at a few rows."
+    "The variant belongs to the table, not the column, and this tool cannot see your "
+    "warehouse. Settle it from get_entity_details on {table}, which you can already "
+    "call: count the columns matching ^[A-Za-z]{{1,}}[0-9]{{4}}_r[0-9]{{1,}}_c[0-9]{{4}}$, "
+    "paging with columnOffset while hasMoreColumns is true, or read totalColumns when the "
+    "response truncates. About {per_variant} datapoint columns plus the warehouse context "
+    "ones means the table holds a single variant, and only the pipeline that loads it "
+    "knows which - ask a person. About {all_variants} means all {n} are present, so the "
+    "column names must distinguish them and you should check what they actually are. "
+    "Neither is a licence to guess: until the variant is known, describe only what is "
+    "common to all {n}."
 )
 
 
@@ -258,6 +265,12 @@ def lookup_datapoint(column_name: str, variant: str | None = None) -> dict[str, 
     # said 0010 meant "Payments in EUR" - it is metric crossed with geography, and
     # currency does not come into it.
     spelled = "; ".join(f"{r['variant']} = {r['metric']}, {r['geography']}" for r in rows)
+    with _connect() as con:
+        columns_in_table = _rows(
+            con,
+            "SELECT count(DISTINCT column_name) AS n FROM datapoints WHERE table_name = ?",
+            common["table_name"],
+        )[0]["n"]
     return Resolved(
         found=True,
         column_name=column_name,
@@ -268,7 +281,15 @@ def lookup_datapoint(column_name: str, variant: str | None = None) -> dict[str, 
             "row, the column, the dimension members and the template are safe to describe. "
             "Do not characterise the variants from memory; use the wording above."
         ),
-        common=common | {"determining_the_variant": VARIANT_HINT.format(table=common["table_name"])},
+        common=common
+        | {
+            "determining_the_variant": VARIANT_HINT.format(
+                table=common["table_name"],
+                per_variant=columns_in_table,
+                all_variants=columns_in_table * len(rows),
+                n=len(rows),
+            )
+        },
         candidates=[{field: r[field] for field in VARIES_BY_VARIANT} for r in rows],
     ).model_dump()
 
