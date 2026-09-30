@@ -66,6 +66,10 @@ CONSTANT_ACROSS_VARIANTS = (
 )
 VARIES_BY_VARIANT = ("datapoint_id", "variant", "variant_label", "metric", "geography", "unit")
 
+# dpm_cell_code is the coordinate including the sheet, so it differs per variant and
+# belongs on the variant rather than in what is common to all six.
+VARIES_BY_VARIANT = (*VARIES_BY_VARIANT, "dpm_cell_code")
+
 
 class Resolved(BaseModel):
     """What a lookup answers with. Frozen: built once from the query, then only read."""
@@ -145,6 +149,23 @@ VARIANT_HINT = (
     "way, until you know, describe only what is common to all {n}: the row, the column, "
     "the dimension members and the template."
 )
+
+
+def warehouse_context(dpm_cell_code: str) -> dict[str, Any]:
+    """What the warehouse's own form metadata says about this cell, when reachable.
+
+    Optional and best-effort: without a BA_ connection, or if the query fails, the pack's
+    own answer stands on its own. A lookup must not become unusable because a database is
+    down.
+    """
+    try:
+        import ba_form_cell  # noqa: PLC0415 - optional dependency, imported where used
+
+        if not ba_form_cell.enabled():
+            return {}
+        return ba_form_cell.describe(ba_form_cell.fetch(dpm_cell_code))
+    except Exception as exc:  # noqa: BLE001 - enrichment must never fail the lookup
+        return {"warehouse_lookup_failed": f"{type(exc).__name__}: {exc}"}
 
 
 def lookup_dora(column_name: str, parts: dict[str, str]) -> dict[str, Any]:
@@ -248,7 +269,7 @@ def lookup_datapoint(column_name: str, variant: str | None = None) -> dict[str, 
         return Resolved(
             found=True,
             column_name=column_name,
-            common=common,
+            common=common | warehouse_context(chosen["dpm_cell_code"]),
             variant={field: chosen[field] for field in VARIES_BY_VARIANT},
         ).model_dump()
 

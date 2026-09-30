@@ -112,10 +112,20 @@ def datapoint_rows() -> list[dict]:
                 if reported is None:
                     raise SystemExit(f"No {DPM_VERSION} datapoint for {key}; regenerate the DPM export.")
 
+                # The join key to a warehouse's own form metadata. FI's BA_Form_Cell
+                # carries DPM_Cell_Code in this shape - template with a space rather than
+                # an underscore - so a description can be assembled from both sides.
+                # Verified to be unique across all 1830 cells.
+                parts = [template.replace("_", " "), f"r{row_code}", f"c{col_code}"]
+                if variant:
+                    parts.append(f"s{variant}")
+                dpm_cell_code = "{" + ", ".join(parts) + "}"
+
                 out.append(
                     {
                         "column_name": column_name,
                         "table_name": table_name,
+                        "dpm_cell_code": dpm_cell_code,
                         "datapoint_id": reported["datapoint_id"],
                         "datapoint_id_1_0_1": dp["id"],
                         "template": template,
@@ -929,6 +939,39 @@ are exactly what differs. It never picks a variant on its own.
 
 For a name that resolves to nothing it says so and repeats the pattern, so a context
 column like `Period_SK` comes back as a refusal rather than a guess.
+
+## Joining to the warehouse's own form metadata
+
+`05-datapoints.csv` carries `dpm_cell_code` in the shape `{{Y 01.01, r0010, c0010, s0010}}`,
+which is what a warehouse holding its own form metadata keys on. At FI that is
+`FIDW_BI.dbo.BA_Form_Cell`, and the two sides supply different things:
+
+| From the warehouse | From this pack |
+|---|---|
+| the warehouse's own datapoint key | EBA's VariableVID |
+| data type, presentation format | the dimension members |
+| Form_BK, Taxonomy_Name, the open-axis names | the glossary terms |
+| every form it holds | PAY 4.2 and DORA |
+
+`ba_form_cell.py` does that join when `BA_SERVER` is set, using Kerberos - no credentials
+in the connection string, the ticket from `kinit` carries the identity:
+
+```bash
+kinit
+export BA_SERVER=your-sql-server
+uv run pay42_lookup.py Y0101_r0010_c0010
+```
+
+It scopes to `Current_flg = 1`, the definition in force. A cell code present under
+several current forms is reported rather than resolved, because the column means
+different things in each and only the table's own `Form_BK` says which applies.
+
+Without `BA_SERVER` the pack answers on its own, which is what an agent with no database
+access gets. The enrichment never fails a lookup: a database that is down produces a note
+in the answer, not an error.
+
+**The SQL has not been run against the real table.** Treat the first run as a test and
+check the column names.
 
 ## Where the files go
 
