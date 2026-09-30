@@ -126,24 +126,24 @@ def split_column_name(column_name: str) -> dict[str, str] | None:
     }
 
 
-# How to settle the variant without warehouse access, which the agent calling this
-# probably does not have: this tool reads a local DuckDB file and knows nothing about the
-# database the table lives in. What the agent does have is get_entity_details, whose
-# response carries the column list and, when it truncates, totalColumns. Counting there
-# distinguishes a table holding one variant from one holding all six. MCP exposes no
-# sample data, so there is no third route - if the count says one variant, only the
-# pipeline that loaded it knows which, and that is a question for a person.
+# How to settle the variant without warehouse access, which the agent calling this does
+# not have: this tool reads a local DuckDB file and knows nothing about the database the
+# table lives in. What it does have is get_entity_details on the table.
+#
+# The first thing to look for is an open axis. The DPM's sheet axis can become one table
+# per variant, or one table holding all of them with a context column saying which row is
+# which - `Open_Axis_1`, whose values are the variant labels. Seen in the wild, so the
+# column count alone does not settle it: a table with one variant's worth of datapoint
+# columns may still carry all six, as rows.
 VARIANT_HINT = (
-    "The variant belongs to the table, not the column, and this tool cannot see your "
-    "warehouse. Settle it from get_entity_details on {table}, which you can already "
-    "call: count the columns matching ^[A-Za-z]{{1,}}[0-9]{{4}}_r[0-9]{{1,}}_c[0-9]{{4}}$, "
-    "paging with columnOffset while hasMoreColumns is true, or read totalColumns when the "
-    "response truncates. About {per_variant} datapoint columns plus the warehouse context "
-    "ones means the table holds a single variant, and only the pipeline that loads it "
-    "knows which - ask a person. About {all_variants} means all {n} are present, so the "
-    "column names must distinguish them and you should check what they actually are. "
-    "Neither is a licence to guess: until the variant is known, describe only what is "
-    "common to all {n}."
+    "The variant belongs to the row or the table, never the column, and this tool cannot "
+    "see your warehouse. From get_entity_details on {table}, look for a context column "
+    "named Open_Axis_1 or similar. If it is there the table holds every variant as rows, "
+    "that column says which, and a column description must not name a datapoint id or a "
+    "unit - both depend on the row. If there is no open axis the table holds a single "
+    "variant, and only the pipeline that loads it knows which, so ask a person. Either "
+    "way, until you know, describe only what is common to all {n}: the row, the column, "
+    "the dimension members and the template."
 )
 
 
@@ -265,12 +265,6 @@ def lookup_datapoint(column_name: str, variant: str | None = None) -> dict[str, 
     # said 0010 meant "Payments in EUR" - it is metric crossed with geography, and
     # currency does not come into it.
     spelled = "; ".join(f"{r['variant']} = {r['metric']}, {r['geography']}" for r in rows)
-    with _connect() as con:
-        columns_in_table = _rows(
-            con,
-            "SELECT count(DISTINCT column_name) AS n FROM datapoints WHERE table_name = ?",
-            common["table_name"],
-        )[0]["n"]
     return Resolved(
         found=True,
         column_name=column_name,
@@ -281,15 +275,7 @@ def lookup_datapoint(column_name: str, variant: str | None = None) -> dict[str, 
             "row, the column, the dimension members and the template are safe to describe. "
             "Do not characterise the variants from memory; use the wording above."
         ),
-        common=common
-        | {
-            "determining_the_variant": VARIANT_HINT.format(
-                table=common["table_name"],
-                per_variant=columns_in_table,
-                all_variants=columns_in_table * len(rows),
-                n=len(rows),
-            )
-        },
+        common=common | {"determining_the_variant": VARIANT_HINT.format(table=common["table_name"], n=len(rows))},
         candidates=[{field: r[field] for field in VARIES_BY_VARIANT} for r in rows],
     ).model_dump()
 

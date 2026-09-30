@@ -42,6 +42,12 @@ DATAPOINTS = PACK / "05-datapoints.csv"
 # Only these are framework columns. Everything else is warehouse context and is left alone.
 DATAPOINT_COLUMN = re.compile(r"^[A-Za-z][0-9]{4}_r[0-9]{4}_c[0-9]{4}$")
 
+# The DPM's sheet axis becomes an open axis in the warehouse: rather than one table per
+# variant, one table holds all of them and a context column says which row is which. Its
+# values are the variant labels without the code - "Domestic amount of payments" - which
+# matches variant_label exactly for all six, verified.
+OPEN_AXIS_COLUMN = re.compile(r"^Open_Axis_[0-9]+$", re.IGNORECASE)
+
 GLOSSARY = "PAY_4_2"
 DOMAIN_OF_DIMENSION = {
     "Event Type": "Fraud event types",
@@ -92,6 +98,22 @@ class Datapoint(BaseModel):
                     pairs.append((dimension.strip(), member.strip()))
         return pairs
 
+    def description_without_variant(self, axis_column: str) -> str:
+        """What holds across every variant, for a table that carries all of them.
+
+        No datapoint id and no unit: those differ per variant, and here the variant is a
+        property of the row rather than of the table. Naming the axis column is what lets
+        a reader get from this description to the specific datapoint.
+        """
+        members = "; ".join(f"{dim} = {member}" for dim, member in self.dimension_members)
+        return (
+            f"{self.row_label} — {self.column_label}. "
+            + (f"Dimension members: {members}. " if members else "")
+            + f"Template {self.template} (EBA PAY 4.2), row {self.row_code}, column {self.column_code}. "
+            f"This table holds every variant; `{axis_column}` on each row gives the metric and "
+            "geography, and with it the datapoint id and the unit. Non-negative."
+        )
+
     def description(self) -> str:
         unit = "monetary amount" if self.unit != "#" else "count"
         members = "; ".join(f"{dim} = {member}" for dim, member in self.dimension_members)
@@ -134,13 +156,31 @@ def pick(candidates: list[Datapoint], variant: str | None) -> Datapoint | None:
     return candidates[0] if len(candidates) == 1 else None
 
 
+def find_open_axis(table_columns: list[dict]) -> str | None:
+    """The context column carrying the variant, if the table has one."""
+    return next(
+        (
+            c["fullyQualifiedName"].rsplit(".", 1)[-1]
+            for c in table_columns
+            if OPEN_AXIS_COLUMN.match(c["fullyQualifiedName"].rsplit(".", 1)[-1])
+        ),
+        None,
+    )
+
+
 def columns_to_write(
-    table_columns: list[dict], by_column: dict[str, list[Datapoint]], variant: str | None
+    table_columns: list[dict],
+    by_column: dict[str, list[Datapoint]],
+    variant: str | None,
+    axis_column: str | None,
 ) -> tuple[list[tuple[str, Datapoint]], list[str]]:
     """Pair each datapoint column with the datapoint it reports.
 
     Pure. Context columns and columns with no datapoint are left out rather than
     described from a framework they do not belong to.
+
+    With an open axis the table carries every variant as rows, so any candidate serves:
+    the description written from it is the one that holds for all of them.
     """
     write, skipped = [], []
     for column in table_columns:
@@ -149,7 +189,7 @@ def columns_to_write(
         candidates = by_column.get(name)
         if not DATAPOINT_COLUMN.match(name) or not candidates:
             continue
-        chosen = pick(candidates, variant)
+        chosen = pick(candidates, variant) if axis_column is None else candidates[0]
         if chosen is None:
             skipped.append(f"{name} ({len(candidates)} variants, none chosen)")
             continue
@@ -190,7 +230,7 @@ def fetch_columns(client: httpx.Client, table_fqn: str) -> list[dict]:
         offset += len(page)
 
 
-def update_column(client: httpx.Client, fqn: str, dp: Datapoint) -> httpx.Response:
+def update_column(client: httpx.Client, fqn: str, dp: Datapoint, axis_column: str | None) -> httpx.Response:
     """Set one column's description and glossary terms, addressed by name.
 
     `PUT /v1/columns/name/{fqn}` rather than a JSON patch on /columns/N: the index is
@@ -202,7 +242,7 @@ def update_column(client: httpx.Client, fqn: str, dp: Datapoint) -> httpx.Respon
         f"/v1/columns/name/{fqn}",
         params={"entityType": "table"},
         json={
-            "description": dp.description(),
+            "description": dp.description_without_variant(axis_column) if axis_column else dp.description(),
             "tags": [{"tagFQN": term, "source": "Glossary"} for term in dp.glossary_terms()],
         },
     )
@@ -226,11 +266,22 @@ def main() -> None:
         by_column = load_datapoints()
         columns = fetch_columns(client, args.fqn)
         table = args.fqn.rsplit(".", 1)[-1]
+        axis_column = find_open_axis(columns)
+
+        if axis_column and args.variant:
+            raise SystemExit(
+                f"  {table} has an open axis, `{axis_column}`, so it holds every variant as rows "
+                f"and a column is not one of them. Drop --variant: the descriptions will say what "
+                f"holds for all six and name `{axis_column}` as where the rest comes from."
+            )
         check_variant(by_column, table, args.variant)
 
-        write, skipped = columns_to_write(columns, by_column, args.variant)
+        write, skipped = columns_to_write(columns, by_column, args.variant, axis_column)
 
         print(f"{args.fqn}: {len(columns)} columns, {len(write)} to describe")
+        if axis_column:
+            print(f"  open axis `{axis_column}`: every variant is present as rows, so descriptions omit")
+            print("  the datapoint id and the unit and point at that column instead.")
         if skipped:
             per_variant = len({dp.column_name for dps in by_column.values() for dp in dps if dp.table_name == table})
             print(
@@ -245,7 +296,7 @@ def main() -> None:
         if not args.commit:
             fqn, dp = write[0]
             print(f"\n  Example, {fqn.rsplit('.', 1)[-1]}:")
-            print(f"    {dp.description()}")
+            print(f"    {dp.description_without_variant(axis_column) if axis_column else dp.description()}")
             if not args.no_terms:
                 for term in dp.glossary_terms():
                     print(f"    term: {term}")
@@ -255,11 +306,12 @@ def main() -> None:
         failed = []
         for fqn, dp in write:
             if args.no_terms:
+                text = dp.description_without_variant(axis_column) if axis_column else dp.description()
                 response = client.put(
-                    f"/v1/columns/name/{fqn}", params={"entityType": "table"}, json={"description": dp.description()}
+                    f"/v1/columns/name/{fqn}", params={"entityType": "table"}, json={"description": text}
                 )
             else:
-                response = update_column(client, fqn, dp)
+                response = update_column(client, fqn, dp, axis_column)
             if response.status_code >= 400:
                 failed.append(f"{fqn.rsplit('.', 1)[-1]}: {response.status_code} {response.text[:160]}")
 
