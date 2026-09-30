@@ -181,6 +181,7 @@ def build_tree(pack: Path) -> Page:
         body=(pack / "dora" / "01-framework.md").read_text(encoding="utf-8").split("\n", 1)[1].lstrip(),
         children=(
             leaf(pack / "dora" / "02-agent-instructions.md", name="DORA agent instructions"),
+            leaf(pack / "dora" / "04-glossary.md", name="DORA glossary"),
             section(
                 "DORA templates",
                 "Templates",

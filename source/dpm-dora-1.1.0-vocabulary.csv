@@ -1,0 +1,125 @@
+datapoint_id,template,column_code,kind,name,extra,domain
+3287126,B_01.01,0020,property,Name of entity,string (non empty),""
+487507,B_01.01,0030,property,Country where the license or registration has been issued,enumeration,""
+487476,B_01.01,0040,property,Counterparty nature,enumeration,""
+487479,B_01.01,0050,property,Competent authority,string (non empty),""
+487477,B_01.01,0060,property,Date of reporting,date,""
+3282420,B_01.02,0020,property,Name of entity,string (non empty),""
+487508,B_01.02,0030,property,Country where the license or registration has been issued,enumeration,""
+487136,B_01.02,0040,property,Type of entity within the scope of the register of information,enumeration,""
+487510,B_01.02,0050,property,Role of entity within and outside a group,enumeration,""
+3287585,B_01.02,0060,member,Direct parent,"",Related parties/Relationships
+3287585,B_01.02,0060,property,LEI code of the direct parent,string (non empty),""
+482938,B_01.02,0070,property,Last date of record entry,date,""
+482939,B_01.02,0080,property,Date of integration,date,""
+482940,B_01.02,0090,property,Date of deletion,date,""
+487511,B_01.02,0100,member,Currency used for the preparation of the entity’s financial statements,"",Currency
+487511,B_01.02,0100,property,Code of the currency,enumeration,""
+3289510,B_01.02,0110,member,Assets,"",Accounting items
+3289510,B_01.02,0110,property,Amount as defined in Annex IV of ITS on ICT TPP register,monetary,""
+3287125,B_01.03,0030,property,Name of entity,string (non empty),""
+487509,B_01.03,0040,property,Country of location,enumeration,""
+483167,B_02.01,0020,property,Type of contractual arrangement,enumeration,""
+487321,B_02.01,0030,member,Overarching arrangement,"",Contracts/Transactions
+487321,B_02.01,0030,property,Contractual arrangement reference number,string (non empty),""
+487512,B_02.01,0040,member,Currency used to report annual expense or estimated cost,"",Currency
+487512,B_02.01,0040,property,Code of the currency,enumeration,""
+483144,B_02.01,0050,property,Annual expense or estimated cost,monetary,""
+3296069,B_02.02,0040,property,Type of code to identify the ICT third-party service provider,enumeration,""
+3291598,B_02.02,0070,property,Start date,date,""
+3291599,B_02.02,0080,property,End date,date,""
+3291600,B_02.02,0090,property,Reason for contract termination,enumeration,""
+3291614,B_02.02,0100,member,User,User of the service under the contractual arrangement,Contracts/Transactions
+3291614,B_02.02,0100,property,Notice period for termination,integer,""
+3291615,B_02.02,0110,member,Provider,Provider of the service under the contractual arrangement,Contracts/Transactions
+3291615,B_02.02,0110,property,Notice period for termination,integer,""
+3291613,B_02.02,0120,property,Country the law of which governs the contract,enumeration,""
+3291603,B_02.02,0140,property,Storage of data,enumeration,""
+3291602,B_02.02,0170,member,Provider,Provider of the service under the contractual arrangement,Contracts/Transactions
+3291602,B_02.02,0170,member,storage (data at rest),"",Type of activity
+3291602,B_02.02,0170,property,Data sensitivness,enumeration,""
+3291601,B_02.02,0180,member,ICT services,"",Type of activity
+3291601,B_02.02,0180,member,User,User of the service under the contractual arrangement,Contracts/Transactions
+3291601,B_02.02,0180,property,Level of reliance on the service,enumeration,""
+3282928,B_02.03,0030,property,Link,true,""
+3287587,B_03.01,0030,property,Link,true,""
+3296067,B_03.02,0030,property,Type of code to identify the ICT third-party service provider,enumeration,""
+3287586,B_03.03,0031,property,Link,true,""
+483520,B_04.01,0030,member,User,User of the service under the contractual arrangement,Contracts/Transactions
+483520,B_04.01,0030,property,Branch/not a branch,enumeration,""
+3296070,B_05.01,0020,property,Type of code to identify the ICT third-party service provider,enumeration,""
+3296075,B_05.01,0030,property,Additional identification code of ICT third-party service provider,string (non empty),""
+3296073,B_05.01,0040,property,Type of code,enumeration,""
+3291720,B_05.01,0050,property,Name of entity,string (non empty),""
+3296076,B_05.01,0060,property,Name of entity (latin version),string (non empty),""
+3291612,B_05.01,0070,property,Type of legal entity,enumeration,""
+3291616,B_05.01,0080,member,headquarter,"",Related parties/Relationships
+3291616,B_05.01,0080,property,Country where the license or registration has been issued,enumeration,""
+3291617,B_05.01,0090,property,Code of the currency,enumeration,""
+3291597,B_05.01,0100,property,Annual expense or estimated cost,monetary,""
+3291596,B_05.01,0110,member,Ultimate parent,"",Related parties/Relationships
+3291596,B_05.01,0110,property,Identification code,string (non empty),""
+3296074,B_05.01,0120,member,Ultimate parent,"",Related parties/Relationships
+3296074,B_05.01,0120,property,Type of code,enumeration,""
+3296071,B_05.02,0040,property,Type of code to identify the ICT third-party service provider,enumeration,""
+3296072,B_05.02,0070,property,Type of code used to identify the subcontractor,enumeration,""
+485465,B_06.01,0020,property,Type of licenced activity,enumeration,""
+487452,B_06.01,0030,property,Name of operational/business functions of an entity,string (non empty),""
+485467,B_06.01,0050,property,Function is critical or important?,enumeration,""
+485468,B_06.01,0060,member,Yes,"",Boolean total
+485468,B_06.01,0060,property,Additional information,string (non empty),""
+485466,B_06.01,0070,property,Date of last assessment of criticality or importance of the function,date,""
+487474,B_06.01,0080,property,Recovery time objective of the function,integer,""
+487475,B_06.01,0090,property,Recovery point objective of the function,integer,""
+485464,B_06.01,0100,property,Impact of function discontinuing,enumeration,""
+3296068,B_07.01,0030,property,Type of code to identify the ICT third-party service provider,enumeration,""
+3291608,B_07.01,0050,member,Provider,Provider of the service under the contractual arrangement,Contracts/Transactions
+3291608,B_07.01,0050,property,Substituibility assessment,enumeration,""
+3291609,B_07.01,0060,member,Provider,Provider of the service under the contractual arrangement,Contracts/Transactions
+3291609,B_07.01,0060,property,Reasons for the substituibility assessment outcome,enumeration,""
+3291605,B_07.01,0070,member,Provider,Provider of the service under the contractual arrangement,Contracts/Transactions
+3291605,B_07.01,0070,property,Date of the last audit,date,""
+3291604,B_07.01,0080,property,Existence of an exit plan,enumeration,""
+3291610,B_07.01,0090,property,Possibility of reintegration of the contracted service,enumeration,""
+3291611,B_07.01,0100,property,Impact of service discontinuing,enumeration,""
+3291606,B_07.01,0110,property,Alternative providers,enumeration,""
+3291607,B_07.01,0120,member,Yes,"",Boolean total
+3291607,B_07.01,0120,property,Additional information,string (non empty),""
+483168,B_99.01,0010,member,Standalone arrangement,"",Contracts/Transactions
+483168,B_99.01,0010,property,Internal definitions,string (non empty),""
+483169,B_99.01,0020,member,Overarching arrangement,"",Contracts/Transactions
+483169,B_99.01,0020,property,Internal definitions,string (non empty),""
+483170,B_99.01,0030,member,Subsequent or associated arrangement,"",Contracts/Transactions
+483170,B_99.01,0030,property,Internal definitions,string (non empty),""
+483171,B_99.01,0040,member,Low,"",Code Lists
+483171,B_99.01,0040,property,Internal definitions,string (non empty),""
+483172,B_99.01,0050,member,Medium,"",Code Lists
+483172,B_99.01,0050,property,Internal definitions,string (non empty),""
+483173,B_99.01,0060,member,High,"",Code Lists
+483173,B_99.01,0060,property,Internal definitions,string (non empty),""
+483184,B_99.01,0070,member,Low,"",Code Lists
+483184,B_99.01,0070,property,Internal definitions,string (non empty),""
+483185,B_99.01,0080,member,Medium,"",Code Lists
+483185,B_99.01,0080,property,Internal definitions,string (non empty),""
+483186,B_99.01,0090,member,High,"",Code Lists
+483186,B_99.01,0090,property,Internal definitions,string (non empty),""
+483174,B_99.01,0100,member,Not substitutable,"",Code Lists
+483174,B_99.01,0100,property,Internal definitions,string (non empty),""
+483175,B_99.01,0110,member,Highly complex substitutability,"",Code Lists
+483175,B_99.01,0110,property,Internal definitions,string (non empty),""
+483176,B_99.01,0120,member,Medium complexity in terms of substitutability,"",Code Lists
+483176,B_99.01,0120,property,Internal definitions,string (non empty),""
+483177,B_99.01,0130,member,Easily substitutable,"",Code Lists
+483177,B_99.01,0130,property,Internal definitions,string (non empty),""
+483178,B_99.01,0140,member,Easy,"",Code Lists
+483178,B_99.01,0140,property,Internal definitions,string (non empty),""
+483179,B_99.01,0150,member,Difficult,"",Code Lists
+483179,B_99.01,0150,property,Internal definitions,string (non empty),""
+483180,B_99.01,0160,member,Highly complex,"",Code Lists
+483180,B_99.01,0160,property,Internal definitions,string (non empty),""
+483181,B_99.01,0170,member,Low,"",Code Lists
+483181,B_99.01,0170,property,Internal definitions,string (non empty),""
+483182,B_99.01,0180,member,Medium,"",Code Lists
+483182,B_99.01,0180,property,Internal definitions,string (non empty),""
+483183,B_99.01,0190,member,High,"",Code Lists
+483183,B_99.01,0190,property,Internal definitions,string (non empty),""

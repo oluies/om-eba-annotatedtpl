@@ -20,6 +20,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 SOURCE_DIR = REPO / "source"
 DATA = SOURCE_DIR / "dpm-dora-1.1.0-datapoints.csv"
+VOCAB = SOURCE_DIR / "dpm-dora-1.1.0-vocabulary.csv"
 OUT = REPO / "dora"
 
 SOURCE = "EBA DPM 2.0 database, module DORA 1.1.0"
@@ -50,6 +51,18 @@ rows = list(csv.DictReader(DATA.open(encoding="utf-8")))
 by_template: dict[str, list[dict[str, str]]] = defaultdict(list)
 for row in rows:
     by_template[row["template"]].append(row)
+
+vocab = list(csv.DictReader(VOCAB.open(encoding="utf-8")))
+PROPERTIES = {v["name"]: v for v in vocab if v["kind"] == "property" and v["name"]}
+MEMBERS_BY_DOMAIN: dict[str, dict[str, str]] = defaultdict(dict)
+for v in vocab:
+    if v["kind"] == "member" and v["name"]:
+        MEMBERS_BY_DOMAIN[v["domain"] or "Uncategorised"][v["name"]] = v["extra"]
+
+COLUMNS_USING: dict[str, list[str]] = defaultdict(list)
+for v in vocab:
+    if v["name"]:
+        COLUMNS_USING[v["name"]].append(f"{v['template']} c{v['column_code']}")
 
 OPEN = [r for r in rows if r["row_kind"] == "open"]
 FIXED = [r for r in rows if r["row_kind"] == "fixed"]
@@ -175,6 +188,59 @@ warehouse context columns alone.
     )
 
 
+def write_glossary() -> None:
+    """The vocabulary behind DORA's columns.
+
+    Two kinds. A **property** is what a column holds and what type it is - the column's
+    own concept, of which there are 50 across the 85 columns. A **member** is a value on
+    a dimension, which only the 37 columns that carry a dimensional context have.
+
+    PAY's glossary is the other way round: few properties, many members. DORA describes
+    entities and contracts rather than measuring them, so most of its meaning sits in
+    what the column *is* rather than in how it is broken down.
+    """
+    prop_rows = [
+        [name, v["extra"] or "—", str(len(COLUMNS_USING[name])), ", ".join(sorted(set(COLUMNS_USING[name]))[:3])]
+        for name, v in sorted(PROPERTIES.items())
+    ]
+    domain_sections = []
+    for domain, members in sorted(MEMBERS_BY_DOMAIN.items()):
+        table = md_table(
+            ["Member", "Description", "Columns"],
+            [
+                [name, (desc or "—")[:110], ", ".join(sorted(set(COLUMNS_USING[name]))[:3])]
+                for name, desc in sorted(members.items())
+            ],
+        )
+        domain_sections.append(f"### {domain}\n\n{len(members)} members.\n\n{table}")
+
+    write(
+        OUT / "04-glossary.md",
+        f"""# DORA glossary
+
+The vocabulary behind the {len(rows)} columns, from {SOURCE}.
+
+**Definitions.** These are the framework's own wording, not legal definitions. Where a
+precise one is needed, cite {AUTHORITY}.
+
+## Properties
+
+What a column holds, and its type. {len(PROPERTIES)} distinct properties across {len(rows)} columns -
+so most columns have their own, which is what makes DORA a register rather than a
+measurement.
+
+{md_table(["Property", "Type", "Columns", "Used by"], prop_rows)}
+
+## Domain members
+
+Only the columns that carry a dimensional context have these: {len(vocab) - len(rows)} of {len(rows)}.
+{sum(len(m) for m in MEMBERS_BY_DOMAIN.values())} members across {len(MEMBERS_BY_DOMAIN)} domains.
+
+"""
+        + "\n\n".join(domain_sections),
+    )
+
+
 def write_templates() -> None:
     for code, rs in sorted(by_template.items()):
         first = rs[0]
@@ -236,5 +302,6 @@ Source: {SOURCE}.
 
 write_overview()
 write_agent_instructions()
+write_glossary()
 write_templates()
 print(f"dora/: {len(by_template)} templates, {len(rows)} datapoints ({len(OPEN)} open rows, {len(FIXED)} fixed)")
