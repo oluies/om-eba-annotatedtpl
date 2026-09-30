@@ -15,7 +15,7 @@ when describing tables, columns and glossary terms in OpenMetadata.
 |---|---|---|
 | `01-framework.md` | What PAY 4.2 is, the 14 templates, the shape of the data | You need orientation |
 | `02-agent-instructions.md` | How to decode an identifier and write a description | **Start here** |
-| `07-agent-prompt.md` | The stanza to paste into an agent's system prompt | You are configuring an agent |
+| `07-agent-prompt.md` | The stanza to paste into an agent's system prompt, covering every framework | You are configuring an agent |
 | `describe_table.py` | Writes descriptions and glossary terms onto a table's columns, by name | You are describing a real table |
 | `pay42_lookup.py` | Deterministic datapoint lookup over DuckDB, and its tool definition | You are giving an agent a lookup tool |
 | `08-lookup-tool.md` | How to register and dispatch that tool | You are wiring it into an agent |

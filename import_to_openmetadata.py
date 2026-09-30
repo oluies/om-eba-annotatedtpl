@@ -156,7 +156,6 @@ def build_tree(pack: Path) -> Page:
         children=(
             leaf(pack / "01-framework.md", name="Framework"),
             leaf(pack / "02-agent-instructions.md", name="Agent instructions"),
-            leaf(pack / "07-agent-prompt.md", name="Agent prompt"),
             section(
                 "Glossary",
                 "Glossary",
@@ -202,7 +201,11 @@ def build_tree(pack: Path) -> Page:
             "reproduction provided the source is acknowledged. Not affiliated with or\n"
             "endorsed by the EBA.\n"
         ),
-        children=(pay42, dora),
+        children=(
+            leaf(pack / "07-agent-prompt.md", name="Agent prompt"),
+            pay42,
+            dora,
+        ),
     )
 
 
