@@ -20,9 +20,33 @@ from typing import Any
 
 import duckdb
 from pydantic import BaseModel, ConfigDict
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PACK = Path(__file__).parent
-DB = PACK / "pay42.duckdb"
+
+
+class DuckDBSettings(BaseSettings):
+    """Where the store and DuckDB's scratch files live.
+
+    DuckDB reads no environment variables of its own - every directory is a `SET` or a
+    connection config - so these are ours, read once at import.
+
+    Left alone, DuckDB puts scratch files next to the database, at `<db>.tmp` - so a
+    read-only mount holding the store has nowhere to spill. (The documented `.tmp`
+    relative to the working directory applies to in-memory databases, not this one.)
+    Setting `PAY42_TEMP_DIR` moves them somewhere writable.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="PAY42_", env_file=".env", extra="ignore")
+
+    db: Path = PACK / "pay42.duckdb"
+    temp_dir: Path | None = None
+    extension_dir: Path | None = None
+    memory_limit: str | None = None
+
+
+SETTINGS = DuckDBSettings()
+DB = SETTINGS.db
 
 # Fields that are identical across every variant of one column name, measured across the
 # 302 multi-variant columns rather than assumed. Everything else differs per variant, so
@@ -58,7 +82,17 @@ class Resolved(BaseModel):
 def _connect() -> duckdb.DuckDBPyConnection:
     if not DB.exists():
         raise SystemExit(f"{DB} is missing. Build it with: uv run source/build_duckdb.py")
-    return duckdb.connect(str(DB), read_only=True)
+
+    config: dict[str, str] = {}
+    if SETTINGS.temp_dir:
+        SETTINGS.temp_dir.mkdir(parents=True, exist_ok=True)
+        config["temp_directory"] = str(SETTINGS.temp_dir)
+    if SETTINGS.extension_dir:
+        config["extension_directory"] = str(SETTINGS.extension_dir)
+    if SETTINGS.memory_limit:
+        config["memory_limit"] = SETTINGS.memory_limit
+
+    return duckdb.connect(str(DB), read_only=True, config=config)
 
 
 def _rows(cursor: duckdb.DuckDBPyConnection, sql: str, *params: Any) -> list[dict[str, Any]]:

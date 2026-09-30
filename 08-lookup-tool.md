@@ -55,6 +55,27 @@ are exactly what differs. It never picks a variant on its own.
 For a name that resolves to nothing it says so and repeats the pattern, so a context
 column like `Period_SK` comes back as a refusal rather than a guess.
 
+## Where the files go
+
+DuckDB reads no environment variables of its own - every directory is a `SET` or a
+connection config - so these are ours, with the usual `PAY42_` prefix and `.env` support:
+
+| Variable | Default | What it moves |
+|---|---|---|
+| `PAY42_DB` | `pay42.duckdb` beside the module | the store itself |
+| `PAY42_TEMP_DIR` | `<db>.tmp` | scratch files when a query spills |
+| `PAY42_EXTENSION_DIR` | `~/.duckdb/extensions` | downloaded extensions |
+| `PAY42_MEMORY_LIMIT` | 80% of RAM | how much it may hold before spilling |
+
+The build script honours `PAY42_DB` and `PAY42_TEMP_DIR` too, so a build and a read
+cannot disagree about the path.
+
+Two of these matter outside a developer checkout. Scratch files land next to the
+database by default, so a read-only mount holding the store has nowhere to spill;
+`PAY42_TEMP_DIR` fixes that. And in a container without a writable home, extension
+downloads fail unless `PAY42_EXTENSION_DIR` points somewhere real - though this lookup
+loads no extensions, so that only bites if you query the file yourself.
+
 ## Two notes on the store
 
 Compression is automatic and per column; DuckDB chooses Dictionary for these strings and

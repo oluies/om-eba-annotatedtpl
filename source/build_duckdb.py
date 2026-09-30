@@ -5,12 +5,15 @@ so this is mostly about giving the lookup tool an indexed store and a place for 
 precomputed column-to-glossary-term mapping.
 """
 
+import os
 from pathlib import Path
 
 import duckdb
 
 REPO = Path(__file__).resolve().parent.parent
-DB = REPO / "pay42.duckdb"
+# Same environment variables the lookup reads, so a build and a read agree on the path.
+DB = Path(os.environ.get("PAY42_DB") or REPO / "pay42.duckdb")
+TEMP_DIR = os.environ.get("PAY42_TEMP_DIR")
 
 # Which glossary domain a dimension's members live under. Mirrors DOMAIN_NAMES in
 # gen_pack.py; every dimension not listed draws on the payment-characteristics domain.
@@ -33,6 +36,9 @@ BLOCK_SIZE = 16384
 
 DB.unlink(missing_ok=True)
 con = duckdb.connect()
+if TEMP_DIR:
+    Path(TEMP_DIR).mkdir(parents=True, exist_ok=True)
+    con.execute(f"SET temp_directory = '{TEMP_DIR}'")
 con.execute(f"ATTACH '{DB}' AS pay42 (BLOCK_SIZE {BLOCK_SIZE})")
 con.execute("USE pay42")
 
