@@ -655,8 +655,18 @@ full row and column grid with the datapoint ids. That is your lookup table.
    `row` group from the column name, and the column code must equal `col`. If you took
    `Y0101_r0010_c0010` and are looking at row 0030, you are one line off - a real failure
    seen in practice, where the description was correct prose about the wrong datapoint.
-6. Establish the variant from the table, not the column. The page's Variants table lists
-   all six with their metric and geography.
+6. Establish the variant from the table **or the row**, never the column. The page's
+   Variants table lists all six with their metric and geography.
+
+   **Look for an open axis first.** The sheet axis can land in the warehouse two ways:
+   one table per variant, or one table holding all of them with a context column saying
+   which row is which. That column is named `Open_Axis_1` or similar and its values are
+   the variant labels, one per row. Seen in the wild, so a table carrying one variant's
+   worth of datapoint columns may still hold all six.
+
+   With an open axis, a column description must not name a datapoint id or a unit: both
+   depend on the row. Describe what is common and name the axis column as where the rest
+   comes from. `describe_table.py` detects this and refuses `--variant` when it applies.
 
    If the table does not tell you which one it holds, say so and write only what is
    constant. These are measured facts about this data, not a judgement call:
