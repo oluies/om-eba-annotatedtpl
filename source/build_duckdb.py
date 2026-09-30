@@ -37,6 +37,8 @@ BLOCK_SIZE = 16384
 DB.unlink(missing_ok=True)
 con = duckdb.connect()
 if TEMP_DIR:
+    # SET is fine here: this is a one-shot process. The lookup uses connect-time config
+    # instead, because SET is global to the instance and would leak across connections.
     Path(TEMP_DIR).mkdir(parents=True, exist_ok=True)
     con.execute(f"SET temp_directory = '{TEMP_DIR}'")
 con.execute(f"ATTACH '{DB}' AS pay42 (BLOCK_SIZE {BLOCK_SIZE})")

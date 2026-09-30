@@ -92,6 +92,10 @@ def _connect() -> duckdb.DuckDBPyConnection:
     if SETTINGS.memory_limit:
         config["memory_limit"] = SETTINGS.memory_limit
 
+    # config= rather than `SET temp_directory`, which also works on a read-only connection
+    # but is global to the database instance: a SET here changes the setting for every
+    # other connection in the process, including ones opened later. Verified. In a
+    # long-running server that is someone else's bug, so keep it scoped to this connect.
     return duckdb.connect(str(DB), read_only=True, config=config)
 
 

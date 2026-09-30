@@ -843,6 +843,12 @@ connection config - so these are ours, with the usual `PAY42_` prefix and `.env`
 The build script honours `PAY42_DB` and `PAY42_TEMP_DIR` too, so a build and a read
 cannot disagree about the path.
 
+`SET temp_directory` does the same job and works on a read-only connection, but it is
+global to the database instance: a `SET` in one connection changes the setting for every
+other one in the process, including connections opened afterwards. The lookup therefore
+passes `config=` at connect time, which stays scoped to that call. The build script uses
+`SET`, which is harmless in a one-shot process.
+
 Two of these matter outside a developer checkout. Scratch files land next to the
 database by default, so a read-only mount holding the store has nowhere to spill;
 `PAY42_TEMP_DIR` fixes that. And in a container without a writable home, extension
