@@ -157,6 +157,23 @@ def columns_to_write(
     return write, skipped
 
 
+def check_variant(by_column: dict[str, list[Datapoint]], table: str, variant: str | None) -> None:
+    """Fail on a variant that matches nothing, before printing it once per column.
+
+    A typo or a leftover placeholder otherwise reads as "pass --variant to choose" on
+    every line, which is the opposite of what happened.
+    """
+    if variant is None:
+        return
+    available = sorted({dp.variant for dps in by_column.values() for dp in dps if dp.table_name == table if dp.variant})
+    if variant not in available:
+        raise SystemExit(
+            f"  No variant {variant!r} in {table}. Available: {', '.join(available)}.\n"
+            "  They are metric crossed with geography - amount or count, domestic or within "
+            "the EEA or outside it."
+        )
+
+
 def fetch_columns(client: httpx.Client, table_fqn: str) -> list[dict]:
     """Every column of the table, paging until the server stops truncating."""
     columns: list[dict] = []
@@ -206,12 +223,22 @@ def main() -> None:
         verify=settings.ca_bundle or True,
         timeout=120.0,
     ) as client:
+        by_column = load_datapoints()
         columns = fetch_columns(client, args.fqn)
-        write, skipped = columns_to_write(columns, load_datapoints(), args.variant)
+        table = args.fqn.rsplit(".", 1)[-1]
+        check_variant(by_column, table, args.variant)
+
+        write, skipped = columns_to_write(columns, by_column, args.variant)
 
         print(f"{args.fqn}: {len(columns)} columns, {len(write)} to describe")
-        for name in skipped:
-            print(f"  skipped {name} - pass --variant to choose")
+        if skipped:
+            per_variant = len({dp.column_name for dps in by_column.values() for dp in dps if dp.table_name == table})
+            print(
+                f"  {len(skipped)} datapoint column(s) skipped because no variant was given. "
+                f"{table} has {per_variant} datapoint columns per variant; this table has "
+                f"{len(skipped)}, so it holds one variant and only the pipeline that loads it "
+                "knows which. Pass --variant once you know."
+            )
         if not write:
             raise SystemExit("  Nothing to write.")
 
