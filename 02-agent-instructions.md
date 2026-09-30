@@ -161,6 +161,16 @@ full row and column grid with the datapoint ids. That is your lookup table.
    So with no variant you have **no datapoint id and no unit**. Stating either is
    inventing one of six answers. Name the row, the column, the dimension members and the
    template, and say the variant is set by the table.
+
+   **Do not characterise the variants from memory either.** They are metric crossed with
+   geography - amount or count, domestic or within the EEA or outside it - and nothing
+   else. An agent handed the six in a tool response still paraphrased them as "Payments
+   in EUR", which no variant is. Quote the labels you were given.
+
+   `lookup_datapoint` returns them spelled out, and a `determining_the_variant` hint
+   saying how to settle it from the warehouse rather than by asking: count the datapoint
+   columns on the table. One variant's worth means the loader picked one and only the
+   pipeline knows which.
 7. If you cannot resolve an identifier, say so in the description rather than guessing.
    A wrong regulatory description is worse than a missing one.
 

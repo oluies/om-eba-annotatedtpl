@@ -126,6 +126,20 @@ def split_column_name(column_name: str) -> dict[str, str] | None:
     }
 
 
+# How to settle the variant from the warehouse rather than by asking. A PAY .01 table
+# holds one variant per table, so the datapoint column count decides it: one variant's
+# worth means the loader picked one, six means the naming must encode it somehow.
+VARIANT_HINT = (
+    "The variant is a property of the table, not the column. To settle it, count the "
+    "datapoint columns: SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME "
+    "= '{table}' AND COLUMN_NAME LIKE '%!_r%!_c%' ESCAPE '!'. A count matching one "
+    "variant means the table holds a single one and only the pipeline that loads it "
+    "knows which - ask. Six times that many means all six are present and the column "
+    "names must distinguish them, so check what they actually are. Anything else means "
+    "a context column discriminates; look at a few rows."
+)
+
+
 def lookup_dora(column_name: str, parts: dict[str, str]) -> dict[str, Any]:
     """Resolve a DORA column, where the row is a record ordinal and carries no meaning.
 
@@ -239,15 +253,22 @@ def lookup_datapoint(column_name: str, variant: str | None = None) -> dict[str, 
             variant={field: rows[0][field] for field in VARIES_BY_VARIANT},
         ).model_dump()
 
+    # Spell the variants out rather than leaving the caller to characterise them from
+    # the candidate list: an agent handed the list still paraphrased it from memory and
+    # said 0010 meant "Payments in EUR" - it is metric crossed with geography, and
+    # currency does not come into it.
+    spelled = "; ".join(f"{r['variant']} = {r['metric']}, {r['geography']}" for r in rows)
     return Resolved(
         found=True,
         column_name=column_name,
         message=(
-            f"{len(rows)} variants share this column name. The fields under 'common' hold for all "
-            "of them; datapoint id, unit, metric and geography do not. Establish the variant from "
-            "the table, then call again with it. Without one, state neither a datapoint id nor a unit."
+            f"{len(rows)} variants share this column name, one per metric and geography: {spelled}. "
+            "The fields under 'common' hold for all of them; datapoint id, unit, metric and "
+            "geography do not. Without a variant, state neither a datapoint id nor a unit - the "
+            "row, the column, the dimension members and the template are safe to describe. "
+            "Do not characterise the variants from memory; use the wording above."
         ),
-        common=common,
+        common=common | {"determining_the_variant": VARIANT_HINT.format(table=common["table_name"])},
         candidates=[{field: r[field] for field in VARIES_BY_VARIANT} for r in rows],
     ).model_dump()
 
