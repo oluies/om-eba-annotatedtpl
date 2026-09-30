@@ -174,6 +174,23 @@ def build_tree(pack: Path) -> Page:
         ),
     )
 
+    dora_templates = tuple(leaf(p) for p in sorted((pack / "dora" / "03-templates").glob("*.md")))
+    dora = section(
+        name="DORA",
+        display_name="DORA (register of information)",
+        body=(pack / "dora" / "01-framework.md").read_text(encoding="utf-8").split("\n", 1)[1].lstrip(),
+        children=(
+            leaf(pack / "dora" / "02-agent-instructions.md", name="DORA agent instructions"),
+            section(
+                "DORA templates",
+                "Templates",
+                f"One page per DORA template ({len(dora_templates)} in total). Rows are open on all\n"
+                "but B_99.01, so the column identifies the datapoint and the row is a record.\n",
+                dora_templates,
+            ),
+        ),
+    )
+
     return section(
         name="EBA",
         display_name="EBA reporting frameworks",
@@ -184,7 +201,7 @@ def build_tree(pack: Path) -> Page:
             "reproduction provided the source is acknowledged. Not affiliated with or\n"
             "endorsed by the EBA.\n"
         ),
-        children=(pay42,),
+        children=(pay42, dora),
     )
 
 

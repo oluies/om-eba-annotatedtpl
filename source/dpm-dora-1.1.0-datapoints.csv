@@ -1,0 +1,86 @@
+column_name_pattern,table_name,template,template_name,template_desc,row_code,row_label,column_code,column_label,datapoint_id,sign,row_kind
+B0101_r*_c0020,B_01_01,B_01.01,Entity maintaining the register of information,,*,"",0020,Name of the entity,3287126,,open
+B0101_r*_c0030,B_01_01,B_01.01,Entity maintaining the register of information,,*,"",0030,Country of the entity ,487507,,open
+B0101_r*_c0040,B_01_01,B_01.01,Entity maintaining the register of information,,*,"",0040,Type of entity,487476,,open
+B0101_r*_c0050,B_01_01,B_01.01,Entity maintaining the register of information,,*,"",0050,Competent Authority,487479,,open
+B0101_r*_c0060,B_01_01,B_01.01,Entity maintaining the register of information,,*,"",0060,Date of the reporting,487477,,open
+B0102_r*_c0020,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0020,Name of the entity ,3282420,,open
+B0102_r*_c0030,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0030,Country of the entity,487508,,open
+B0102_r*_c0040,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0040,Type of entity ,487136,,open
+B0102_r*_c0050,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0050,Hierarchy of the entity within the group (where applicable),487510,,open
+B0102_r*_c0060,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0060,LEI of the direct parent undertaking of the entity,3287585,,open
+B0102_r*_c0070,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0070,Date of last update,482938,,open
+B0102_r*_c0080,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0080,Date of integration in the Register of information,482939,,open
+B0102_r*_c0090,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0090,Date of deletion in the Register of information,482940,,open
+B0102_r*_c0100,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0100,Currency,487511,,open
+B0102_r*_c0110,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0110,Value of total assets - of the financial entity,3289510,positive,open
+B0103_r*_c0030,B_01_03,B_01.03,List of branches,,*,"",0030,Name of the branch,3287125,,open
+B0103_r*_c0040,B_01_03,B_01.03,List of branches,,*,"",0040,Country of the branch,487509,,open
+B0201_r*_c0020,B_02_01,B_02.01,Contractual arrangements – General Information,,*,"",0020,Type of contractual arrangement,483167,,open
+B0201_r*_c0030,B_02_01,B_02.01,Contractual arrangements – General Information,,*,"",0030,Overarching contractual arrangement reference number,487321,,open
+B0201_r*_c0040,B_02_01,B_02.01,Contractual arrangements – General Information,,*,"",0040,Currency of the amount reported in RT.02.01.0050,487512,,open
+B0201_r*_c0050,B_02_01,B_02.01,Contractual arrangements – General Information,,*,"",0050,Annual expense or estimated cost of the contractual arrangement for the past year,483144,positive,open
+B0202_r*_c0040,B_02_02,B_02.02,Contractual arrangements – Specific information,,*,"",0040,Type of code to identify the ICT third-party service provider,3296069,,open
+B0202_r*_c0070,B_02_02,B_02.02,Contractual arrangements – Specific information,,*,"",0070,Start date of the contractual arrangement,3291598,,open
+B0202_r*_c0080,B_02_02,B_02.02,Contractual arrangements – Specific information,,*,"",0080,End date of the contractual arrangement,3291599,,open
+B0202_r*_c0090,B_02_02,B_02.02,Contractual arrangements – Specific information,,*,"",0090,Reason of the termination or ending of the contractual arrangement,3291600,,open
+B0202_r*_c0100,B_02_02,B_02.02,Contractual arrangements – Specific information,,*,"",0100,Notice period for the financial entity making use of the ICT service(s),3291614,,open
+B0202_r*_c0110,B_02_02,B_02.02,Contractual arrangements – Specific information,,*,"",0110,Notice period for the ICT third-party service provider,3291615,,open
+B0202_r*_c0120,B_02_02,B_02.02,Contractual arrangements – Specific information,,*,"",0120,Country of the governing law of the contractual arrangement,3291613,,open
+B0202_r*_c0140,B_02_02,B_02.02,Contractual arrangements – Specific information,,*,"",0140,Storage of data,3291603,,open
+B0202_r*_c0170,B_02_02,B_02.02,Contractual arrangements – Specific information,,*,"",0170,Sensitiveness of the data stored by the ICT third-party service provider,3291602,,open
+B0202_r*_c0180,B_02_02,B_02.02,Contractual arrangements – Specific information,,*,"",0180,Level of reliance on the ICT service supporting the critical or important function.,3291601,,open
+B0203_r*_c0030,B_02_03,B_02.03,List of intra-group contractual arrangements,,*,"",0030,Link,3282928,,open
+B0301_r*_c0030,B_03_01,B_03.01,Entities signing the Contractual arrangements for receiving ICT service(s) or on behalf of the entities making use of the ICT service(s),,*,"",0030,Link,3287587,,open
+B0302_r*_c0030,B_03_02,B_03.02,ICT third-party service providers signing the Contractual arrangements for providing ICT service(s),,*,"",0030,Type of code to identify the ICT third-party service provider,3296067,,open
+B0303_r*_c0031,B_03_03,B_03.03,Entities signing the Contractual arrangements for providing ICT service(s) to other entity within the scope of consolidation,,*,"",0031,Link,3287586,,open
+B0401_r*_c0030,B_04_01,B_04.01,Entities making use of the ICT services,,*,"",0030,Nature of the entity making use of the ICT service(s),483520,,open
+B0501_r*_c0020,B_05_01,B_05.01,ICT third-party service providers,,*,"",0020,Type of code to identify the ICT third-party service provider,3296070,,open
+B0501_r*_c0030,B_05_01,B_05.01,ICT third-party service providers,,*,"",0030,Name of the ICT third-party service provider,3296075,,open
+B0501_r*_c0040,B_05_01,B_05.01,ICT third-party service providers,,*,"",0040,Type of person of the ICT third-party service provider,3296073,,open
+B0501_r*_c0050,B_05_01,B_05.01,ICT third-party service providers,,*,"",0050,Legal name of the ICT third-party service provider,3291720,,open
+B0501_r*_c0060,B_05_01,B_05.01,ICT third-party service providers,,*,"",0060,Name of the ICT third-party service provider in Latin alphabet,3296076,,open
+B0501_r*_c0070,B_05_01,B_05.01,ICT third-party service providers,,*,"",0070,Type of person of the ICT third-party service provider,3291612,,open
+B0501_r*_c0080,B_05_01,B_05.01,ICT third-party service providers,,*,"",0080,Identification code of the ICT third-party service provider’s ultimate parent undertaking,3291616,,open
+B0501_r*_c0090,B_05_01,B_05.01,ICT third-party service providers,,*,"",0090,Type of code to identify the ICT third-party service provider’s ultimate parent undertaking,3291617,,open
+B0501_r*_c0100,B_05_01,B_05.01,ICT third-party service providers,,*,"",0100,Total annual expense or estimated cost of the ICT third-party service  provider,3291597,,open
+B0501_r*_c0110,B_05_01,B_05.01,ICT third-party service providers,,*,"",0110,Identification code of the ICT third-party service provider’s ultimate parent undertaking,3291596,,open
+B0501_r*_c0120,B_05_01,B_05.01,ICT third-party service providers,,*,"",0120,Type of code to identify the ICT third-party service provider’s ultimate parent undertaking,3296074,,open
+B0502_r*_c0040,B_05_02,B_05.02,ICT service supply chains,,*,"",0040,Type of code to identify the ICT third-party service provider,3296071,,open
+B0502_r*_c0070,B_05_02,B_05.02,ICT service supply chains,,*,"",0070,Type of code to identify the recipient of sub-contracted ICT services,3296072,,open
+B0601_r*_c0020,B_06_01,B_06.01,Functions identification,,*,"",0020,Licenced activity,485465,,open
+B0601_r*_c0030,B_06_01,B_06.01,Functions identification,,*,"",0030,Function name,487452,,open
+B0601_r*_c0050,B_06_01,B_06.01,Functions identification,,*,"",0050,Criticality or importance assessment,485467,,open
+B0601_r*_c0060,B_06_01,B_06.01,Functions identification,,*,"",0060,Reasons for criticality or importance,485468,,open
+B0601_r*_c0070,B_06_01,B_06.01,Functions identification,,*,"",0070,Date of the last assessment of criticality or importance,485466,,open
+B0601_r*_c0080,B_06_01,B_06.01,Functions identification,,*,"",0080,Recovery time objective of the function,487474,,open
+B0601_r*_c0090,B_06_01,B_06.01,Functions identification,,*,"",0090,Recovery point objective of the function,487475,,open
+B0601_r*_c0100,B_06_01,B_06.01,Functions identification,,*,"",0100,Impact of discontinuing the function,485464,,open
+B0701_r*_c0030,B_07_01,B_07.01,Assessment of the ICT services,,*,"",0030,Type of code to identify the ICT third-party service provider,3296068,,open
+B0701_r*_c0050,B_07_01,B_07.01,Assessment of the ICT services,,*,"",0050,Substitutability of the ICT third-party service provider ,3291608,,open
+B0701_r*_c0060,B_07_01,B_07.01,Assessment of the ICT services,,*,"",0060,Reason if the ICT third-party service provider is considered not substitutable or difficult to be substitutable,3291609,,open
+B0701_r*_c0070,B_07_01,B_07.01,Assessment of the ICT services,,*,"",0070,Date of the last audit on the ICT third-party service provider,3291605,,open
+B0701_r*_c0080,B_07_01,B_07.01,Assessment of the ICT services,,*,"",0080,Existence of an exit plan,3291604,,open
+B0701_r*_c0090,B_07_01,B_07.01,Assessment of the ICT services,,*,"",0090,Possibility of reintegration of the contracted ICT service,3291610,,open
+B0701_r*_c0100,B_07_01,B_07.01,Assessment of the ICT services,,*,"",0100,Impact of discontinuing the ICT services ,3291611,,open
+B0701_r*_c0110,B_07_01,B_07.01,Assessment of the ICT services,,*,"",0110,Are there alternative ICT third-party service providers identified?,3291606,,open
+B0701_r*_c0120,B_07_01,B_07.01,Assessment of the ICT services,,*,"",0120,Identification of alternative ICT TPP,3291607,,open
+B9901_r0040_c0010,B_99_01,B_99.01,Definitions from Entities making use of the ICT Services,,0040,Description/Internal definition of the option,0010,Standalone arrangement,483168,,fixed
+B9901_r0040_c0020,B_99_01,B_99.01,Definitions from Entities making use of the ICT Services,,0040,Description/Internal definition of the option,0020,Overarching arrangement,483169,,fixed
+B9901_r0040_c0030,B_99_01,B_99.01,Definitions from Entities making use of the ICT Services,,0040,Description/Internal definition of the option,0030,Subsequent or associated arrangement,483170,,fixed
+B9901_r0040_c0040,B_99_01,B_99.01,Definitions from Entities making use of the ICT Services,,0040,Description/Internal definition of the option,0040,Low,483171,,fixed
+B9901_r0040_c0050,B_99_01,B_99.01,Definitions from Entities making use of the ICT Services,,0040,Description/Internal definition of the option,0050,Medium,483172,,fixed
+B9901_r0040_c0060,B_99_01,B_99.01,Definitions from Entities making use of the ICT Services,,0040,Description/Internal definition of the option,0060,High,483173,,fixed
+B9901_r0040_c0070,B_99_01,B_99.01,Definitions from Entities making use of the ICT Services,,0040,Description/Internal definition of the option,0070,Low,483184,,fixed
+B9901_r0040_c0080,B_99_01,B_99.01,Definitions from Entities making use of the ICT Services,,0040,Description/Internal definition of the option,0080,Medium,483185,,fixed
+B9901_r0040_c0090,B_99_01,B_99.01,Definitions from Entities making use of the ICT Services,,0040,Description/Internal definition of the option,0090,High,483186,,fixed
+B9901_r0040_c0100,B_99_01,B_99.01,Definitions from Entities making use of the ICT Services,,0040,Description/Internal definition of the option,0100,Not substitutable,483174,,fixed
+B9901_r0040_c0110,B_99_01,B_99.01,Definitions from Entities making use of the ICT Services,,0040,Description/Internal definition of the option,0110,Highly complex substitutability,483175,,fixed
+B9901_r0040_c0120,B_99_01,B_99.01,Definitions from Entities making use of the ICT Services,,0040,Description/Internal definition of the option,0120,Medium complexity in terms of substitutability,483176,,fixed
+B9901_r0040_c0130,B_99_01,B_99.01,Definitions from Entities making use of the ICT Services,,0040,Description/Internal definition of the option,0130, Easily substitutable,483177,,fixed
+B9901_r0040_c0140,B_99_01,B_99.01,Definitions from Entities making use of the ICT Services,,0040,Description/Internal definition of the option,0140,Easy,483178,,fixed
+B9901_r0040_c0150,B_99_01,B_99.01,Definitions from Entities making use of the ICT Services,,0040,Description/Internal definition of the option,0150,Difficult,483179,,fixed
+B9901_r0040_c0160,B_99_01,B_99.01,Definitions from Entities making use of the ICT Services,,0040,Description/Internal definition of the option,0160,Highly complex,483180,,fixed
+B9901_r0040_c0170,B_99_01,B_99.01,Definitions from Entities making use of the ICT Services,,0040,Description/Internal definition of the option,0170,Low,483181,,fixed
+B9901_r0040_c0180,B_99_01,B_99.01,Definitions from Entities making use of the ICT Services,,0040,Description/Internal definition of the option,0180,Medium,483182,,fixed
+B9901_r0040_c0190,B_99_01,B_99.01,Definitions from Entities making use of the ICT Services,,0040,Description/Internal definition of the option,0190,High,483183,,fixed
