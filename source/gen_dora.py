@@ -24,6 +24,8 @@ VOCAB = SOURCE_DIR / "dpm-dora-1.1.0-vocabulary.csv"
 OUT = REPO / "dora"
 
 SOURCE = "EBA DPM 2.0 database, module DORA 1.1.0"
+# No dot in the glossary NAME: OpenMetadata quotes FQN parts that contain one.
+GLOSSARY = "DORA_1_1_0"
 AUTHORITY = "the DORA Implementing Technical Standards on the register of information"
 
 # The warehouse writes an open row as r999. The DPM writes it as r*. Same thing.
@@ -241,6 +243,83 @@ Only the columns that carry a dimensional context have these: {len(vocab) - len(
     )
 
 
+def write_glossary_csv() -> None:
+    """The DORA vocabulary as OpenMetadata glossary terms.
+
+    A separate glossary from PAY's: different framework, different vocabulary, and a
+    shorter FQN than nesting them under one root would give. Name carries no dot, for the
+    same reason as PAY_4_2 - OpenMetadata quotes an FQN part that contains one.
+
+    Header and level structure match the PAY export, so the same four-pass importer
+    loads it: a parent is resolved against the database and a dry run persists nothing,
+    so a term whose parent sits in the same file can never validate.
+    """
+    header = [
+        "parent",
+        "name*",
+        "displayName",
+        "description",
+        "synonyms",
+        "relatedTerms",
+        "references",
+        "tags",
+        "reviewers",
+        "owner",
+        "glossaryStatus",
+        "color",
+        "iconURL",
+        "domains",
+        "extension",
+    ]
+
+    def row(parent: str, name: str, desc: str, synonyms: str = "", status: str = "Draft") -> list[str]:
+        out = [parent, name, name, desc, synonyms, "", "", "", "", "", status]
+        return out + [""] * (len(header) - len(out))
+
+    rows_out = [
+        row("", "Properties", "What a DORA column holds, and its data type.", status="Approved"),
+        row(
+            "", "Domains", "Value domains used by the DORA columns that carry a dimensional context.", status="Approved"
+        ),
+    ]
+
+    for name, v in sorted(PROPERTIES.items()):
+        used = sorted(set(COLUMNS_USING[name]))
+        rows_out.append(
+            row(
+                f"{GLOSSARY}.Properties",
+                name,
+                f"Property of the DORA register of information. Data type: {v['extra'] or 'unspecified'}. "
+                f"Used by {len(used)} column(s): {', '.join(used[:6])}. "
+                f"Label transcribed verbatim; for a definition see {AUTHORITY}.",
+            )
+        )
+
+    for domain, members in sorted(MEMBERS_BY_DOMAIN.items()):
+        rows_out.append(
+            row(
+                f"{GLOSSARY}.Domains",
+                domain,
+                f"Value domain of the DORA register: {len(members)} members.",
+                status="Approved",
+            )
+        )
+        for member, desc in sorted(members.items()):
+            used = sorted(set(COLUMNS_USING[member]))
+            rows_out.append(
+                row(
+                    f"{GLOSSARY}.Domains.{domain}",
+                    member,
+                    (desc or f"Member of the {domain} domain in the DORA register.")[:400]
+                    + (f" Used by: {', '.join(used[:6])}." if used else ""),
+                )
+            )
+
+    with (OUT / "05-openmetadata-glossary.csv").open("w", encoding="utf-8", newline="") as fh:
+        csv.writer(fh).writerows([header, *rows_out])
+    print(f"  glossary CSV: {len(rows_out)} terms")
+
+
 def write_templates() -> None:
     for code, rs in sorted(by_template.items()):
         first = rs[0]
@@ -303,5 +382,6 @@ Source: {SOURCE}.
 write_overview()
 write_agent_instructions()
 write_glossary()
+write_glossary_csv()
 write_templates()
 print(f"dora/: {len(by_template)} templates, {len(rows)} datapoints ({len(OPEN)} open rows, {len(FIXED)} fixed)")

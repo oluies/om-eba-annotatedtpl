@@ -405,7 +405,43 @@ GLOSSARY_DESCRIPTION = (
 )
 
 
-def ensure_glossary(client: httpx.Client, glossary: str) -> None:
+class GlossarySpec(BaseModel):
+    """One glossary to load: its name, how it is shown, and where its terms are."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    display_name: str
+    description: str
+    csv: Path
+
+
+GLOSSARIES = (
+    GlossarySpec(
+        name="PAY_4_2",
+        display_name="PAY 4.2 (FRPPAY 4.2)",
+        description=(
+            "Controlled vocabulary of the EBA PAY 4.2 (FRPPAY 4.2) framework for payment and fraud "
+            "reporting under PSD2: the domains and their members, the dimensions that draw on them, "
+            "and the metrics. Reproduced under the EBA legal notice, which authorises reproduction "
+            "provided the source is acknowledged."
+        ),
+        csv=PACK / "06-openmetadata-glossary.csv",
+    ),
+    GlossarySpec(
+        name="DORA_1_1_0",
+        display_name="DORA (register of information)",
+        description=(
+            "Controlled vocabulary of the DORA register of information: what each column holds and "
+            "its data type, and the value domains of the columns that carry a dimensional context. "
+            "From the EBA DPM 2.0 database, module DORA 1.1.0."
+        ),
+        csv=PACK / "dora" / "05-openmetadata-glossary.csv",
+    ),
+)
+
+
+def ensure_glossary(client: httpx.Client, glossary: str, display_name: str, description: str) -> None:
     """Create the glossary if it is not there.
 
     The CSV import populates an existing glossary; it does not create one. Without this
@@ -422,8 +458,8 @@ def ensure_glossary(client: httpx.Client, glossary: str) -> None:
         "/v1/glossaries",
         json={
             "name": glossary,
-            "displayName": "PAY 4.2 (FRPPAY 4.2)",
-            "description": GLOSSARY_DESCRIPTION,
+            "displayName": display_name,
+            "description": description,
         },
     )
     if created.status_code == 403:
@@ -512,16 +548,15 @@ def csv_passes(csv_text: str) -> list[tuple[str, str]]:
     return passes
 
 
-def run_glossary_import(
-    client: httpx.Client, glossary: str, csv_path: Path, *, commit: bool, reset: bool = False
-) -> None:
+def run_glossary_import(client: httpx.Client, spec: GlossarySpec, *, commit: bool, reset: bool = False) -> None:
     """Import the terms one level at a time, dry running each pass before writing it."""
-    passes = csv_passes(csv_path.read_text(encoding="utf-8"))
+    glossary = spec.name
+    passes = csv_passes(spec.csv.read_text(encoding="utf-8"))
 
     print(f"\nGlossary import ({glossary}), {len(passes)} passes:")
     if reset:
         reset_glossary(client, glossary)
-    ensure_glossary(client, glossary)
+    ensure_glossary(client, glossary, spec.display_name, spec.description)
 
     for label, chunk in passes:
         print(f"\n  {label}")
@@ -613,13 +648,8 @@ def main() -> None:
                 reindex(client, page_ids)
 
         if not args.pages_only:
-            run_glossary_import(
-                client,
-                settings.glossary,
-                PACK / "06-openmetadata-glossary.csv",
-                commit=args.commit,
-                reset=args.reset_glossary,
-            )
+            for spec in GLOSSARIES:
+                run_glossary_import(client, spec, commit=args.commit, reset=args.reset_glossary)
 
 
 if __name__ == "__main__":
