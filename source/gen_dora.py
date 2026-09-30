@@ -85,7 +85,8 @@ per entity, contract or provider, and the count is whatever the reporter has.
 The DPM writes an open row as `r*`. A warehouse writes it as a record ordinal, commonly
 `r{OPEN_ROW_PLACEHOLDER}`. Neither is a framework row code, and neither narrows the datapoint.
 
-Only `B_99.01` has fixed rows, {len(FIXED)} of them.
+`B_99.01` carries a fixed row code, `0040`, instead of `r*`. It makes no difference to a
+lookup: every DORA template has exactly one row, and its datapoints differ by column.
 
 So for DORA the column carries the meaning and the row carries the record. That changes
 the lookup, and `02-agent-instructions.md` says how.
@@ -138,8 +139,9 @@ it identifies the record, not the framework cell.
 Template and column identify the datapoint on their own. Verified against the DPM: {len(rows)}
 cells, {len(rows)} distinct ids, {len(rows)} distinct template-and-column pairs.
 
-`B_99.01` is the exception, with {len(FIXED)} fixed rows. There the row code does mean
-something, and it is a four-digit framework code rather than an ordinal.
+`B_99.01` looks like an exception - the DPM gives it a fixed row code `0040` rather than
+`r*` - but it is not one in practice: all {len(FIXED)} of its datapoints sit on that single
+row and differ by column. So the rule holds for every DORA template without exception.
 
 ## Describing a column
 
@@ -151,6 +153,16 @@ There are no variants in DORA, so unlike PAY there is nothing being withheld:
 ({example["template_name"]}) in the DORA register of information. Datapoint
 {example["datapoint_id"]} (EBA DPM, module DORA 1.1.0). One row per record; the row
 number in the column name is an ordinal, not a framework code.
+```
+
+## Use the tool if it is there
+
+`lookup_datapoint` covers DORA and decides which rule applies on its own - pass the
+column name and nothing else. `variant` is a PAY argument and has no meaning here.
+
+```text
+lookup_datapoint("B0101_r999_c0020")
+  template B_01.01, column 0020, "Name of the entity", datapoint 3287126
 ```
 
 ## The rest is the same as PAY
@@ -184,7 +196,11 @@ def write_templates() -> None:
             f"(`r{OPEN_ROW_PLACEHOLDER}` in the warehouse, `r*` in the DPM) and does not narrow the datapoint - "
             "the column alone identifies it."
             if kind == "open"
-            else f"Rows are **fixed**: the row code is a framework code, and {len(rs)} of them are defined."
+            else (
+                f"The row code is fixed at `{first['row_code']}` rather than `r*`, but this template still "
+                f"has a single row: its {len(rs)} datapoints differ by column. The column identifies the "
+                "datapoint, as everywhere else in DORA."
+            )
         )
         write(
             OUT / "03-templates" / f"{code}.md",

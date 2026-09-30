@@ -643,7 +643,8 @@ full row and column grid with the datapoint ids. That is your lookup table.
    `Y0101_r0010_c0010` gives template `Y_01.01`, row `0010`, column `0010`.
 2. **If a `lookup_datapoint` tool is available, call it and skip to step 5.** It answers
    from `pay42.duckdb` and cannot land on the wrong row. Reading the grid by eye is the
-   fallback, not the method.
+   fallback, not the method. It covers DORA as well and picks the rule itself: PAY needs
+   a row and a variant, DORA needs neither.
 3. Otherwise read the page titled with that template code — `find_context` on `Y_01.01`,
    or `get_entity_details` if you already hold its FQN. Do not search for the column name
    itself; it appears nowhere in the pages.

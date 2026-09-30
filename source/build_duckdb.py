@@ -46,6 +46,9 @@ con.execute("USE pay42")
 
 con.execute(f"CREATE TABLE datapoints AS SELECT * FROM read_csv('{REPO / '05-datapoints.csv'}', header=true)")
 con.execute(f"CREATE TABLE terms AS SELECT * FROM read_csv('{REPO / '06-openmetadata-glossary.csv'}', header=true)")
+con.execute(
+    f"CREATE TABLE dora AS SELECT * FROM read_csv('{REPO / 'source' / 'dpm-dora-1.1.0-datapoints.csv'}', header=true)"
+)
 
 # Column to glossary term, flattened out of the two dimension strings so the lookup tool
 # does not have to parse them at call time.
@@ -71,10 +74,11 @@ con.executemany("INSERT INTO column_terms VALUES (?, ?, ?)", mapping)
 con.execute("CREATE INDEX idx_dp_column ON datapoints(column_name)")
 con.execute("CREATE INDEX idx_dp_id ON datapoints(datapoint_id)")
 con.execute("CREATE INDEX idx_ct_column ON column_terms(column_name)")
+con.execute("CREATE INDEX idx_dora ON dora(template, column_code)")
 
 counts = {
     name: con.execute(f"SELECT count(*) FROM {name}").fetchone()[0]  # noqa: S608 - fixed names above
-    for name in ("datapoints", "terms", "column_terms")
+    for name in ("datapoints", "terms", "column_terms", "dora")
 }
 con.execute("CHECKPOINT")  # compress and compact before the handle closes
 con.close()

@@ -18,7 +18,8 @@ per entity, contract or provider, and the count is whatever the reporter has.
 The DPM writes an open row as `r*`. A warehouse writes it as a record ordinal, commonly
 `r999`. Neither is a framework row code, and neither narrows the datapoint.
 
-Only `B_99.01` has fixed rows, 19 of them.
+`B_99.01` carries a fixed row code, `0040`, instead of `r*`. It makes no difference to a
+lookup: every DORA template has exactly one row, and its datapoints differ by column.
 
 So for DORA the column carries the meaning and the row carries the record. That changes
 the lookup, and `02-agent-instructions.md` says how.

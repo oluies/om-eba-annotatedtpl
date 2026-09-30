@@ -15,6 +15,7 @@ Build it with `uv run source/build_duckdb.py`; it is derived, so it is gitignore
 """
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -105,24 +106,109 @@ def _rows(cursor: duckdb.DuckDBPyConnection, sql: str, *params: Any) -> list[dic
     return [dict(zip(names, row, strict=True)) for row in result.fetchall()]
 
 
-def lookup_datapoint(column_name: str, variant: str | None = None) -> dict[str, Any]:
-    """Resolve a warehouse column name to its datapoint.
+# A column name splits the same way in both frameworks, but the row group is wider for
+# DORA: an open row is written as a record ordinal such as r999, which is three digits,
+# where a PAY row code is always four.
+COLUMN_NAME = re.compile(
+    r"^(?P<prefix>[A-Za-z]{1,})(?P<major>[0-9]{2})(?P<minor>[0-9]{2})_r(?P<row>[0-9]{1,})_c(?P<col>[0-9]{4})$"
+)
 
-    A column name carries no variant, so a `.01` template gives six candidates. Without
-    `variant` this returns what they share and lists the six rather than picking one:
-    choosing arbitrarily would invent five sixths of an answer.
+
+def split_column_name(column_name: str) -> dict[str, str] | None:
+    """Prefix, template major and minor, row and column, or None if it is not one."""
+    match = COLUMN_NAME.match(column_name)
+    if match is None:
+        return None
+    parts = match.groupdict()
+    return parts | {
+        "template": f"{parts['prefix']}_{parts['major']}.{parts['minor']}",
+        "table": f"{parts['prefix']}_{parts['major']}_{parts['minor']}",
+    }
+
+
+def lookup_dora(column_name: str, parts: dict[str, str]) -> dict[str, Any]:
+    """Resolve a DORA column, where the row is a record ordinal and carries no meaning.
+
+    The register has open rows - one per entity, contract or provider - which the DPM
+    writes as `r*`. Template and column identify the datapoint on their own: 85 cells,
+    85 ids, 85 distinct template-and-column pairs.
+
+    Every DORA template has exactly one row, including `B_99.01`, whose row code is a
+    fixed `0040` rather than `r*`; its 19 datapoints differ by column like everywhere
+    else. So the row is never needed, and matching on it is a belt-and-braces check
+    rather than part of the resolution.
     """
     with _connect() as con:
+        rows = _rows(
+            con,
+            "SELECT * FROM dora WHERE template = ? AND column_code = ?",
+            parts["template"],
+            parts["col"],
+        )
+    if not rows:
+        return Resolved(
+            found=False,
+            column_name=column_name,
+            message=f"No DORA datapoint for template {parts['template']} column {parts['col']}.",
+        ).model_dump()
+
+    # Fixed-row templates need the row too; open-row ones must ignore what was given.
+    fixed = [r for r in rows if r["row_kind"] == "fixed"]
+    chosen = next((r for r in fixed if r["row_code"] == parts["row"]), rows[0]) if fixed else rows[0]
+
+    note = (
+        "Rows are open: one per record. The row number in the column name is an ordinal, "
+        "not a framework code, and does not narrow the datapoint."
+        if chosen["row_kind"] == "open"
+        else "This template has fixed rows, so the row code is a framework code."
+    )
+    return Resolved(
+        found=True,
+        column_name=column_name,
+        message=f"DORA register of information. {note}",
+        common={
+            "framework": "DORA",
+            "table_name": chosen["table_name"],
+            "template": chosen["template"],
+            "template_name": chosen["template_name"],
+            "column_code": chosen["column_code"],
+            "column_label": chosen["column_label"],
+            "row_kind": chosen["row_kind"],
+            "row_code": chosen["row_code"],
+        },
+        variant={"datapoint_id": chosen["datapoint_id"], "sign": chosen["sign"]},
+    ).model_dump()
+
+
+def lookup_datapoint(column_name: str, variant: str | None = None) -> dict[str, Any]:
+    """Resolve a warehouse column name to its datapoint, in either framework.
+
+    Which rule applies is decided here rather than by the caller: PAY needs a row and a
+    variant, DORA needs neither. Asking an agent to pick the rule is asking it to get it
+    wrong on the one column where the frameworks disagree.
+
+    For PAY, a column name carries no variant, so a `.01` template gives six candidates.
+    Without `variant` this returns what they share and lists the six rather than picking
+    one: choosing arbitrarily would invent five sixths of an answer.
+    """
+    parts = split_column_name(column_name)
+
+    with _connect() as con:
         rows = _rows(con, "SELECT * FROM datapoints WHERE column_name = ? ORDER BY variant", column_name)
+
+    if not rows and parts is not None:
+        dora = lookup_dora(column_name, parts)
+        if dora["found"]:
+            return dora
 
     if not rows:
         return Resolved(
             found=False,
             column_name=column_name,
             message=(
-                "No datapoint has this column name. If it does not match "
-                "^[A-Za-z]{1,}[0-9]{2}[0-9]{2}_r[0-9]{4}_c[0-9]{4}$ it is a warehouse context "
-                "column with no framework meaning, and should not be described from this framework."
+                "No datapoint has this column name in PAY 4.2 or DORA. If it does not match "
+                "^[A-Za-z]{1,}[0-9]{2}[0-9]{2}_r[0-9]{1,}_c[0-9]{4}$ it is a warehouse context "
+                "column with no framework meaning, and should not be described from a framework."
             ),
         ).model_dump()
 
@@ -188,7 +274,8 @@ TOOL_DEFINITION = {
     "function": {
         "name": "lookup_datapoint",
         "description": (
-            "Resolve an EBA PAY 4.2 warehouse column name, e.g. Y0101_r0010_c0010, to its datapoint. "
+            "Resolve an EBA warehouse column name to its datapoint - PAY 4.2 (Y0101_r0010_c0010) or "
+            "DORA (B0101_r999_c0020). Which framework and which rule applies is decided by the tool. "
             "Use this instead of reading a template page and counting rows: landing one line off "
             "produces a correct-looking description of the wrong datapoint. A column name carries no "
             "variant, so without one the answer gives the fields common to all six and lists them."
@@ -196,10 +283,16 @@ TOOL_DEFINITION = {
         "parameters": {
             "type": "object",
             "properties": {
-                "column_name": {"type": "string", "description": "Warehouse column name, e.g. Y0101_r0010_c0010."},
+                "column_name": {
+                    "type": "string",
+                    "description": "Warehouse column name, e.g. Y0101_r0010_c0010 or B0101_r999_c0020.",
+                },
                 "variant": {
                     "type": "string",
-                    "description": "Sheet variant, 0010 to 0060, if the table establishes one. Omit if unknown.",
+                    "description": (
+                        "PAY only: sheet variant 0010 to 0060, if the table establishes one. Omit if "
+                        "unknown, and always for DORA, which has no variants."
+                    ),
                 },
             },
             "required": ["column_name"],

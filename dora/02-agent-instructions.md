@@ -35,8 +35,9 @@ it identifies the record, not the framework cell.
 Template and column identify the datapoint on their own. Verified against the DPM: 85
 cells, 85 distinct ids, 85 distinct template-and-column pairs.
 
-`B_99.01` is the exception, with 19 fixed rows. There the row code does mean
-something, and it is a four-digit framework code rather than an ordinal.
+`B_99.01` looks like an exception - the DPM gives it a fixed row code `0040` rather than
+`r*` - but it is not one in practice: all 19 of its datapoints sit on that single
+row and differ by column. So the rule holds for every DORA template without exception.
 
 ## Describing a column
 
@@ -48,6 +49,16 @@ Name of the entity, column 0020 of template B_01.01
 (Entity maintaining the register of information) in the DORA register of information. Datapoint
 3287126 (EBA DPM, module DORA 1.1.0). One row per record; the row
 number in the column name is an ordinal, not a framework code.
+```
+
+## Use the tool if it is there
+
+`lookup_datapoint` covers DORA and decides which rule applies on its own - pass the
+column name and nothing else. `variant` is a PAY argument and has no meaning here.
+
+```text
+lookup_datapoint("B0101_r999_c0020")
+  template B_01.01, column 0020, "Name of the entity", datapoint 3287126
 ```
 
 ## The rest is the same as PAY
