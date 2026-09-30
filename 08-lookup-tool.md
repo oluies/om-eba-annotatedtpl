@@ -29,23 +29,34 @@ TOOLS = [
 
 ## 3. Dispatch it
 
-Wherever local tool calls are executed - the counterpart to whatever handles the MCP
-ones - add a branch that calls the function and returns its dict:
+Add a branch wherever local tool calls are executed - the counterpart to whatever
+handles the MCP ones. The exact place depends on the app; in a Chainlit loop it is the
+function the message handler calls for non-MCP tools.
+
+**The model sends `arguments` as a JSON string, not a dict.** Parse it before use:
 
 ```python
+import json
+
 from pay42_lookup import LOOKUP_DATAPOINT_TOOL_NAME, lookup_datapoint
 
+tool_name = raw_tool_call["function"]["name"]
+arguments = json.loads(raw_tool_call["function"].get("arguments") or "{}")
 
-async def run_tool(name: str, arguments: dict):
-    match name:
-        case LOOKUP_DATAPOINT_TOOL_NAME:
-            # strict mode always sends variant, as null when unknown.
-            return lookup_datapoint(arguments["column_name"], arguments["variant"])
-        case _:
-            ...
+match tool_name:
+    case LOOKUP_DATAPOINT_TOOL_NAME:
+        # strict mode always sends variant, as null when the table does not fix one.
+        output = lookup_datapoint(arguments["column_name"], arguments["variant"])
+    case _:
+        ...
 ```
 
-It is synchronous and reads a local file, so it needs no await and no client.
+If the app already has a helper that parses the argument string - something like
+`parse_args(raw_tool_call["function"].get("arguments", "{}"))` - use that instead of
+`json.loads`, so the branch behaves like every other tool.
+
+`lookup_datapoint` is synchronous and reads a local file, so it needs no await and no
+client. It returns a dict; serialise it the same way the other tool outputs are.
 
 ## What it answers
 
