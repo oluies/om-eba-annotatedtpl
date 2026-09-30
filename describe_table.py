@@ -5,20 +5,19 @@ array an agent reads back from the MCP `get_entity_details` tool is not the stor
 it is paginated and trimmed for context. Index 17 in that response is not index 17 in the
 entity, so a correct description lands silently on the wrong column.
 
-OpenMetadata has a name-keyed path instead:
+A column is its own entity, addressable by name:
 
-    GET /v1/tables/name/{fqn}/export           text/plain CSV of the current columns
-    PUT /v1/tables/name/{fqn}/import?dryRun=   the same CSV back, by column.name
+    GET /v1/columns/name/{fqn}?entityType=table    read one column
+    PUT /v1/columns/name/{fqn}?entityType=table    set description and tags together
 
-Header, from json/data/table/tableCsvDocumentation.json in the server source:
+PATCH on that resource answers 405 - verified against a live server, and the resource
+carries no @PATCH in the source - so documentation showing a JSON patch against a column
+does not apply here. PUT takes an UpdateColumn body, where omitting `tags` leaves the
+existing ones alone and the server validates every term against the glossary.
 
-    column.name*, column.displayName, column.description, column.dataTypeDisplay,
-    column.dataType*, column.arrayDataType, column.dataLength, column.tags,
-    column.glossaryTerms
-
-This reads the export, fills description and glossaryTerms for every column that matches
-a datapoint in 05-datapoints.csv, leaves everything else exactly as it came back, and
-writes it home.
+This reads the table's columns, pairs each one matching a datapoint in 05-datapoints.csv
+with that datapoint, and writes the description and the glossary terms. Context columns
+are not touched.
 
 Usage:
 
@@ -29,7 +28,6 @@ Usage:
 
 import argparse
 import csv
-import io
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -136,41 +134,61 @@ def pick(candidates: list[Datapoint], variant: str | None) -> Datapoint | None:
     return candidates[0] if len(candidates) == 1 else None
 
 
-def fill(csv_text: str, by_column: dict[str, list[Datapoint]], variant: str | None) -> tuple[str, list[str], list[str]]:
-    """Fill description and glossaryTerms on datapoint columns, leave the rest untouched."""
-    reader = csv.DictReader(io.StringIO(csv_text))
-    fields = list(reader.fieldnames or [])
-    if "column.name" not in fields:
-        raise SystemExit(f"  Unexpected export header: {fields}")
+def columns_to_write(
+    table_columns: list[dict], by_column: dict[str, list[Datapoint]], variant: str | None
+) -> tuple[list[tuple[str, Datapoint]], list[str]]:
+    """Pair each datapoint column with the datapoint it reports.
 
-    written: list[str] = []
-    skipped: list[str] = []
-    rows = []
-    for row in reader:
-        # The export gives the column's FQN; the framework code is its last segment.
-        name = (row.get("column.name") or "").split(".")[-1]
+    Pure. Context columns and columns with no datapoint are left out rather than
+    described from a framework they do not belong to.
+    """
+    write, skipped = [], []
+    for column in table_columns:
+        fqn = column["fullyQualifiedName"]
+        name = fqn.rsplit(".", 1)[-1]
         candidates = by_column.get(name)
         if not DATAPOINT_COLUMN.match(name) or not candidates:
-            rows.append(row)
             continue
-
-        dp = pick(candidates, variant)
-        if dp is None:
+        chosen = pick(candidates, variant)
+        if chosen is None:
             skipped.append(f"{name} ({len(candidates)} variants, none chosen)")
-            rows.append(row)
             continue
+        write.append((fqn, chosen))
+    return write, skipped
 
-        row["column.description"] = dp.description()
-        if "column.glossaryTerms" in fields:
-            row["column.glossaryTerms"] = ";".join(dp.glossary_terms())
-        written.append(name)
-        rows.append(row)
 
-    out = io.StringIO()
-    writer = csv.DictWriter(out, fieldnames=fields)
-    writer.writeheader()
-    writer.writerows(rows)
-    return out.getvalue(), written, skipped
+def fetch_columns(client: httpx.Client, table_fqn: str) -> list[dict]:
+    """Every column of the table, paging until the server stops truncating."""
+    columns: list[dict] = []
+    offset = 0
+    while True:
+        response = client.get(f"/v1/tables/name/{table_fqn}", params={"fields": "columns", "columnOffset": offset})
+        if response.status_code >= 400:
+            raise SystemExit(f"  Reading {table_fqn} failed: {response.status_code}\n  {response.text[:500]}")
+        body = response.json()
+        page = body.get("columns") or []
+        columns.extend(page)
+        if not body.get("columnsTruncated") or not page:
+            return columns
+        offset += len(page)
+
+
+def update_column(client: httpx.Client, fqn: str, dp: Datapoint) -> httpx.Response:
+    """Set one column's description and glossary terms, addressed by name.
+
+    `PUT /v1/columns/name/{fqn}` rather than a JSON patch on /columns/N: the index is
+    positional and the array an agent reads back is paginated and trimmed, so N does not
+    mean the same thing on both sides. PATCH on this resource answers 405 - verified -
+    so PUT is the path, and it takes description and tags together.
+    """
+    return client.put(
+        f"/v1/columns/name/{fqn}",
+        params={"entityType": "table"},
+        json={
+            "description": dp.description(),
+            "tags": [{"tagFQN": term, "source": "Glossary"} for term in dp.glossary_terms()],
+        },
+    )
 
 
 def main() -> None:
@@ -178,6 +196,7 @@ def main() -> None:
     parser.add_argument("fqn", help="table FQN, e.g. SQLSASTest.FIDW_BI.dbo.Y_01_01")
     parser.add_argument("--variant", help="which variant this table holds, e.g. 0010")
     parser.add_argument("--commit", action="store_true", help="write for real; dry run only without it")
+    parser.add_argument("--no-terms", action="store_true", help="set descriptions but do not attach glossary terms")
     args = parser.parse_args()
 
     settings = Settings()  # type: ignore[call-arg]
@@ -187,38 +206,44 @@ def main() -> None:
         verify=settings.ca_bundle or True,
         timeout=120.0,
     ) as client:
-        export = client.get(f"/v1/tables/name/{args.fqn}/export")
-        if export.status_code >= 400:
-            raise SystemExit(f"  Export failed: {export.status_code}\n  {export.text[:500]}")
+        columns = fetch_columns(client, args.fqn)
+        write, skipped = columns_to_write(columns, load_datapoints(), args.variant)
 
-        filled, written, skipped = fill(export.text, load_datapoints(), args.variant)
-        print(f"{args.fqn}: {len(written)} datapoint column(s) described")
+        print(f"{args.fqn}: {len(columns)} columns, {len(write)} to describe")
         for name in skipped:
-            print(f"  skipped {name} — pass --variant to choose")
-        if not written:
+            print(f"  skipped {name} - pass --variant to choose")
+        if not write:
             raise SystemExit("  Nothing to write.")
 
-        for dry_run in (True, False) if args.commit else (True,):
-            response = client.put(
-                f"/v1/tables/name/{args.fqn}/import",
-                params={"dryRun": str(dry_run).lower()},
-                content=filled,
-                headers={"Content-Type": "text/plain"},
-            )
-            if response.status_code >= 400:
-                raise SystemExit(f"  Import failed: {response.status_code}\n  {response.text[:500]}")
-            result = response.json()
-            label = "dry run" if dry_run else "committed"
-            print(
-                f"  {label}: status={result.get('status')} "
-                f"processed={result.get('numberOfRowsProcessed')} "
-                f"passed={result.get('numberOfRowsPassed')} failed={result.get('numberOfRowsFailed')}"
-            )
-            if result.get("numberOfRowsFailed"):
-                raise SystemExit(f"  Rejected rows:\n{(result.get('importResultsCsv') or '')[:1500]}")
-
         if not args.commit:
-            print("\n  Nothing written. Re-run with --commit once the dry run looks right.")
+            fqn, dp = write[0]
+            print(f"\n  Example, {fqn.rsplit('.', 1)[-1]}:")
+            print(f"    {dp.description()}")
+            if not args.no_terms:
+                for term in dp.glossary_terms():
+                    print(f"    term: {term}")
+            print(f"\n  Nothing written. Re-run with --commit to write all {len(write)}.")
+            return
+
+        failed = []
+        for fqn, dp in write:
+            if args.no_terms:
+                response = client.put(
+                    f"/v1/columns/name/{fqn}", params={"entityType": "table"}, json={"description": dp.description()}
+                )
+            else:
+                response = update_column(client, fqn, dp)
+            if response.status_code >= 400:
+                failed.append(f"{fqn.rsplit('.', 1)[-1]}: {response.status_code} {response.text[:160]}")
+
+        print(f"  {len(write) - len(failed)} written, {len(failed)} failed")
+        for line in failed[:10]:
+            print(f"  x {line}")
+        if failed:
+            raise SystemExit(
+                "\n  A 404 here usually means a glossary term does not exist: the endpoint validates "
+                "them. Load the glossary first, or re-run with --no-terms."
+            )
 
 
 if __name__ == "__main__":

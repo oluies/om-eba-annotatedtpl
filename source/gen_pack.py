@@ -750,8 +750,26 @@ context, as that tool's own description says. Index 17 in what you read is not i
 in the entity, so a correct description lands silently on the wrong column. No error is
 raised. This is not something careful counting fixes.
 
-Use the name-keyed path instead. Tables have a CSV export and import that address
-columns by `column.name`:
+Use the name-keyed path instead. **A column is its own entity**, addressable by FQN:
+
+```text
+GET /v1/columns/name/{{fqn}}?entityType=table    read one column
+PUT /v1/columns/name/{{fqn}}?entityType=table    set description and tags together
+```
+
+The body is an `UpdateColumn`: omit `tags` and the existing ones are left alone, and the
+server validates every term against the glossary, so a bad term is a 404 rather than a
+silent miss.
+
+```json
+{{"description": "...", "tags": [{{"tagFQN": "PAY_4_2.Domains....", "source": "Glossary"}}]}}
+```
+
+**PATCH against a column answers 405** - verified against a live server, and the resource
+carries no `@PATCH` in the source. Documentation showing a JSON patch against a column
+entity does not apply to this version. The entity type is `tableColumn`, not `column`.
+
+The table CSV export and import also work, keyed by `column.name`:
 
     GET /v1/tables/name/{{fqn}}/export           text/plain CSV of the current columns
     PUT /v1/tables/name/{{fqn}}/import?dryRun=   the same CSV back
