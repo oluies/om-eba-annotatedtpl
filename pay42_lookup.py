@@ -268,18 +268,30 @@ def glossary_terms_for(column_name: str) -> list[str]:
     return [r["term_fqn"] for r in rows]
 
 
-# The tool definition to drop into the agent's TOOLS list.
-TOOL_DEFINITION = {
+LOOKUP_DATAPOINT_TOOL_NAME = "lookup_datapoint"
+
+# `strict` requires every property to appear in `required`, so an optional argument is
+# expressed as a nullable type rather than an absent key. `variant` is therefore always
+# sent, as null when the table does not establish one.
+LOOKUP_DATAPOINT_TOOL_DEFINITION = {
     "type": "function",
     "function": {
-        "name": "lookup_datapoint",
+        "name": LOOKUP_DATAPOINT_TOOL_NAME,
         "description": (
-            "Resolve an EBA warehouse column name to its datapoint - PAY 4.2 (Y0101_r0010_c0010) or "
-            "DORA (B0101_r999_c0020). Which framework and which rule applies is decided by the tool. "
-            "Use this instead of reading a template page and counting rows: landing one line off "
-            "produces a correct-looking description of the wrong datapoint. A column name carries no "
-            "variant, so without one the answer gives the fields common to all six and lists them."
+            "Resolve a warehouse column name from an EBA reporting framework to the datapoint it "
+            "reports. Covers PAY 4.2 (columns like Y0101_r0010_c0010) and DORA (B0101_r999_c0020), "
+            "and decides which framework and which resolution rule applies on its own - the caller "
+            "does not choose. Returns the template, the row and column with their labels, the "
+            "dimension members and the datapoint id. Call this whenever a column matching "
+            "^[A-Za-z]{1,}[0-9]{4}_r[0-9]{1,}_c[0-9]{4}$ has to be described, in preference to "
+            "reading a template page and locating the row by eye: landing one line off yields a "
+            "correct-looking description of the wrong datapoint and nothing detects it. Do not call "
+            "it for a column that does not match that shape - warehouse context columns such as "
+            "Period_SK or Taxonomy_Name carry no framework meaning and the answer is a refusal. "
+            "Only PAY 4.2 and DORA are loaded: another EBA framework of the same shape resolves to "
+            "nothing rather than to a guess."
         ),
+        "strict": True,
         "parameters": {
             "type": "object",
             "properties": {
@@ -288,17 +300,24 @@ TOOL_DEFINITION = {
                     "description": "Warehouse column name, e.g. Y0101_r0010_c0010 or B0101_r999_c0020.",
                 },
                 "variant": {
-                    "type": "string",
+                    "type": ["string", "null"],
                     "description": (
-                        "PAY only: sheet variant 0010 to 0060, if the table establishes one. Omit if "
-                        "unknown, and always for DORA, which has no variants."
+                        "PAY 4.2 only: the sheet variant, 0010 to 0060, when the table establishes "
+                        "which metric and geography it holds. Pass null when that is not known, and "
+                        "always for DORA, which has no variants. With null the answer gives the "
+                        "fields common to all six variants and lists the six; it does not pick one, "
+                        "and neither should the caller."
                     ),
                 },
             },
-            "required": ["column_name"],
+            "required": ["column_name", "variant"],
+            "additionalProperties": False,
         },
     },
 }
+
+# The earlier name, kept so an existing import does not break.
+TOOL_DEFINITION = LOOKUP_DATAPOINT_TOOL_DEFINITION
 
 
 if __name__ == "__main__":

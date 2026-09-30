@@ -838,15 +838,15 @@ refuses to run without it rather than answering from a stale file.
 
 ## 2. Register the tool
 
-`pay42_lookup.TOOL_DEFINITION` is the OpenAI function schema. Add it to the list the
-agent sends as `tools`:
+`LOOKUP_DATAPOINT_TOOL_DEFINITION` is the function schema, in strict mode. Add it to the
+list the agent sends as `tools`:
 
 ```python
-from pay42_lookup import TOOL_DEFINITION as PAY42_LOOKUP_TOOL
+from pay42_lookup import LOOKUP_DATAPOINT_TOOL_DEFINITION
 
 TOOLS = [
     *EXISTING_TOOLS,
-    PAY42_LOOKUP_TOOL,
+    LOOKUP_DATAPOINT_TOOL_DEFINITION,
 ]
 ```
 
@@ -856,13 +856,14 @@ Wherever local tool calls are executed - the counterpart to whatever handles the
 ones - add a branch that calls the function and returns its dict:
 
 ```python
-from pay42_lookup import lookup_datapoint
+from pay42_lookup import LOOKUP_DATAPOINT_TOOL_NAME, lookup_datapoint
 
 
 async def run_tool(name: str, arguments: dict):
     match name:
-        case "lookup_datapoint":
-            return lookup_datapoint(arguments["column_name"], arguments.get("variant"))
+        case LOOKUP_DATAPOINT_TOOL_NAME:
+            # strict mode always sends variant, as null when unknown.
+            return lookup_datapoint(arguments["column_name"], arguments["variant"])
         case _:
             ...
 ```
