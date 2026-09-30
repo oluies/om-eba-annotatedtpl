@@ -84,6 +84,30 @@ class Resolved(BaseModel):
     candidates: list[dict[str, Any]] = []
 
 
+# Columns the store must have for a lookup to answer. The file is derived and gitignored,
+# so a pull brings new code and a new CSV while leaving the old database in place - and a
+# field added since it was built surfaces as a bare KeyError from a dict comprehension,
+# which says nothing about what to do.
+REQUIRED_COLUMNS = frozenset(CONSTANT_ACROSS_VARIANTS) | frozenset(VARIES_BY_VARIANT)
+_CHECKED: set[Path] = set()
+
+
+def check_store(db: Path) -> None:
+    """Fail with what to run, once per file, rather than deep inside a comprehension."""
+    if db in _CHECKED:
+        return
+    with duckdb.connect(str(db), read_only=True) as con:
+        present = {row[0] for row in con.execute("DESCRIBE datapoints").fetchall()}
+    missing = sorted(REQUIRED_COLUMNS - present)
+    if missing:
+        raise SystemExit(
+            f"{db.name} is out of date: it has no {', '.join(missing)}.\n"
+            "It is derived and not in git, so a pull leaves the old one behind.\n"
+            "  uv run source/build_duckdb.py"
+        )
+    _CHECKED.add(db)
+
+
 def _connect() -> duckdb.DuckDBPyConnection:
     if not DB.exists():
         raise SystemExit(f"{DB} is missing. Build it with: uv run source/build_duckdb.py")
@@ -96,6 +120,8 @@ def _connect() -> duckdb.DuckDBPyConnection:
         config["extension_directory"] = str(SETTINGS.extension_dir)
     if SETTINGS.memory_limit:
         config["memory_limit"] = SETTINGS.memory_limit
+
+    check_store(DB)
 
     # config= rather than `SET temp_directory`, which also works on a read-only connection
     # but is global to the database instance: a SET here changes the setting for every

@@ -883,7 +883,10 @@ uv sync
 uv run source/build_duckdb.py
 ```
 
-`pay42.duckdb` is derived and gitignored. Rebuild it after `gen_pack.py`; the lookup
+`pay42.duckdb` is derived and gitignored. **Rebuild it after every pull**: a pull brings
+new code and new CSVs but leaves the old database in place, and a field added since it
+was built is missing from it. The lookup checks for that and says to run the line above
+rather than failing somewhere unhelpful. Rebuild it after `gen_pack.py`; the lookup
 refuses to run without it rather than answering from a stale file.
 
 ## 2. Register the tool
