@@ -188,7 +188,8 @@ def warehouse_context(dpm_cell_code: str) -> dict[str, Any]:
         import ba_form_cell  # noqa: PLC0415 - optional dependency, imported where used
 
         if not ba_form_cell.enabled():
-            return {}
+            # Say so rather than returning nothing: silence reads the same as a miss.
+            return {"warehouse": "not consulted - BA_SERVER is not set"}
         return ba_form_cell.describe(ba_form_cell.fetch(dpm_cell_code))
     except Exception as exc:  # noqa: BLE001 - enrichment must never fail the lookup
         return {"warehouse_lookup_failed": f"{type(exc).__name__}: {exc}"}

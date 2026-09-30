@@ -96,6 +96,30 @@ It scopes to `Current_flg = 1`, the definition in force. A cell code present und
 several current forms is reported rather than resolved, because the column means
 different things in each and only the table's own `Form_BK` says which applies.
 
+### Did it actually reach SQL Server
+
+Every answer says, in a `warehouse` field, which of the three happened:
+
+| `warehouse` | Meaning |
+|---|---|
+| `not consulted - BA_SERVER is not set` | the pack answered alone |
+| `no row in BA_Form_Cell for this cell code with Current_flg = 1` | it queried and found nothing |
+| `BA_Form_Cell on <server>` | it queried and matched, and `datapoint_sk` is alongside |
+| `warehouse_lookup_failed: ...` | it tried and the query or the connection failed |
+
+Silence would read the same as a miss, so there is none.
+
+To test the connection on its own, before trusting any lookup:
+
+```bash
+kinit
+BA_SERVER=your-sql-server uv run ba_form_cell.py
+```
+
+It reports the server, the table, `SUSER_SNAME()` - who Kerberos authenticated you as -
+and how many current cells the table holds. A failure comes back with the reason rather
+than a traceback.
+
 Without `BA_SERVER` the pack answers on its own, which is what an agent with no database
 access gets. The enrichment never fails a lookup: a database that is down produces a note
 in the answer, not an error.

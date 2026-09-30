@@ -133,10 +133,11 @@ def describe(cells: list[FormCell]) -> dict[str, Any]:
     resolved: the caller has to know which form the table it is describing belongs to.
     """
     if not cells:
-        return {}
+        return {"warehouse": "no row in BA_Form_Cell for this cell code with Current_flg = 1"}
     if len(cells) == 1:
         cell = cells[0]
         return {
+            "warehouse": f"BA_Form_Cell on {SETTINGS.server}",
             "datapoint_sk": cell.datapoint_sk,
             "data_type": cell.data_type,
             "form_bk": cell.form_bk,
@@ -145,6 +146,7 @@ def describe(cells: list[FormCell]) -> dict[str, Any]:
             "open_axis": cell.open_axis_label_1,
         }
     return {
+        "warehouse": f"BA_Form_Cell on {SETTINGS.server}",
         "ambiguous": (
             f"{len(cells)} current forms define this cell: "
             + ", ".join(f"{c.form_bk} ({c.taxonomy_name})" for c in cells)
@@ -155,3 +157,36 @@ def describe(cells: list[FormCell]) -> dict[str, Any]:
             {"form_bk": c.form_bk, "taxonomy_name": c.taxonomy_name, "datapoint_sk": c.datapoint_sk} for c in cells
         ],
     }
+
+
+def check_connection() -> dict[str, Any]:
+    """Prove the connection works, for when a lookup says nothing about the warehouse.
+
+    Answers the question "did it actually reach SQL Server", which an empty result cannot.
+    """
+    if not enabled():
+        return {"connected": False, "reason": "BA_SERVER is not set, so the warehouse is not consulted at all"}
+    try:
+        import pyodbc  # noqa: PLC0415
+
+        with pyodbc.connect(connection_string()) as connection:
+            cursor = connection.cursor()
+            cursor.execute(f"SELECT COUNT(*) FROM {SETTINGS.table} WHERE Current_flg = 1")  # noqa: S608
+            current = cursor.fetchone()[0]
+            cursor.execute("SELECT SUSER_SNAME()")
+            who = cursor.fetchone()[0]
+        return {
+            "connected": True,
+            "server": SETTINGS.server,
+            "table": SETTINGS.table,
+            "authenticated_as": who,
+            "current_cells": current,
+        }
+    except Exception as exc:  # noqa: BLE001 - the point is to report the failure
+        return {"connected": False, "reason": f"{type(exc).__name__}: {exc}"}
+
+
+if __name__ == "__main__":
+    import json
+
+    print(json.dumps(check_connection(), ensure_ascii=False, indent=2, default=str))
