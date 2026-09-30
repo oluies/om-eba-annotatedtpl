@@ -1,7 +1,7 @@
 # PAY 4.2 glossary — domains and members
 
 Controlled vocabulary of the EBA PAY 4.2 (FRPPAY 4.2) framework, transcribed from
-EBA PAY 4.2 (FRPPAY 4.2) annotated table layout, 2026-01-06.
+EBA PAY 4.2 (FRPPAY 4.2) annotated table layout, 2026-01-06; datapoint ids from the DPM 2.0 database, module PSD_FRP 1.1.0.
 
 A **domain** is a set of allowed values. A **dimension** is an axis that draws its
 values from one domain — several dimensions share a domain, which is why a member code

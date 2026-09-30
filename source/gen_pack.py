@@ -9,10 +9,10 @@ from pathlib import Path
 # Paths resolve against the repository root so the pipeline reproduces from a fresh
 # clone: `uv run source/extract_dpm.py && uv run source/vocab.py && uv run source/gen_pack.py`.
 REPO = Path(__file__).resolve().parent.parent
-SOURCE = REPO / "source"
-XLSX = SOURCE / "20260106_Annotated_Table_Layout__PAY_4.2_PSD_FRPPAY_4.2.xlsx"
-DPM_JSON = SOURCE / "dpm.json"
-VOCAB_JSON = SOURCE / "vocab.json"
+SOURCE_DIR = REPO / "source"
+XLSX = SOURCE_DIR / "20260106_Annotated_Table_Layout__PAY_4.2_PSD_FRPPAY_4.2.xlsx"
+DPM_JSON = SOURCE_DIR / "dpm.json"
+VOCAB_JSON = SOURCE_DIR / "vocab.json"
 
 OUT = REPO
 DATA = json.loads(DPM_JSON.read_text(encoding="utf-8"))
@@ -20,7 +20,10 @@ VOCAB = json.loads(VOCAB_JSON.read_text(encoding="utf-8"))
 
 LEADING_CODE = re.compile(r"^(?P<code>\d{4})\s+(?P<label>.+)$")
 PAIR_RE = re.compile(r"^\((?P<a>[A-Za-z0-9]+):(?P<b>[A-Za-z0-9]+)\)\s*(?P<label>.+)$")
-SOURCE = "EBA PAY 4.2 (FRPPAY 4.2) annotated table layout, 2026-01-06"
+SOURCE = (
+    "EBA PAY 4.2 (FRPPAY 4.2) annotated table layout, 2026-01-06; "
+    "datapoint ids from the DPM 2.0 database, module PSD_FRP 1.1.0"
+)
 AUTHORITY = "EBA Guidelines on fraud reporting under PSD2 (EBA/GL/2018/05, as amended)"
 
 
@@ -47,6 +50,25 @@ def dim_label(code: str) -> str:
 # --------------------------------------------------------------------------------------
 # Flat datapoint table - the lookup every other file points at
 # --------------------------------------------------------------------------------------
+
+
+# The annotated table layout renders module version PSD_FRP 1.0.1. Reporting is on 1.1.0,
+# which has the same 1830 cells at the same coordinates and the same labels, but an
+# entirely different set of VariableVIDs - not one id is shared between the two. Taking
+# the ids from the layout would cite 1830 identifiers that do not exist in what is
+# reported, so they are overridden from the DPM database, exported to the CSV beside this
+# file. Verified: same coordinates both versions, zero shared ids.
+DPM_VERSION = "PSD_FRP 1.1.0"
+DPM_IDS = SOURCE_DIR / "dpm-psd_frp-1.1.0-datapoints.csv"
+
+
+def load_dpm_ids() -> dict[tuple[str, str, str, str], dict[str, str]]:
+    """Datapoint id and sign by (template, row, column, variant)."""
+    with DPM_IDS.open(encoding="utf-8") as fh:
+        return {(r["template"], r["row_code"], r["column_code"], r["variant"]): r for r in csv.DictReader(fh)}
+
+
+DPM_BY_COORDINATE = load_dpm_ids()
 
 
 def datapoint_rows() -> list[dict]:
@@ -82,11 +104,20 @@ def datapoint_rows() -> list[dict]:
                 # template Y_01.01 lands in table Y_01_01, whose datapoint columns are
                 # Y0101_rXXXX_cXXXX. One table per template, not per variant.
                 table_name = template.replace(".", "_")
+                # Swap the layout's id for the reported one. A coordinate with no match
+                # means the layout and the DPM export disagree, which must not pass
+                # silently - every description cites this id.
+                key = (template, row_code, col_code, variant)
+                reported = DPM_BY_COORDINATE.get(key)
+                if reported is None:
+                    raise SystemExit(f"No {DPM_VERSION} datapoint for {key}; regenerate the DPM export.")
+
                 out.append(
                     {
                         "column_name": column_name,
                         "table_name": table_name,
-                        "datapoint_id": dp["id"],
+                        "datapoint_id": reported["datapoint_id"],
+                        "datapoint_id_1_0_1": dp["id"],
                         "template": template,
                         "template_name": s["title"].split(" - ", 1)[-1],
                         "variant": variant,
@@ -100,7 +131,7 @@ def datapoint_rows() -> list[dict]:
                         "row_dimensions": row_dims,
                         "column_dimensions": "; ".join(col_members.get(col_code, [])),
                         "unit": dp["unit"],
-                        "sign": dp["sign"],
+                        "sign": reported["sign"] or dp["sign"],
                     }
                 )
     return out
@@ -141,6 +172,21 @@ def md_table(headers: list[str], rows: list[list[str]]) -> str:
     return "\n".join(out)
 
 
+def variant_of(sheet: dict) -> str:
+    """The sheet's variant code, empty for a template that has none."""
+    name = sheet["sheet"]
+    return name[name.index("(") + 1 : -1] if "(" in name else ""
+
+
+# The worked example in the agent instructions, built from the data rather than typed,
+# so it cannot cite an id that the shipped CSV does not contain.
+EXAMPLE_COLUMN = "Y0101_r0010_c0010"
+EXAMPLE_VARIANT_ROWS = "\n".join(
+    f"| {d['datapoint_id']} | {d['variant']} | {d['metric']} | {d['geography']} | {d['unit']} |"
+    for d in sorted((x for x in DPS if x["column_name"] == EXAMPLE_COLUMN), key=lambda x: x["variant"])
+)
+
+
 def write_tables() -> None:
     for template, sheets in TEMPLATES.items():
         base = sheets[0]
@@ -178,7 +224,15 @@ def write_tables() -> None:
         for r in base["rows"]:
             code, label = (r["code"], r["label"]) if r["code"] else strip_code(r["label"])
             dims = "; ".join(f"{m.get('dimension', m['dim'])} = {m['label']}" for m in r["members"]) or "—"
-            ids = [r["datapoints"].get(cc, {}).get("id", "—") for cc in col_codes]
+            # The reported id, not the layout's: the two versions share no identifiers.
+            ids = [
+                DPM_BY_COORDINATE.get((template, code, cc, variant_of(base)), {}).get(
+                    "datapoint_id", r["datapoints"].get(cc, {}).get("id", "—")
+                )
+                if cc in r["datapoints"]
+                else "—"
+                for cc in col_codes
+            ]
             row_rows.append([code or "—", label, dims, *ids])
         rows_tbl = md_table(["Row", "Label", "Dimension members", *[f"DP col {c}" for c in col_codes]], row_rows)
 
@@ -469,7 +523,7 @@ derived from the EBA PAY 4.2 (FRPPAY 4.2) reporting framework.
 A fully qualified datapoint has four parts. Physical table and column names usually
 encode some of them:
 
-    Y_03.01 ( 0010 )      R0080          C0020            437613
+    Y_03.01 ( 0010 )      R0080          C0020            3260891
     template  variant     row code       column code      datapoint id
     │         │           │              │                │
     │         │           │              │                └── unique on its own
@@ -566,12 +620,7 @@ So `Y0101_r0010_c0010` is all six of these:
 
 | Datapoint | Variant | Metric | Geography | Unit |
 |---|---|---|---|---|
-| 437810 | 0010 | Amount of payment | Domestic | €£$ |
-| 436590 | 0020 | Number of transactions | Domestic | # |
-| 437768 | 0030 | Amount of payment | European Economic Area (EEA) | €£$ |
-| 436548 | 0040 | Number of transactions | European Economic Area (EEA) | # |
-| 437789 | 0050 | Amount of payment | Non-European Economic Area (EEA) | €£$ |
-| 436569 | 0060 | Number of transactions | Non-European Economic Area (EEA) | # |
+{EXAMPLE_VARIANT_ROWS}
 
 Resolve the variant from the table, not the column: which metric and which geography the
 table holds is a property of the table, whether that is in its name, a partition, or a
@@ -632,7 +681,7 @@ breakdown, and the source. Keep it to two or three sentences.
 ```text
 Number of fraudulent card-based payment transactions initiated electronically and
 authenticated via strong customer authentication, reported by the issuing payment
-service provider, for transactions cross-border within the EEA. Datapoint 437613 of
+service provider, for transactions cross-border within the EEA. Datapoint 3260891 of
 template Y_03.01 (EBA PAY 4.2), row 0080, column 0020. Unit: count, non-negative.
 ```
 

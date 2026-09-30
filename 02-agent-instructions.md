@@ -8,7 +8,7 @@ derived from the EBA PAY 4.2 (FRPPAY 4.2) reporting framework.
 A fully qualified datapoint has four parts. Physical table and column names usually
 encode some of them:
 
-    Y_03.01 ( 0010 )      R0080          C0020            437613
+    Y_03.01 ( 0010 )      R0080          C0020            3260891
     template  variant     row code       column code      datapoint id
     │         │           │              │                │
     │         │           │              │                └── unique on its own
@@ -105,12 +105,12 @@ So `Y0101_r0010_c0010` is all six of these:
 
 | Datapoint | Variant | Metric | Geography | Unit |
 |---|---|---|---|---|
-| 437810 | 0010 | Amount of payment | Domestic | €£$ |
-| 436590 | 0020 | Number of transactions | Domestic | # |
-| 437768 | 0030 | Amount of payment | European Economic Area (EEA) | €£$ |
-| 436548 | 0040 | Number of transactions | European Economic Area (EEA) | # |
-| 437789 | 0050 | Amount of payment | Non-European Economic Area (EEA) | €£$ |
-| 436569 | 0060 | Number of transactions | Non-European Economic Area (EEA) | # |
+| 3264309 | 0010 | Amount of payment | Domestic | €£$ |
+| 3260072 | 0020 | Number of transactions | Domestic | # |
+| 3260968 | 0030 | Amount of payment | European Economic Area (EEA) | €£$ |
+| 3263386 | 0040 | Number of transactions | European Economic Area (EEA) | # |
+| 3260980 | 0050 | Amount of payment | Non-European Economic Area (EEA) | €£$ |
+| 3263397 | 0060 | Number of transactions | Non-European Economic Area (EEA) | # |
 
 Resolve the variant from the table, not the column: which metric and which geography the
 table holds is a property of the table, whether that is in its name, a partition, or a
@@ -171,7 +171,7 @@ breakdown, and the source. Keep it to two or three sentences.
 ```text
 Number of fraudulent card-based payment transactions initiated electronically and
 authenticated via strong customer authentication, reported by the issuing payment
-service provider, for transactions cross-border within the EEA. Datapoint 437613 of
+service provider, for transactions cross-border within the EEA. Datapoint 3260891 of
 template Y_03.01 (EBA PAY 4.2), row 0080, column 0020. Unit: count, non-negative.
 ```
 
