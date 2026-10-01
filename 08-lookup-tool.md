@@ -145,6 +145,21 @@ BA_SERVER=your-sql-server uv run ba_form_cell.py
 BA_SERVER=your-sql-server uv run ba_form_cell.py Y0101_r0010_c0010
 ```
 
+### Seeing the statement that ran
+
+`BA_DEBUG=1` logs every statement the module sends, with its parameters filled in, so the
+exact query can be pasted into SSMS when an answer looks wrong. It logs the row count and
+the cells it folded them into as well - zero cells and six cells are both plausible
+answers to the same query, and that is where the difference shows:
+
+```bash
+BA_DEBUG=1 BA_SERVER=your-sql-server uv run ba_form_cell.py Y0101_r0010_c0010
+```
+
+The log goes to stderr and the answer to stdout, so the JSON can still be piped. What
+executes is the parameterised statement; the rendering is for reading. In a host
+application, enable logging for the `ba_form_cell` logger instead of setting the variable.
+
 It reports the server, the table, `SUSER_SNAME()` - who Kerberos authenticated you as -
 and how many current cells the table holds. A failure comes back with the reason rather
 than a traceback.

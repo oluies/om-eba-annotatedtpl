@@ -32,6 +32,7 @@ agent with no database access gets. Connecting costs a round trip per call, so i
 enrichment rather than for the hot path.
 """
 
+import logging
 from collections.abc import Iterable, Sequence
 from typing import Any
 
@@ -55,9 +56,15 @@ class Settings(BaseSettings):
     driver: str = "ODBC Driver 18 for SQL Server"
     encrypt: bool = True
     trust_server_certificate: bool = False
+    debug: bool = False
 
 
 SETTINGS = Settings()
+
+# Every statement this module sends goes out at DEBUG, rendered so it can be pasted
+# straight into SSMS. Set BA_DEBUG=1 to see them from the CLI; in a host application,
+# enable logging for "ba_form_cell" the usual way.
+LOG = logging.getLogger(__name__)
 
 # The EBA release the generated pack describes, spelled the way BA_Form_Cell spells it.
 # A cell whose current definition sits under any other taxonomy still has warehouse facts,
@@ -150,6 +157,36 @@ def fold_rows(names: Sequence[str], rows: Iterable[Sequence[Any]]) -> list[FormC
     return [FormCell.model_validate(record | {"open_axis_values": tuple(values[key])}) for key, record in cells.items()]
 
 
+def literal(value: Any) -> str:
+    """One parameter as T-SQL would spell it. For the log only - never executed."""
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, int | float):
+        return str(value)
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def rendered_sql(sql: str, params: Sequence[Any]) -> str:
+    """The statement with its parameters filled in, so the log entry is runnable.
+
+    pyodbc sends the parameters separately and that is what actually executes; this is a
+    rendering of the same thing for a human to paste into SSMS when an answer looks wrong.
+    Pure, so what the log claims was sent can be asserted on without a database.
+    """
+    out = sql
+    for param in params:
+        out = out.replace("?", literal(param), 1)
+    return out
+
+
+def _execute(cursor: Any, sql: str, params: Sequence[Any] = ()) -> Any:
+    """Send one statement, after writing it to the debug log exactly as it was built."""
+    LOG.debug("%s\n%s", SETTINGS.server, rendered_sql(sql, params).strip())
+    return cursor.execute(sql, list(params)) if params else cursor.execute(sql)
+
+
 def _query(key: str, value: str, form_bk: str | None) -> list[FormCell]:
     """Run the one query against whichever key was given. The only I/O in this module."""
     if not enabled():
@@ -165,9 +202,22 @@ def _query(key: str, value: str, form_bk: str | None) -> list[FormCell]:
 
     with pyodbc.connect(connection_string()) as connection:
         cursor = connection.cursor()
-        cursor.execute(sql, params)
+        _execute(cursor, sql, params)
         names = [c[0].lower() for c in cursor.description]
-        return fold_rows(names, cursor.fetchall())
+        rows = cursor.fetchall()
+
+    cells = fold_rows(names, rows)
+    # The counts matter as much as the statement: 0 cells and 6 cells are both plausible
+    # answers to the same query, and the log is where that difference becomes visible.
+    LOG.debug(
+        "%s = %r matched %d row(s), folded to %d cell(s): %s",
+        key,
+        value,
+        len(rows),
+        len(cells),
+        ", ".join(f"{c.dpm_cell_code} axis={len(c.open_axis_values)}" for c in cells) or "none",
+    )
+    return cells
 
 
 def fetch(dpm_cell_code: str, form_bk: str | None = None) -> list[FormCell]:
@@ -302,15 +352,16 @@ def check_connection() -> dict[str, Any]:
 
         with pyodbc.connect(connection_string()) as connection:
             cursor = connection.cursor()
-            cursor.execute("SELECT SUSER_SNAME()")
+            _execute(cursor, "SELECT SUSER_SNAME()")
             who = cursor.fetchone()[0]
-            cursor.execute(f"SELECT COUNT(*) FROM {SETTINGS.table} WHERE Current_flg = 1")  # noqa: S608
+            _execute(cursor, f"SELECT COUNT(*) FROM {SETTINGS.table} WHERE Current_flg = 1")  # noqa: S608
             current = cursor.fetchone()[0]
-            cursor.execute(f"SELECT COUNT(*) FROM {SETTINGS.axis_table}")  # noqa: S608
+            _execute(cursor, f"SELECT COUNT(*) FROM {SETTINGS.axis_table}")  # noqa: S608
             axis = cursor.fetchone()[0]
-            cursor.execute(  # noqa: S608
+            _execute(  # noqa: S608
+                cursor,
                 f"SELECT TOP 5 Taxonomy_Name, COUNT(*) AS cells FROM {SETTINGS.table} "
-                "WHERE Current_flg = 1 GROUP BY Taxonomy_Name ORDER BY COUNT(*) DESC"
+                "WHERE Current_flg = 1 GROUP BY Taxonomy_Name ORDER BY COUNT(*) DESC",
             )
             taxonomies = {name: count for name, count in cursor.fetchall()}
         return {
@@ -331,6 +382,13 @@ def check_connection() -> dict[str, Any]:
 if __name__ == "__main__":
     import json
     import sys
+
+    # The statements go to stderr and the answer to stdout, so BA_DEBUG=1 can be left on
+    # while the JSON is still piped into something.
+    logging.basicConfig(
+        level=logging.DEBUG if SETTINGS.debug else logging.WARNING,
+        format="-- %(name)s %(message)s",
+    )
 
     # With an argument, look that column or cell code up; without, just prove the
     # connection. Both print JSON, so the output can be piped into anything.
