@@ -1036,6 +1036,10 @@ If the app already has a helper that parses the argument string - something like
 `parse_args(raw_tool_call["function"].get("arguments", "{}"))` - use that instead of
 `json.loads`, so the branch behaves like every other tool.
 
+Or skip all of it: `agent_tools.py` in this pack is this dispatch for all four tools,
+including the catalogue writers, with `TOOLS` to register and `dispatch(name, arguments)`
+to call. It takes `arguments` as either the string or a parsed dict, and it never raises.
+
 `lookup_datapoint` is synchronous and reads a local file, so it needs no await and no
 client. It returns a dict; serialise it the same way the other tool outputs are.
 
@@ -1423,6 +1427,8 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `07-agent-prompt.md` | The stanza to paste into an agent's system prompt, covering every framework | You are configuring an agent |
 | `describe_table.py` | Writes descriptions and glossary terms onto a table's columns, by name | You are describing a real table |
 | `pay42_lookup.py` | Deterministic datapoint lookup over DuckDB, and its tool definition | You are giving an agent a lookup tool |
+| `agent_tools.py` | All four tool definitions and one dispatcher | You are wiring the tools into an agent |
+| `display_names.py` | The rule for what a table and its columns are called | You are setting display names |
 | `08-lookup-tool.md` | How to register and dispatch that tool | You are wiring it into an agent |
 | `03-glossary/domains-and-members.md` | The {sum(len(m) for m in VOCAB["domains"].values())} controlled values across {len(VOCAB["domains"])} domains | You need the vocabulary |
 | `03-glossary/dimensions.md` | The {len(VOCAB["dimensions"])} breakdown axes | You need to know which axis a value belongs to |

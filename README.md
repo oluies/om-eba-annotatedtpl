@@ -18,6 +18,8 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `07-agent-prompt.md` | The stanza to paste into an agent's system prompt, covering every framework | You are configuring an agent |
 | `describe_table.py` | Writes descriptions and glossary terms onto a table's columns, by name | You are describing a real table |
 | `pay42_lookup.py` | Deterministic datapoint lookup over DuckDB, and its tool definition | You are giving an agent a lookup tool |
+| `agent_tools.py` | All four tool definitions and one dispatcher | You are wiring the tools into an agent |
+| `display_names.py` | The rule for what a table and its columns are called | You are setting display names |
 | `08-lookup-tool.md` | How to register and dispatch that tool | You are wiring it into an agent |
 | `03-glossary/domains-and-members.md` | The 54 controlled values across 4 domains | You need the vocabulary |
 | `03-glossary/dimensions.md` | The 14 breakdown axes | You need to know which axis a value belongs to |

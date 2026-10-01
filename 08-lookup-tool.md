@@ -58,6 +58,10 @@ If the app already has a helper that parses the argument string - something like
 `parse_args(raw_tool_call["function"].get("arguments", "{}"))` - use that instead of
 `json.loads`, so the branch behaves like every other tool.
 
+Or skip all of it: `agent_tools.py` in this pack is this dispatch for all four tools,
+including the catalogue writers, with `TOOLS` to register and `dispatch(name, arguments)`
+to call. It takes `arguments` as either the string or a parsed dict, and it never raises.
+
 `lookup_datapoint` is synchronous and reads a local file, so it needs no await and no
 client. It returns a dict; serialise it the same way the other tool outputs are.
 

@@ -63,11 +63,12 @@ def dispatch(name: str, arguments: str | dict[str, Any]) -> dict[str, Any]:
     """
     try:
         args = json.loads(arguments) if isinstance(arguments, str) else arguments
-    except json.JSONDecodeError as exc:
-        return {"error": f"arguments were not JSON: {exc}"}
-
-    try:
         return _run(name, args)
+    except ValueError as exc:
+        # JSONDecodeError is a ValueError, but not the only one json.loads raises: an
+        # integer literal over 4300 digits trips CPython's conversion limit with a plain
+        # ValueError, and that would have escaped a handler written for the subclass.
+        return {"error": f"arguments were not usable JSON: {type(exc).__name__}: {exc}"}
     except Exception as exc:  # noqa: BLE001 - a tool failure is a turn the model can still use
         return {"error": f"{name} failed: {type(exc).__name__}: {exc}"}
 
