@@ -81,7 +81,16 @@ context columns above.
 
 Check `Taxonomy_Name` first. A warehouse holding several EBA taxonomies uses the same
 naming convention for all of them, so a `Y0101_...` column only means PAY 4.2 when the
-table is PAY 4.2.
+table is PAY 4.2. FI's `BA_Form_Cell` spans 33 taxonomy names, from `DPM_2.6` to
+`DPM_4.2`, and the same cell code can mean something else in each.
+
+Where `lookup_datapoint` can reach that table it checks for you and answers with a
+`pack_overlay` line. When it says the cell is current under a release this pack does not
+describe, **use the warehouse fields and leave this pack's datapoint id, unit and
+dimension members out.** An id borrowed across releases is wrong in a way nothing in the
+catalogue would show. The row and column labels, the form and the data type in the same
+answer are still correct, and a description built from those alone is a good one - a
+narrower description is not a worse description.
 
 ## Warehouse column names
 
