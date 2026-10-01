@@ -220,6 +220,10 @@ def check_variant(by_column: dict[str, list[Datapoint]], table: str, variant: st
         )
 
 
+class CatalogueError(Exception):
+    """OpenMetadata would not answer. See StoreError in pay42_lookup for why not SystemExit."""
+
+
 def fetch_table(http: httpx.Client, table_fqn: str) -> dict:
     """The table with every column, paging until the server stops truncating.
 
@@ -232,7 +236,7 @@ def fetch_table(http: httpx.Client, table_fqn: str) -> dict:
     while True:
         response = http.get(f"/v1/tables/name/{table_fqn}", params={"fields": "columns", "columnOffset": offset})
         if response.status_code >= 400:
-            raise SystemExit(f"  Reading {table_fqn} failed: {response.status_code}\n  {response.text[:500]}")
+            raise CatalogueError(f"Reading {table_fqn} failed: {response.status_code} {response.text[:300]}")
         body = response.json()
         merged = merged or body
         page = body.get("columns") or []
@@ -753,7 +757,10 @@ def main() -> None:
     settings = Settings()  # type: ignore[call-arg]
     with client(settings) as http:
         by_column = load_datapoints()
-        columns = fetch_columns(http, args.fqn)
+        try:
+            columns = fetch_columns(http, args.fqn)
+        except CatalogueError as exc:  # at the command line this is an exit, in a tool it is not
+            raise SystemExit(f"  {exc}") from exc
         table = args.fqn.rsplit(".", 1)[-1]
         axis_column = find_open_axis(columns)
 

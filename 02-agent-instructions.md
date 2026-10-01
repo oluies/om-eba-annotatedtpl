@@ -335,6 +335,29 @@ which is about the token, not about the text, so do not rewrite the text in resp
 Every term is validated against the glossary, so a term that does not exist fails the
 whole write with a 404 - set the description alone if the glossary is not loaded yet.
 
+### Registering all of this in an agent
+
+`agent_tools.py` assembles the four definitions and dispatches them, so a host
+application imports two names and cannot end up with a tool registered but not wired:
+
+```python
+from agent_tools import TOOLS, dispatch
+
+response = client.chat.completions.create(model=..., messages=..., tools=list(TOOLS))
+result = dispatch(call.function.name, call.function.arguments)
+```
+
+Two things it absorbs. `arguments` arrives as a **JSON string**, not a dict - it takes
+either. And every tool here blocks on a socket or a file, so from an async loop:
+
+```python
+result = await asyncio.to_thread(dispatch, call.function.name, call.function.arguments)
+```
+
+Nothing in `dispatch` raises. A tool that fails returns `{"error": ...}`, which the
+model can read and act on, where an exception would end the turn. `uv run agent_tools.py`
+prints the definitions, so what the model will be shown can be read before it is shown.
+
 ### Display names: use the one you are given
 
 **Do not compose a display name yourself.** `lookup_datapoint` returns it, under

@@ -95,6 +95,15 @@ REQUIRED_COLUMNS = frozenset(CONSTANT_ACROSS_VARIANTS) | frozenset(VARIES_BY_VAR
 _CHECKED: set[Path] = set()
 
 
+class StoreError(Exception):
+    """The DuckDB store is missing or out of date.
+
+    An exception rather than SystemExit, because an agent calls these functions in-process
+    and SystemExit is a BaseException: it walks straight past `except Exception` and takes
+    the host down over a stale file. The CLI turns it back into an exit below.
+    """
+
+
 def check_store(db: Path) -> None:
     """Fail with what to run, once per file, rather than deep inside a comprehension."""
     if db in _CHECKED:
@@ -103,7 +112,7 @@ def check_store(db: Path) -> None:
         present = {row[0] for row in con.execute("DESCRIBE datapoints").fetchall()}
     missing = sorted(REQUIRED_COLUMNS - present)
     if missing:
-        raise SystemExit(
+        raise StoreError(
             f"{db.name} is out of date: it has no {', '.join(missing)}.\n"
             "It is derived and not in git, so a pull leaves the old one behind.\n"
             "  uv run source/build_duckdb.py"
@@ -113,7 +122,7 @@ def check_store(db: Path) -> None:
 
 def _connect() -> duckdb.DuckDBPyConnection:
     if not DB.exists():
-        raise SystemExit(f"{DB} is missing. Build it with: uv run source/build_duckdb.py")
+        raise StoreError(f"{DB} is missing. Build it with: uv run source/build_duckdb.py")
 
     config: dict[str, str] = {}
     if SETTINGS.temp_dir:
@@ -458,4 +467,8 @@ if __name__ == "__main__":
     args = sys.argv[1:]
     if not args:
         raise SystemExit("usage: pay42_lookup.py <column_name> [variant]")
-    print(json.dumps(lookup_datapoint(args[0], args[1] if len(args) > 1 else None), ensure_ascii=False, indent=2))
+    try:
+        answer = lookup_datapoint(args[0], args[1] if len(args) > 1 else None)
+    except StoreError as exc:  # at the command line this is an exit, in a tool it is not
+        raise SystemExit(str(exc)) from exc
+    print(json.dumps(answer, ensure_ascii=False, indent=2))
