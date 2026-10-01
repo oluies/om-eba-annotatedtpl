@@ -38,6 +38,8 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from display_names import display_names, table_name
+
 PACK = Path(__file__).parent
 DATAPOINTS = PACK / "05-datapoints.csv"
 
@@ -77,7 +79,9 @@ class Datapoint(BaseModel):
     table_name: str
     datapoint_id: str
     template: str
+    template_name: str
     variant: str
+    variant_label: str
     metric: str
     geography: str
     row_code: str
@@ -216,8 +220,13 @@ def check_variant(by_column: dict[str, list[Datapoint]], table: str, variant: st
         )
 
 
-def fetch_columns(http: httpx.Client, table_fqn: str) -> list[dict]:
-    """Every column of the table, paging until the server stops truncating."""
+def fetch_table(http: httpx.Client, table_fqn: str) -> dict:
+    """The table with every column, paging until the server stops truncating.
+
+    The table's own displayName and description ride along in the same body, so reading
+    the columns and reading what the table itself says is one request, not two.
+    """
+    merged: dict = {}
     columns: list[dict] = []
     offset = 0
     while True:
@@ -225,14 +234,20 @@ def fetch_columns(http: httpx.Client, table_fqn: str) -> list[dict]:
         if response.status_code >= 400:
             raise SystemExit(f"  Reading {table_fqn} failed: {response.status_code}\n  {response.text[:500]}")
         body = response.json()
+        merged = merged or body
         page = body.get("columns") or []
         columns.extend(page)
         if not body.get("columnsTruncated") or not page:
-            return columns
+            return merged | {"columns": columns}
         offset += len(page)
 
 
-def update_column(http: httpx.Client, fqn: str, dp: Datapoint, axis_column: str | None) -> httpx.Response:
+def fetch_columns(http: httpx.Client, table_fqn: str) -> list[dict]:
+    """Every column of the table. The batch writer wants only these."""
+    return fetch_table(http, table_fqn)["columns"]
+
+
+def update_column(http: httpx.Client, fqn: str, dp: Datapoint, axis_column: str | None, label: str) -> httpx.Response:
     """Set one column's description and glossary terms, addressed by name.
 
     `PUT /v1/columns/name/{fqn}` rather than a JSON patch on /columns/N: the index is
@@ -245,6 +260,7 @@ def update_column(http: httpx.Client, fqn: str, dp: Datapoint, axis_column: str 
         params={"entityType": "table"},
         json={
             "description": dp.description_without_variant(axis_column) if axis_column else dp.description(),
+            "displayName": label,
             "tags": [{"tagFQN": term, "source": "Glossary"} for term in dp.glossary_terms()],
         },
     )
@@ -304,6 +320,8 @@ def summarise(column: dict) -> dict[str, Any]:
         "data_type": column.get("dataType"),
         "described": bool(text),
     }
+    if column.get("displayName"):
+        summary["display_name"] = column["displayName"]
     if text:
         summary["description"] = text
     if terms:
@@ -320,8 +338,8 @@ def fetch_column(http: httpx.Client, fqn: str) -> dict:
     return response.json()
 
 
-def read_table_descriptions(table_fqn: str) -> dict[str, Any]:
-    """What every column of a table says now, in one call.
+def read_table_metadata(table_fqn: str) -> dict[str, Any]:
+    """What the table and every one of its columns says now, in one call.
 
     One call rather than one per column: an agent about to describe a table wants to know
     which columns are already done, and asking forty times to find out is forty round
@@ -329,11 +347,17 @@ def read_table_descriptions(table_fqn: str) -> dict[str, Any]:
     """
     try:
         with client(Settings()) as http:  # type: ignore[call-arg]
-            columns = [summarise(column) for column in fetch_columns(http, table_fqn)]
+            table = fetch_table(http, table_fqn)
     except Exception as exc:  # noqa: BLE001 - a tool reports its failures, it does not raise them
         return {"table": table_fqn, "error": f"{type(exc).__name__}: {exc}"}
-    return {
-        "table": table_fqn,
+
+    columns = [summarise(column) for column in table["columns"]]
+    answer: dict[str, Any] = {"table": table_fqn}
+    if table.get("displayName"):
+        answer["display_name"] = table["displayName"]
+    if (table.get("description") or "").strip():
+        answer["description"] = table["description"].strip()
+    return answer | {
         "total": len(columns),
         "described": sum(1 for column in columns if column["described"]),
         "columns": columns,
@@ -360,25 +384,30 @@ def read_column_description(table_fqn: str, column_name: str) -> dict[str, Any]:
     return {"column_fqn": fqn, "found": True} | summarise(column)
 
 
-def write_column_description(
+def write_column_metadata(
     table_fqn: str,
     column_name: str,
-    description: str,
+    description: str | None = None,
+    display_name: str | None = None,
     expect_current: str | None = None,
     terms: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Set one column's description, and prove it landed.
+    """Set one column's description, display name and terms, and prove they landed.
 
-    Refuses to replace an existing description unless `expect_current` repeats it, so
-    nothing a person wrote is overwritten by an agent that never read it. Then writes,
-    reads back, and compares: this endpoint answers 200 for a write a bot token was not
-    allowed to make, so the read-back is the only thing that distinguishes written from
-    ignored.
+    The guard is on the description only. That is the field someone may have written
+    prose into, and the field a bot token is silently refused on; a display name is a
+    label, and one passed here replaces whatever is there. Omit what you do not mean to
+    change: this endpoint leaves a field alone when the body does not carry it.
+
+    Then it writes, reads back, and compares. This endpoint answers 200 for a write a bot
+    token was not allowed to make, so the read-back is the only thing that distinguishes
+    written from ignored.
     """
     fqn = column_fqn(table_fqn, column_name)
-    wanted = description.strip()
-    if not wanted:
-        return {"column_fqn": fqn, "written": False, "reason": "empty description"}
+    wanted = (description or "").strip()
+    label = (display_name or "").strip()
+    if not wanted and not label:
+        return {"column_fqn": fqn, "written": False, "reason": "nothing to set"}
 
     try:
         with client(Settings()) as http:  # type: ignore[call-arg]
@@ -387,9 +416,16 @@ def write_column_description(
                 return {"column_fqn": fqn, "written": False, "reason": "no such column"}
 
             current = (before.get("description") or "").strip()
-            if current == wanted:
-                return {"column_fqn": fqn, "written": False, "unchanged": True, "description": current}
-            if current:
+            current_label = (before.get("displayName") or "").strip()
+            if (not wanted or current == wanted) and (not label or current_label == label):
+                return {
+                    "column_fqn": fqn,
+                    "written": False,
+                    "unchanged": True,
+                    "description": current,
+                    "display_name": current_label,
+                }
+            if wanted and current:
                 if expect_current is None:
                     return {
                         "column_fqn": fqn,
@@ -409,7 +445,13 @@ def write_column_description(
                         "current": current,
                     }
 
-            body: dict[str, Any] = {"description": wanted}
+            # Only the fields actually being set go in the body. Sending a field as empty
+            # would clear it, which is not the same as not mentioning it.
+            body: dict[str, Any] = {}
+            if wanted:
+                body["description"] = wanted
+            if label:
+                body["displayName"] = label
             if terms is not None:
                 # Omitting tags leaves the existing ones alone; an empty list clears them.
                 body["tags"] = [{"tagFQN": term, "source": "Glossary"} for term in terms]
@@ -424,34 +466,152 @@ def write_column_description(
                         "validates every term. Retry without terms to set the description alone."
                     ),
                 }
-            after = (fetch_column(http, fqn).get("description") or "").strip()
+            after = fetch_column(http, fqn)
     except Exception as exc:  # noqa: BLE001
         return {"column_fqn": fqn, "written": False, "reason": f"{type(exc).__name__}: {exc}"}
 
-    if after != wanted:
+    kept = [
+        field
+        for field, value, now in (
+            ("description", wanted, (after.get("description") or "").strip()),
+            ("display_name", label, (after.get("displayName") or "").strip()),
+        )
+        if value and now != value
+    ]
+    if kept:
         return {
             "column_fqn": fqn,
             "written": False,
-            "reason": "the server answered 200 and kept the old text",
-            "current": after,
+            "reason": f"the server answered 200 and kept the old {' and '.join(kept)}",
+            "current_description": (after.get("description") or "").strip(),
+            "current_display_name": (after.get("displayName") or "").strip(),
             "hint": (
                 "A bot token cannot overwrite a non-empty description through this endpoint. "
                 "Use a user token, or have a person make the change."
             ),
         }
-    return {"column_fqn": fqn, "written": True, "description": wanted, "terms": terms or []}
+    answer: dict[str, Any] = {"column_fqn": fqn, "written": True}
+    if wanted:
+        answer["description"] = wanted
+    if label:
+        answer["display_name"] = label
+    if terms is not None:
+        answer["terms"] = terms
+    return answer
 
 
-READ_TABLE_DESCRIPTIONS_TOOL_NAME = "read_table_descriptions"
-READ_TABLE_DESCRIPTIONS_TOOL_DEFINITION = {
+def write_table_metadata(
+    table_fqn: str,
+    description: str | None = None,
+    display_name: str | None = None,
+    expect_current: str | None = None,
+) -> dict[str, Any]:
+    """Set the table's own description and display name, and prove they landed.
+
+    A JSON patch, which is right here and wrong for columns: the table's description and
+    displayName are scalar fields at known paths, not positions in an array that is
+    paginated differently on each side.
+
+    Same guard and same read-back as the column tool, for the same reasons.
+    """
+    wanted = (description or "").strip()
+    label = (display_name or "").strip()
+    if not wanted and not label:
+        return {"table": table_fqn, "written": False, "reason": "nothing to set"}
+
+    try:
+        with client(Settings()) as http:  # type: ignore[call-arg]
+            response = http.get(f"/v1/tables/name/{table_fqn}")
+            if response.status_code == 404:
+                return {"table": table_fqn, "written": False, "reason": "no such table"}
+            response.raise_for_status()
+            before = response.json()
+
+            current = (before.get("description") or "").strip()
+            current_label = (before.get("displayName") or "").strip()
+            if (not wanted or current == wanted) and (not label or current_label == label):
+                return {
+                    "table": table_fqn,
+                    "written": False,
+                    "unchanged": True,
+                    "description": current,
+                    "display_name": current_label,
+                }
+            if wanted and current:
+                if expect_current is None:
+                    return {
+                        "table": table_fqn,
+                        "written": False,
+                        "reason": "already described, and nothing says you read it",
+                        "current": current,
+                        "retry": (
+                            "If replacing it is right, call again with expect_current set to the "
+                            "text above. If it is someone else's and still correct, leave it."
+                        ),
+                    }
+                if expect_current.strip() != current:
+                    return {
+                        "table": table_fqn,
+                        "written": False,
+                        "reason": "it says something else now - someone changed it after you read it",
+                        "current": current,
+                    }
+
+            # `add` and `replace` are not interchangeable: replace on a field the entity
+            # does not carry yet is rejected, which is why the current value decides.
+            patch = [
+                {"op": "replace" if present else "add", "path": path, "value": value}
+                for path, value, present in (
+                    ("/description", wanted, bool(current)),
+                    ("/displayName", label, bool(current_label)),
+                )
+                if value
+            ]
+            response = http.patch(
+                f"/v1/tables/name/{table_fqn}",
+                content=json.dumps(patch),
+                headers={"Content-Type": "application/json-patch+json"},
+            )
+            if response.status_code >= 400:
+                return {"table": table_fqn, "written": False, "reason": f"{response.status_code} {response.text[:200]}"}
+            after = http.get(f"/v1/tables/name/{table_fqn}").json()
+    except Exception as exc:  # noqa: BLE001
+        return {"table": table_fqn, "written": False, "reason": f"{type(exc).__name__}: {exc}"}
+
+    kept = [
+        field
+        for field, value, now in (
+            ("description", wanted, (after.get("description") or "").strip()),
+            ("display_name", label, (after.get("displayName") or "").strip()),
+        )
+        if value and now != value
+    ]
+    if kept:
+        return {
+            "table": table_fqn,
+            "written": False,
+            "reason": f"the server answered 200 and kept the old {' and '.join(kept)}",
+            "current_description": (after.get("description") or "").strip(),
+            "current_display_name": (after.get("displayName") or "").strip(),
+        }
+    answer: dict[str, Any] = {"table": table_fqn, "written": True}
+    if wanted:
+        answer["description"] = wanted
+    if label:
+        answer["display_name"] = label
+    return answer
+
+
+READ_TABLE_METADATA_TOOL_NAME = "read_table_metadata"
+READ_TABLE_METADATA_TOOL_DEFINITION = {
     "type": "function",
     "function": {
-        "name": READ_TABLE_DESCRIPTIONS_TOOL_NAME,
+        "name": READ_TABLE_METADATA_TOOL_NAME,
         "description": (
-            "List every column of a table in OpenMetadata with the description it has now, its "
-            "data type, and any glossary terms attached. Call this before describing a table: it "
-            "says which columns are already done and which are empty, and spells the column names "
-            "the way the catalogue does. Reads only."
+            "Read a table in OpenMetadata: its own display name and description, then every column "
+            "with the display name, description, data type and glossary terms it has now. Call this "
+            "before writing anything - it says which columns are already done and spells the column "
+            "names the way the catalogue does. Reads only."
         ),
         "parameters": {
             "type": "object",
@@ -459,7 +619,7 @@ READ_TABLE_DESCRIPTIONS_TOOL_DEFINITION = {
                 "table_fqn": {
                     "type": "string",
                     "description": "Fully qualified table name, e.g. SQLSASTest.FIDW_BI.dbo.Y_01_01",
-                }
+                },
             },
             "required": ["table_fqn"],
             "additionalProperties": False,
@@ -468,17 +628,19 @@ READ_TABLE_DESCRIPTIONS_TOOL_DEFINITION = {
     },
 }
 
-WRITE_COLUMN_DESCRIPTION_TOOL_NAME = "write_column_description"
-WRITE_COLUMN_DESCRIPTION_TOOL_DEFINITION = {
+WRITE_COLUMN_METADATA_TOOL_NAME = "write_column_metadata"
+WRITE_COLUMN_METADATA_TOOL_DEFINITION = {
     "type": "function",
     "function": {
-        "name": WRITE_COLUMN_DESCRIPTION_TOOL_NAME,
+        "name": WRITE_COLUMN_METADATA_TOOL_NAME,
         "description": (
-            "Set one column's description in OpenMetadata, and verify it landed. Writing over an "
-            "existing description is refused unless expect_current repeats it exactly, so read the "
-            "column first - the refusal returns the current text, so one retry is enough. The "
-            "answer says written true or false and why; a false with 'kept the old text' means the "
-            "token is not allowed to replace it, not that the text was wrong."
+            "Set one column's description, display name and glossary terms, and verify they landed. "
+            "Pass null for anything you do not mean to change. Replacing an existing description is "
+            "refused unless expect_current repeats it exactly, so read the column first - the "
+            "refusal returns the current text, so one retry is enough. A display name is not "
+            "guarded: one passed here replaces whatever is there. A false answer saying the server "
+            "kept the old text means the token is not allowed to replace it, not that your text was "
+            "wrong - do not rewrite it in response."
         ),
         "parameters": {
             "type": "object",
@@ -492,34 +654,87 @@ WRITE_COLUMN_DESCRIPTION_TOOL_DEFINITION = {
                     "description": "The column's name as the catalogue spells it, e.g. Y0101_r0010_c0010",
                 },
                 "description": {
-                    "type": "string",
-                    "description": "The description to set. Markdown is allowed.",
+                    "type": ["string", "null"],
+                    "description": "The description to set, Markdown allowed. Null leaves it alone.",
+                },
+                "display_name": {
+                    "type": ["string", "null"],
+                    "description": (
+                        "The label the catalogue shows instead of the column name, e.g. "
+                        "'Credit transfers - Payment transactions'. Null leaves it alone. Keep the "
+                        "variant out of it: the variant belongs to the table or the row, so putting "
+                        "it here would make several columns claim to be one."
+                    ),
                 },
                 "expect_current": {
                     "type": ["string", "null"],
                     "description": (
                         "The description the column has now, repeated exactly, when replacing one. "
-                        "Null when the column has none."
+                        "Null when it has none or when you are not setting a description."
                     ),
                 },
                 "terms": {
                     "type": ["array", "null"],
                     "items": {"type": "string"},
                     "description": (
-                        "Glossary term FQNs to attach, e.g. PAY_4_2.Fraud event types.Unauthorised. "
+                        "Glossary term FQNs to attach, e.g. PAY_4_2.Domains.Fraud event types.Unauthorised. "
                         "Null leaves the existing terms alone; an empty list clears them. Every term "
                         "must exist or the write fails."
                     ),
                 },
             },
-            "required": ["table_fqn", "column_name", "description", "expect_current", "terms"],
+            "required": ["table_fqn", "column_name", "description", "display_name", "expect_current", "terms"],
             "additionalProperties": False,
         },
         "strict": True,
     },
 }
 
-COLUMN_TOOL_DEFINITIONS = (READ_TABLE_DESCRIPTIONS_TOOL_DEFINITION, WRITE_COLUMN_DESCRIPTION_TOOL_DEFINITION)
+WRITE_TABLE_METADATA_TOOL_NAME = "write_table_metadata"
+WRITE_TABLE_METADATA_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": WRITE_TABLE_METADATA_TOOL_NAME,
+        "description": (
+            "Set the table's own description and display name, and verify they landed. Same rules as "
+            "write_column_metadata: null for what you do not mean to change, expect_current to "
+            "replace an existing description, and a display name is not guarded."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "table_fqn": {
+                    "type": "string",
+                    "description": "Fully qualified table name, e.g. SQLSASTest.FIDW_BI.dbo.Y_01_01",
+                },
+                "description": {
+                    "type": ["string", "null"],
+                    "description": "The description to set, Markdown allowed. Null leaves it alone.",
+                },
+                "display_name": {
+                    "type": ["string", "null"],
+                    "description": (
+                        "The label the catalogue shows instead of the table name, e.g. "
+                        "'Y 01.01 Credit transfers transactions'. Null leaves it alone."
+                    ),
+                },
+                "expect_current": {
+                    "type": ["string", "null"],
+                    "description": "The description the table has now, repeated exactly, when replacing one.",
+                },
+            },
+            "required": ["table_fqn", "description", "display_name", "expect_current"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
+}
+
+CATALOGUE_TOOL_DEFINITIONS = (
+    READ_TABLE_METADATA_TOOL_DEFINITION,
+    WRITE_COLUMN_METADATA_TOOL_DEFINITION,
+    WRITE_TABLE_METADATA_TOOL_DEFINITION,
+)
 
 
 def main() -> None:
@@ -532,7 +747,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.show:
-        print(json.dumps(read_table_descriptions(args.fqn), ensure_ascii=False, indent=2))
+        print(json.dumps(read_table_metadata(args.fqn), ensure_ascii=False, indent=2))
         return
 
     settings = Settings()  # type: ignore[call-arg]
@@ -552,6 +767,11 @@ def main() -> None:
 
         write, skipped = columns_to_write(columns, by_column, args.variant, axis_column)
 
+        # Over every datapoint of the template, not just the columns present: the rule
+        # disambiguates a repeated label from its siblings, and a sibling missing from
+        # this table must not change what the others are called.
+        labels = display_names([dps[0].model_dump() for dps in by_column.values() if dps[0].table_name == table])
+
         print(f"{args.fqn}: {len(columns)} columns, {len(write)} to describe")
         if axis_column:
             print(f"  open axis `{axis_column}`: every variant is present as rows, so descriptions omit")
@@ -569,7 +789,9 @@ def main() -> None:
 
         if not args.commit:
             fqn, dp = write[0]
+            print(f"\n  Table display name: {table_name(dp.model_dump())}")
             print(f"\n  Example, {fqn.rsplit('.', 1)[-1]}:")
+            print(f"    display name: {labels[dp.column_name]}")
             print(f"    {dp.description_without_variant(axis_column) if axis_column else dp.description()}")
             if not args.no_terms:
                 for term in dp.glossary_terms():
@@ -577,15 +799,22 @@ def main() -> None:
             print(f"\n  Nothing written. Re-run with --commit to write all {len(write)}.")
             return
 
+        table_label = write_table_metadata(args.fqn, display_name=table_name(write[0][1].model_dump()))
+        print(
+            f"  table display name: {'set' if table_label.get('written') else table_label.get('reason') or 'unchanged'}"
+        )
+
         failed = []
         for fqn, dp in write:
             if args.no_terms:
                 text = dp.description_without_variant(axis_column) if axis_column else dp.description()
                 response = http.put(
-                    f"/v1/columns/name/{fqn}", params={"entityType": "table"}, json={"description": text}
+                    f"/v1/columns/name/{fqn}",
+                    params={"entityType": "table"},
+                    json={"description": text, "displayName": labels[dp.column_name]},
                 )
             else:
-                response = update_column(http, fqn, dp, axis_column)
+                response = update_column(http, fqn, dp, axis_column, labels[dp.column_name])
             if response.status_code >= 400:
                 failed.append(f"{fqn.rsplit('.', 1)[-1]}: {response.status_code} {response.text[:160]}")
 

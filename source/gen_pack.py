@@ -823,32 +823,75 @@ rather than the CSV round trip:
 Prefer it over doing this by hand. It resolves each column against `05-datapoints.csv`,
 refuses to guess a variant, and never touches a context column.
 
-### Two tools for writing your own text
+### Three tools for writing your own text
 
 The batch writer generates its text from the pack. When the description is yours, the
-same module exposes the two halves as tools, so none of the endpoint's traps are yours to
+same module exposes the pieces as tools, so none of the endpoint's traps are yours to
 remember:
 
 | Tool | What it does |
 |---|---|
-| `read_table_descriptions(table_fqn)` | every column with the description it has now, its data type and its glossary terms, in one call, paging handled |
-| `write_column_description(table_fqn, column_name, description, expect_current, terms)` | sets one column and proves it landed |
+| `read_table_metadata(table_fqn)` | the table's display name and description, then every column with its display name, description, data type and terms - one call, paging handled |
+| `write_column_metadata(table_fqn, column_name, description, display_name, expect_current, terms)` | sets one column and proves it landed |
+| `write_table_metadata(table_fqn, description, display_name, expect_current)` | the same for the table itself |
+
+Pass null for anything you do not mean to change. A field the body does not carry is
+left alone; a field sent empty is cleared, which is not the same thing.
 
 Read first, always. The write refuses to replace a description it has no sign you read:
 it answers `already described, and nothing says you read it` and hands you the current
 text, so one retry with `expect_current` set to that text is enough. If it comes back
 `it says something else now`, someone changed it between your read and your write, and
-the answer carries what it says instead.
+the answer carries what it says instead. A display name is not guarded that way - it is
+a label, not prose, and one you pass replaces what is there.
 
 Then it reads back what it wrote and compares. That is not belt and braces: this endpoint
 answers `200` for a write a bot token was not permitted to make, keeping the old text, so
 a write that did nothing is indistinguishable from one that worked until you look. When
-that happens the answer says `the server answered 200 and kept the old text` - which is
-about the token, not about the description, so do not rewrite the text in response to it.
+that happens the answer says `the server answered 200 and kept the old description` -
+which is about the token, not about the text, so do not rewrite the text in response.
 
 `terms` left null leaves the existing glossary terms alone; an empty list clears them.
 Every term is validated against the glossary, so a term that does not exist fails the
 whole write with a 404 - set the description alone if the glossary is not loaded yet.
+
+### Display names: use the one you are given
+
+**Do not compose a display name yourself.** `lookup_datapoint` returns it, under
+`display_name` in `common`, with `table_display_name` for the table. Pass those through.
+
+The reason is that the obvious rule is wrong. Row label then column label reads well and
+is not unique: the EBA layout nests its rows, so "Of which: authenticated via strong
+customer authentication" appears under several parents and the label alone is identical in
+each. Measured on this framework, **63 of 214 label pairs collide that way**, and two
+columns sharing a display name show up in the catalogue as two columns that look like the
+same column.
+
+What distinguishes those rows is in their dimensions, which is where the parent context
+ends up once the layout is flattened. So a colliding label is extended with the dimension
+members that differ within its own group, and only those:
+
+| Column | Display name |
+|---|---|
+| `Y0101_r0010_c0010` | Credit transfers - Payment transactions |
+| `Y0101_r0060_c0010` | Of which authenticated via strong customer authentication - Payment transactions (Initiated via remote payment channel) |
+| `Y0101_r0240_c0010` | Of which authenticated via strong customer authentication - Payment transactions (Initiated via non-remote payment channel) |
+
+Deciding that needs every row of the table side by side, which is why it is computed from
+the data rather than left to you. All 320 columns of all 14 templates come out unique.
+
+What is deliberately absent, so you can recognise a name that was invented rather than
+looked up:
+
+- **the variant**, because it belongs to the table or, with an open axis, to the row - a display name naming one would make six columns claim to be the same one
+- **the codes**, because `r0010` and `c0010` are in the column name right next to it
+- **the datapoint id and the unit**, for the same reason a description leaves them out when the variant is unknown
+
+For DORA the rows are records, so a row contributes nothing and the column label is the
+whole of the name.
+
+`describe_table.py --commit` writes both from the same rule, and its dry run prints them,
+so what will be written can be read before it is.
 
 `patch_entity` is still right for the **table's own** description, which is not an array:
 

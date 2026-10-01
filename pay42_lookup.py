@@ -24,6 +24,8 @@ import duckdb
 from pydantic import BaseModel, ConfigDict
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from display_names import display_names, table_name
+
 PACK = Path(__file__).parent
 
 
@@ -210,6 +212,13 @@ def warehouse_column_context(column_name: str) -> dict[str, Any]:
     return _consult(lambda module: module.fetch_column(column_name))
 
 
+SIBLINGS = """
+SELECT DISTINCT column_name, row_code, row_label, column_label, row_dimensions, template, template_name
+FROM   datapoints
+WHERE  table_name = ?
+"""
+
+
 def lookup_dora(column_name: str, parts: dict[str, str]) -> dict[str, Any]:
     """Resolve a DORA column, where the row is a record ordinal and carries no meaning.
 
@@ -269,6 +278,9 @@ def lookup_dora(column_name: str, parts: dict[str, str]) -> dict[str, Any]:
             "row_kind": chosen["row_kind"],
             "row_code": chosen["row_code"],
             "dpm_cell_code": dpm_cell_code,
+            # Rows are records, so the row contributes nothing a reader could use.
+            "display_name": chosen["column_label"],
+            "table_display_name": f"{chosen['template'].replace('_', ' ')} {chosen['template_name']}",
         }
         | warehouse_context(dpm_cell_code),
         variant={"datapoint_id": chosen["datapoint_id"], "sign": chosen["sign"]},
@@ -290,6 +302,10 @@ def lookup_datapoint(column_name: str, variant: str | None = None) -> dict[str, 
 
     with _connect() as con:
         rows = _rows(con, "SELECT * FROM datapoints WHERE column_name = ? ORDER BY variant", column_name)
+        # The display name has to be unique within the table, and the EBA layout repeats
+        # row labels across nested rows, so the siblings are what decide the answer. One
+        # extra query here rather than an agent comparing 54 columns by eye.
+        siblings = _rows(con, SIBLINGS, rows[0]["table_name"]) if rows else []
 
     if not rows and parts is not None:
         dora = lookup_dora(column_name, parts)
@@ -307,7 +323,10 @@ def lookup_datapoint(column_name: str, variant: str | None = None) -> dict[str, 
             ),
         ).model_dump()
 
-    common = {field: rows[0][field] for field in CONSTANT_ACROSS_VARIANTS}
+    common = {field: rows[0][field] for field in CONSTANT_ACROSS_VARIANTS} | {
+        "display_name": display_names(siblings)[column_name],
+        "table_display_name": table_name(rows[0]),
+    }
 
     if variant:
         chosen = next((r for r in rows if r["variant"] == variant), None)
