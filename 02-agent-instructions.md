@@ -295,12 +295,40 @@ whose name matches a datapoint, leave every other row byte-for-byte as it came b
 write it home. `column.dataType` is required, so round-tripping the export rather than
 composing a CSV is what keeps it correct.
 
-`describe_table.py` in this pack does exactly that:
+`describe_table.py` in this pack writes whole tables that way, through the column entity
+rather than the CSV round trip:
 
     uv run describe_table.py SQLSASTest.FIDW_BI.dbo.Y_01_01 --variant 0010 --commit
 
 Prefer it over doing this by hand. It resolves each column against `05-datapoints.csv`,
 refuses to guess a variant, and never touches a context column.
+
+### Two tools for writing your own text
+
+The batch writer generates its text from the pack. When the description is yours, the
+same module exposes the two halves as tools, so none of the endpoint's traps are yours to
+remember:
+
+| Tool | What it does |
+|---|---|
+| `read_table_descriptions(table_fqn)` | every column with the description it has now, its data type and its glossary terms, in one call, paging handled |
+| `write_column_description(table_fqn, column_name, description, expect_current, terms)` | sets one column and proves it landed |
+
+Read first, always. The write refuses to replace a description it has no sign you read:
+it answers `already described, and nothing says you read it` and hands you the current
+text, so one retry with `expect_current` set to that text is enough. If it comes back
+`it says something else now`, someone changed it between your read and your write, and
+the answer carries what it says instead.
+
+Then it reads back what it wrote and compares. That is not belt and braces: this endpoint
+answers `200` for a write a bot token was not permitted to make, keeping the old text, so
+a write that did nothing is indistinguishable from one that worked until you look. When
+that happens the answer says `the server answered 200 and kept the old text` - which is
+about the token, not about the description, so do not rewrite the text in response to it.
+
+`terms` left null leaves the existing glossary terms alone; an empty list clears them.
+Every term is validated against the glossary, so a term that does not exist fails the
+whole write with a 404 - set the description alone if the glossary is not loaded yet.
 
 `patch_entity` is still right for the **table's own** description, which is not an array:
 

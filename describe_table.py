@@ -28,9 +28,11 @@ Usage:
 
 import argparse
 import csv
+import json
 import re
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 import httpx
 from pydantic import BaseModel, ConfigDict
@@ -214,12 +216,12 @@ def check_variant(by_column: dict[str, list[Datapoint]], table: str, variant: st
         )
 
 
-def fetch_columns(client: httpx.Client, table_fqn: str) -> list[dict]:
+def fetch_columns(http: httpx.Client, table_fqn: str) -> list[dict]:
     """Every column of the table, paging until the server stops truncating."""
     columns: list[dict] = []
     offset = 0
     while True:
-        response = client.get(f"/v1/tables/name/{table_fqn}", params={"fields": "columns", "columnOffset": offset})
+        response = http.get(f"/v1/tables/name/{table_fqn}", params={"fields": "columns", "columnOffset": offset})
         if response.status_code >= 400:
             raise SystemExit(f"  Reading {table_fqn} failed: {response.status_code}\n  {response.text[:500]}")
         body = response.json()
@@ -230,7 +232,7 @@ def fetch_columns(client: httpx.Client, table_fqn: str) -> list[dict]:
         offset += len(page)
 
 
-def update_column(client: httpx.Client, fqn: str, dp: Datapoint, axis_column: str | None) -> httpx.Response:
+def update_column(http: httpx.Client, fqn: str, dp: Datapoint, axis_column: str | None) -> httpx.Response:
     """Set one column's description and glossary terms, addressed by name.
 
     `PUT /v1/columns/name/{fqn}` rather than a JSON patch on /columns/N: the index is
@@ -238,7 +240,7 @@ def update_column(client: httpx.Client, fqn: str, dp: Datapoint, axis_column: st
     mean the same thing on both sides. PATCH on this resource answers 405 - verified -
     so PUT is the path, and it takes description and tags together.
     """
-    return client.put(
+    return http.put(
         f"/v1/columns/name/{fqn}",
         params={"entityType": "table"},
         json={
@@ -248,23 +250,295 @@ def update_column(client: httpx.Client, fqn: str, dp: Datapoint, axis_column: st
     )
 
 
+# --------------------------------------------------------------------------------------
+# Agent-facing tools.
+#
+# The batch writer above generates its own text from the pack. An agent writes its own,
+# one column at a time, and needs the other half: what is there now. These are the two
+# halves as tool functions, returning JSON-shaped dicts rather than printing.
+#
+# The safety rail is `expect_current`. A bot token cannot overwrite a non-empty
+# description through this endpoint - EntityRepository.updateDescription keeps the
+# existing text and answers 200, so a write that did nothing looks exactly like a write
+# that worked. Every write is therefore read back and compared, and a column that already
+# says something is refused until the caller has read it and passed it back. That makes
+# the agent acknowledge what it is replacing, and turns the silent no-op into a reported
+# one.
+# --------------------------------------------------------------------------------------
+
+
+def quote_part(part: str) -> str:
+    """Quote one FQN part the way the server's FullyQualifiedName does, when it must."""
+    return f'"{part}"' if ("." in part or '"' in part) else part
+
+
+def column_fqn(table_fqn: str, column_name: str) -> str:
+    """The column entity's FQN: the table's FQN as the catalogue gives it, then the column.
+
+    Only the column name is quoted here. The table FQN comes from a search result or the
+    command line and already carries whatever quoting its own parts need.
+    """
+    return f"{table_fqn}.{quote_part(column_name)}"
+
+
+def client(settings: Settings) -> httpx.Client:
+    """The one place the HTTP client is configured. Used by the CLI and by the tools."""
+    return httpx.Client(
+        base_url=settings.host.rstrip("/"),
+        headers={"Authorization": f"Bearer {settings.jwt_token}"},
+        verify=settings.ca_bundle or True,
+        timeout=120.0,
+    )
+
+
+def summarise(column: dict) -> dict[str, Any]:
+    """One column as an agent needs to see it, with the empty fields left out.
+
+    Pure. `described` is spelled out rather than left to be inferred from a null, because
+    whether a column already says something is the fact that decides what happens next.
+    """
+    text = (column.get("description") or "").strip()
+    terms = [tag["tagFQN"] for tag in column.get("tags") or [] if tag.get("source") == "Glossary"]
+    summary: dict[str, Any] = {
+        "name": column.get("name"),
+        "data_type": column.get("dataType"),
+        "described": bool(text),
+    }
+    if text:
+        summary["description"] = text
+    if terms:
+        summary["terms"] = terms
+    return summary
+
+
+def fetch_column(http: httpx.Client, fqn: str) -> dict:
+    """One column entity by name. PUT is the only write; GET is how you check one."""
+    response = http.get(f"/v1/columns/name/{fqn}", params={"entityType": "table"})
+    if response.status_code == 404:
+        return {}
+    response.raise_for_status()
+    return response.json()
+
+
+def read_table_descriptions(table_fqn: str) -> dict[str, Any]:
+    """What every column of a table says now, in one call.
+
+    One call rather than one per column: an agent about to describe a table wants to know
+    which columns are already done, and asking forty times to find out is forty round
+    trips and forty chances to lose track.
+    """
+    try:
+        with client(Settings()) as http:  # type: ignore[call-arg]
+            columns = [summarise(column) for column in fetch_columns(http, table_fqn)]
+    except Exception as exc:  # noqa: BLE001 - a tool reports its failures, it does not raise them
+        return {"table": table_fqn, "error": f"{type(exc).__name__}: {exc}"}
+    return {
+        "table": table_fqn,
+        "total": len(columns),
+        "described": sum(1 for column in columns if column["described"]),
+        "columns": columns,
+    }
+
+
+def read_column_description(table_fqn: str, column_name: str) -> dict[str, Any]:
+    """What one column says now, and the FQN to write it back by."""
+    fqn = column_fqn(table_fqn, column_name)
+    try:
+        with client(Settings()) as http:  # type: ignore[call-arg]
+            column = fetch_column(http, fqn)
+    except Exception as exc:  # noqa: BLE001
+        return {"column_fqn": fqn, "error": f"{type(exc).__name__}: {exc}"}
+    if not column:
+        return {
+            "column_fqn": fqn,
+            "found": False,
+            "message": (
+                "No such column. Check the table FQN and the column name against "
+                "read_table_descriptions, which lists the names as the catalogue spells them."
+            ),
+        }
+    return {"column_fqn": fqn, "found": True} | summarise(column)
+
+
+def write_column_description(
+    table_fqn: str,
+    column_name: str,
+    description: str,
+    expect_current: str | None = None,
+    terms: list[str] | None = None,
+) -> dict[str, Any]:
+    """Set one column's description, and prove it landed.
+
+    Refuses to replace an existing description unless `expect_current` repeats it, so
+    nothing a person wrote is overwritten by an agent that never read it. Then writes,
+    reads back, and compares: this endpoint answers 200 for a write a bot token was not
+    allowed to make, so the read-back is the only thing that distinguishes written from
+    ignored.
+    """
+    fqn = column_fqn(table_fqn, column_name)
+    wanted = description.strip()
+    if not wanted:
+        return {"column_fqn": fqn, "written": False, "reason": "empty description"}
+
+    try:
+        with client(Settings()) as http:  # type: ignore[call-arg]
+            before = fetch_column(http, fqn)
+            if not before:
+                return {"column_fqn": fqn, "written": False, "reason": "no such column"}
+
+            current = (before.get("description") or "").strip()
+            if current == wanted:
+                return {"column_fqn": fqn, "written": False, "unchanged": True, "description": current}
+            if current:
+                if expect_current is None:
+                    return {
+                        "column_fqn": fqn,
+                        "written": False,
+                        "reason": "already described, and nothing says you read it",
+                        "current": current,
+                        "retry": (
+                            "If replacing it is right, call again with expect_current set to the "
+                            "text above. If it is someone else's and still correct, leave it."
+                        ),
+                    }
+                if expect_current.strip() != current:
+                    return {
+                        "column_fqn": fqn,
+                        "written": False,
+                        "reason": "it says something else now - someone changed it after you read it",
+                        "current": current,
+                    }
+
+            body: dict[str, Any] = {"description": wanted}
+            if terms is not None:
+                # Omitting tags leaves the existing ones alone; an empty list clears them.
+                body["tags"] = [{"tagFQN": term, "source": "Glossary"} for term in terms]
+            response = http.put(f"/v1/columns/name/{fqn}", params={"entityType": "table"}, json=body)
+            if response.status_code >= 400:
+                return {
+                    "column_fqn": fqn,
+                    "written": False,
+                    "reason": f"{response.status_code} {response.text[:200]}",
+                    "hint": (
+                        "A 404 here is usually a glossary term that does not exist: the endpoint "
+                        "validates every term. Retry without terms to set the description alone."
+                    ),
+                }
+            after = (fetch_column(http, fqn).get("description") or "").strip()
+    except Exception as exc:  # noqa: BLE001
+        return {"column_fqn": fqn, "written": False, "reason": f"{type(exc).__name__}: {exc}"}
+
+    if after != wanted:
+        return {
+            "column_fqn": fqn,
+            "written": False,
+            "reason": "the server answered 200 and kept the old text",
+            "current": after,
+            "hint": (
+                "A bot token cannot overwrite a non-empty description through this endpoint. "
+                "Use a user token, or have a person make the change."
+            ),
+        }
+    return {"column_fqn": fqn, "written": True, "description": wanted, "terms": terms or []}
+
+
+READ_TABLE_DESCRIPTIONS_TOOL_NAME = "read_table_descriptions"
+READ_TABLE_DESCRIPTIONS_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": READ_TABLE_DESCRIPTIONS_TOOL_NAME,
+        "description": (
+            "List every column of a table in OpenMetadata with the description it has now, its "
+            "data type, and any glossary terms attached. Call this before describing a table: it "
+            "says which columns are already done and which are empty, and spells the column names "
+            "the way the catalogue does. Reads only."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "table_fqn": {
+                    "type": "string",
+                    "description": "Fully qualified table name, e.g. SQLSASTest.FIDW_BI.dbo.Y_01_01",
+                }
+            },
+            "required": ["table_fqn"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
+}
+
+WRITE_COLUMN_DESCRIPTION_TOOL_NAME = "write_column_description"
+WRITE_COLUMN_DESCRIPTION_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": WRITE_COLUMN_DESCRIPTION_TOOL_NAME,
+        "description": (
+            "Set one column's description in OpenMetadata, and verify it landed. Writing over an "
+            "existing description is refused unless expect_current repeats it exactly, so read the "
+            "column first - the refusal returns the current text, so one retry is enough. The "
+            "answer says written true or false and why; a false with 'kept the old text' means the "
+            "token is not allowed to replace it, not that the text was wrong."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "table_fqn": {
+                    "type": "string",
+                    "description": "Fully qualified table name, e.g. SQLSASTest.FIDW_BI.dbo.Y_01_01",
+                },
+                "column_name": {
+                    "type": "string",
+                    "description": "The column's name as the catalogue spells it, e.g. Y0101_r0010_c0010",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "The description to set. Markdown is allowed.",
+                },
+                "expect_current": {
+                    "type": ["string", "null"],
+                    "description": (
+                        "The description the column has now, repeated exactly, when replacing one. "
+                        "Null when the column has none."
+                    ),
+                },
+                "terms": {
+                    "type": ["array", "null"],
+                    "items": {"type": "string"},
+                    "description": (
+                        "Glossary term FQNs to attach, e.g. PAY_4_2.Fraud event types.Unauthorised. "
+                        "Null leaves the existing terms alone; an empty list clears them. Every term "
+                        "must exist or the write fails."
+                    ),
+                },
+            },
+            "required": ["table_fqn", "column_name", "description", "expect_current", "terms"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
+}
+
+COLUMN_TOOL_DEFINITIONS = (READ_TABLE_DESCRIPTIONS_TOOL_DEFINITION, WRITE_COLUMN_DESCRIPTION_TOOL_DEFINITION)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("fqn", help="table FQN, e.g. SQLSASTest.FIDW_BI.dbo.Y_01_01")
     parser.add_argument("--variant", help="which variant this table holds, e.g. 0010")
     parser.add_argument("--commit", action="store_true", help="write for real; dry run only without it")
     parser.add_argument("--no-terms", action="store_true", help="set descriptions but do not attach glossary terms")
+    parser.add_argument("--show", action="store_true", help="print what the columns say now, as JSON, and stop")
     args = parser.parse_args()
 
+    if args.show:
+        print(json.dumps(read_table_descriptions(args.fqn), ensure_ascii=False, indent=2))
+        return
+
     settings = Settings()  # type: ignore[call-arg]
-    with httpx.Client(
-        base_url=settings.host.rstrip("/"),
-        headers={"Authorization": f"Bearer {settings.jwt_token}"},
-        verify=settings.ca_bundle or True,
-        timeout=120.0,
-    ) as client:
+    with client(settings) as http:
         by_column = load_datapoints()
-        columns = fetch_columns(client, args.fqn)
+        columns = fetch_columns(http, args.fqn)
         table = args.fqn.rsplit(".", 1)[-1]
         axis_column = find_open_axis(columns)
 
@@ -307,11 +581,11 @@ def main() -> None:
         for fqn, dp in write:
             if args.no_terms:
                 text = dp.description_without_variant(axis_column) if axis_column else dp.description()
-                response = client.put(
+                response = http.put(
                     f"/v1/columns/name/{fqn}", params={"entityType": "table"}, json={"description": text}
                 )
             else:
-                response = update_column(client, fqn, dp, axis_column)
+                response = update_column(http, fqn, dp, axis_column)
             if response.status_code >= 400:
                 failed.append(f"{fqn.rsplit('.', 1)[-1]}: {response.status_code} {response.text[:160]}")
 
