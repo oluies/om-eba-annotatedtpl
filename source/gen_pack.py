@@ -1249,11 +1249,17 @@ These hold regardless of what you find:
 - Never patch a column by index. /columns/N addresses the array positionally, and the
   array get_entity_details returns is paginated and trimmed, so N does not mean the
   same thing there as in the entity - a correct description lands on the wrong column
-  and nothing complains. Use the table CSV export/import, which is keyed by
-  column.name, or run describe_table.py. patch_entity is fine for the table's own
-  description.
-- Confirm with the user before calling patch_entity. Do not replace a description a
-  human wrote unless you were asked to.
+  and nothing complains. A column is its own entity: write it by name, with
+  write_column_metadata if that tool is there, or PUT /v1/columns/name/{{fqn}}.
+  patch_entity is fine for the table's own description.
+- Set a display name as well as a description, on the table and on every column, and
+  use the one you are given: display_name and table_display_name from
+  lookup_datapoint. Do not compose one. Row label plus column label is not unique,
+  because the layout nests its rows, so the tool extends a repeated label with the
+  dimension members that tell it apart from its siblings - which needs the whole table
+  in view. Keep the variant, the codes, the datapoint id and the unit out of it.
+- Confirm with the user before replacing a description a human wrote. The write tools
+  refuse it unless you pass back the text you read, which is the same rule.
 - Check that the row and column codes on the line you read match the row and col groups
   from the column name. Reading one line off produces correct prose about the wrong
   datapoint, and nothing catches it.

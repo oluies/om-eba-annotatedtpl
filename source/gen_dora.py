@@ -180,11 +180,27 @@ lookup_datapoint("B0101_r999_c0020")
   template B_01.01, column 0020, "Name of the entity", datapoint 3287126
 ```
 
+## Display names
+
+Set one for the table and for every column, and use the one `lookup_datapoint` returns:
+`display_name` for the column, `table_display_name` for the table.
+
+DORA is the easy case. The rows are records, so a row label would say nothing, and the
+column label is the whole of the name:
+
+```text
+B_01_01            ->  B 01.01 Entity maintaining the register of information
+B0101_r999_c0020   ->  Name of the entity
+```
+
+No row code, no ordinal, no datapoint id. The codes are in the column name right next to
+it, and the ordinal is not a framework code at all.
+
 ## The rest is the same as PAY
 
 Everything in the PAY 4.2 instructions about *how* to write applies here too, and is not
-repeated: do not create tables or columns, do not patch columns by index, use the table
-CSV export and import which is keyed by `column.name`, confirm before writing, and leave
+repeated: do not create tables or columns, do not patch columns by index, write a column
+by name through its own entity, confirm before replacing what a person wrote, and leave
 warehouse context columns alone.
 """,
     )
