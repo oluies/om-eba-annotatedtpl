@@ -697,12 +697,14 @@ full row and column grid with the datapoint ids. That is your lookup table.
    else. An agent handed the six in a tool response still paraphrased them as "Payments
    in EUR", which no variant is. Quote the labels you were given.
 
-   `lookup_datapoint` returns them spelled out, and a `determining_the_variant` hint
-   with the counts for that particular table. It cannot see the warehouse, and neither
-   can you: settle it from `get_entity_details`, which carries the column list and
-   `totalColumns` when it truncates. One variant's worth of datapoint columns means the
-   pipeline picked one and only a person knows which. MCP exposes no sample data, so
-   there is no third route.
+   `lookup_datapoint` returns them spelled out. Wired to the warehouse's own form
+   metadata it also returns `open_axis_values`, the variant labels that column actually
+   carries, read from `BA_Form_Axis` - which settles it outright, and is the only route
+   that does. Unwired it returns a `determining_the_variant` hint with the counts for
+   that particular table, and you settle it from `get_entity_details`, which carries the
+   column list and `totalColumns` when it truncates. One variant's worth of datapoint
+   columns means the pipeline picked one and only a person knows which. MCP exposes no
+   sample data, so there is no third route.
 7. If you cannot resolve an identifier, say so in the description rather than guessing.
    A wrong regulatory description is worse than a missing one.
 
@@ -943,18 +945,25 @@ are exactly what differs. It never picks a variant on its own.
 For a name that resolves to nothing it says so and repeats the pattern, so a context
 column like `Period_SK` comes back as a refusal rather than a guess.
 
-## Joining to the warehouse's own form metadata
+## The warehouse's own form metadata, where there is one
 
-`05-datapoints.csv` carries `dpm_cell_code` in the shape `{{Y 01.01, r0010, c0010, s0010}}`,
-which is what a warehouse holding its own form metadata keys on. At FI that is
-`FIDW_BI.dbo.BA_Form_Cell`, and the two sides supply different things:
+`05-datapoints.csv` carries two keys a warehouse's form metadata also keys on:
+`dpm_cell_code` in the shape `{{Y 01.01, r0010, c0010, s0010}}`, and `column_name` in the
+shape `Y0101_r0010_c0010`. At FI the metadata is `FIDW_BI.dbo.BA_Form_Cell`, joined to
+`dbo.BA_Form_Axis` on `Cell_sk`. Where it is reachable it is the primary source and this
+pack is an overlay on it:
 
 | From the warehouse | From this pack |
 |---|---|
-| the warehouse's own datapoint key | EBA's VariableVID |
-| data type, presentation format | the dimension members |
-| Form_BK, Taxonomy_Name, the open-axis names | the glossary terms |
+| form, taxonomy version, row and column labels | the dimension members |
+| data type and the warehouse's own datapoint key | EBA's VariableVID |
+| the open-axis values a column actually carries | the glossary terms |
 | every form it holds | PAY 4.2 and DORA |
+
+The split follows from what each side can know. The warehouse knows which release a cell
+is current under and which variants a physical column holds; it cannot say what a
+dimension member means. This pack is the other way round. So the warehouse states the
+facts and the pack supplies the meaning, joined on `dpm_cell_code`.
 
 `ba_form_cell.py` does that join when `BA_SERVER` is set, using Kerberos - no credentials
 in the connection string, the ticket from `kinit` carries the identity:
@@ -969,6 +978,26 @@ It scopes to `Current_flg = 1`, the definition in force. A cell code present und
 several current forms is reported rather than resolved, because the column means
 different things in each and only the table's own `Form_BK` says which applies.
 
+### Which variant, answered from the database
+
+A `.01` template has six variants and a column name that names none of them. Connected,
+the tool stops guessing: `BA_Form_Axis` enumerates the `Open_Axis_value_1` values defined
+for that physical column and returns them as `open_axis_values`. Every one of them is in
+that column, as rows, so a column description covers all of them and still must not name
+a datapoint id or a unit - those belong to the row.
+
+Unconnected, the tool returns the `determining_the_variant` hint instead and the agent
+settles it through OpenMetadata, which is the best an agent with no database can do.
+
+### Only where the taxonomy matches
+
+`BA_Form_Cell` spans 33 taxonomy names, from `DPM_2.6` to `DPM_4.2`. The same cell code
+can mean something else in each, so every answer carries a `pack_overlay` line saying
+whether this pack's ids may be attached at all. Where the warehouse has the cell under a
+release this pack does not describe, the overlay is left off rather than asserted: the
+warehouse fields on their own are still a correct description, and a datapoint id
+borrowed across releases is simply wrong.
+
 ### Did it actually reach SQL Server
 
 Every answer says, in a `warehouse` field, which of the three happened:
@@ -976,17 +1005,19 @@ Every answer says, in a `warehouse` field, which of the three happened:
 | `warehouse` | Meaning |
 |---|---|
 | `not consulted - BA_SERVER is not set` | the pack answered alone |
-| `no row in BA_Form_Cell for this cell code with Current_flg = 1` | it queried and found nothing |
-| `BA_Form_Cell on <server>` | it queried and matched, and `datapoint_sk` is alongside |
+| `no row in BA_Form_Cell for this key with Current_flg = 1` | it queried and found nothing |
+| `BA_Form_Cell joined to BA_Form_Axis on <server>` | it queried and matched |
 | `warehouse_lookup_failed: ...` | it tried and the query or the connection failed |
 
 Silence would read the same as a miss, so there is none.
 
-To test the connection on its own, before trusting any lookup:
+To test the connection on its own, before trusting any lookup, or to ask it about one
+column or one cell code directly:
 
 ```bash
 kinit
 BA_SERVER=your-sql-server uv run ba_form_cell.py
+BA_SERVER=your-sql-server uv run ba_form_cell.py Y0101_r0010_c0010
 ```
 
 It reports the server, the table, `SUSER_SNAME()` - who Kerberos authenticated you as -

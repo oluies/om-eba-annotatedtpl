@@ -177,12 +177,14 @@ full row and column grid with the datapoint ids. That is your lookup table.
    else. An agent handed the six in a tool response still paraphrased them as "Payments
    in EUR", which no variant is. Quote the labels you were given.
 
-   `lookup_datapoint` returns them spelled out, and a `determining_the_variant` hint
-   with the counts for that particular table. It cannot see the warehouse, and neither
-   can you: settle it from `get_entity_details`, which carries the column list and
-   `totalColumns` when it truncates. One variant's worth of datapoint columns means the
-   pipeline picked one and only a person knows which. MCP exposes no sample data, so
-   there is no third route.
+   `lookup_datapoint` returns them spelled out. Wired to the warehouse's own form
+   metadata it also returns `open_axis_values`, the variant labels that column actually
+   carries, read from `BA_Form_Axis` - which settles it outright, and is the only route
+   that does. Unwired it returns a `determining_the_variant` hint with the counts for
+   that particular table, and you settle it from `get_entity_details`, which carries the
+   column list and `totalColumns` when it truncates. One variant's worth of datapoint
+   columns means the pipeline picked one and only a person knows which. MCP exposes no
+   sample data, so there is no third route.
 7. If you cannot resolve an identifier, say so in the description rather than guessing.
    A wrong regulatory description is worse than a missing one.
 

@@ -16,6 +16,7 @@ Build it with `uv run source/build_duckdb.py`; it is derived, so it is gitignore
 
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -177,22 +178,36 @@ VARIANT_HINT = (
 )
 
 
-def warehouse_context(dpm_cell_code: str) -> dict[str, Any]:
-    """What the warehouse's own form metadata says about this cell, when reachable.
+def _consult(fetch: Callable[[Any], list[Any]]) -> dict[str, Any]:
+    """Ask the warehouse, and never let the asking break the lookup.
 
     Optional and best-effort: without a BA_ connection, or if the query fails, the pack's
     own answer stands on its own. A lookup must not become unusable because a database is
-    down.
+    down - but it must say which of those happened, because silence reads the same as a
+    miss.
     """
     try:
         import ba_form_cell  # noqa: PLC0415 - optional dependency, imported where used
 
         if not ba_form_cell.enabled():
-            # Say so rather than returning nothing: silence reads the same as a miss.
             return {"warehouse": "not consulted - BA_SERVER is not set"}
-        return ba_form_cell.describe(ba_form_cell.fetch(dpm_cell_code))
+        return ba_form_cell.describe(fetch(ba_form_cell))
     except Exception as exc:  # noqa: BLE001 - enrichment must never fail the lookup
         return {"warehouse_lookup_failed": f"{type(exc).__name__}: {exc}"}
+
+
+def warehouse_context(dpm_cell_code: str) -> dict[str, Any]:
+    """What the warehouse says one DPM coordinate is, when reachable."""
+    return _consult(lambda module: module.fetch(dpm_cell_code))
+
+
+def warehouse_column_context(column_name: str) -> dict[str, Any]:
+    """Which cells a physical column actually carries, when reachable.
+
+    This is the one question the pack cannot answer for an open sheet axis, and the
+    warehouse answers it outright: BA_Form_Axis enumerates the values the column holds.
+    """
+    return _consult(lambda module: module.fetch_column(column_name))
 
 
 def lookup_dora(column_name: str, parts: dict[str, str]) -> dict[str, Any]:
@@ -324,6 +339,17 @@ def lookup_datapoint(column_name: str, variant: str | None = None) -> dict[str, 
     # said 0010 meant "Payments in EUR" - it is metric crossed with geography, and
     # currency does not come into it.
     spelled = "; ".join(f"{r['variant']} = {r['metric']}, {r['geography']}" for r in rows)
+
+    # The warehouse settles the variant where the pack cannot: BA_Form_Axis lists the
+    # values this physical column carries. The hint below is the fallback for an agent
+    # with no database behind it, so it only goes out when nothing came back.
+    warehouse = warehouse_column_context(column_name)
+    variant_hint = (
+        {}
+        if warehouse.get("open_axis_values")
+        else {"determining_the_variant": VARIANT_HINT.format(table=common["table_name"], n=len(rows))}
+    )
+
     return Resolved(
         found=True,
         column_name=column_name,
@@ -334,14 +360,7 @@ def lookup_datapoint(column_name: str, variant: str | None = None) -> dict[str, 
             "row, the column, the dimension members and the template are safe to describe. "
             "Do not characterise the variants from memory; use the wording above."
         ),
-        common=common
-        | {
-            "determining_the_variant": VARIANT_HINT.format(table=common["table_name"], n=len(rows)),
-            "warehouse": (
-                "not consulted - no single cell to look up until the variant is known. "
-                "Call again with one, and the warehouse's own datapoint key comes with it."
-            ),
-        },
+        common=common | variant_hint | warehouse,
         candidates=[{field: r[field] for field in VARIES_BY_VARIANT} for r in rows],
     ).model_dump()
 
