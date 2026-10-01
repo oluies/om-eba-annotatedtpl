@@ -130,11 +130,34 @@ SELECT  fc.DPM_Cell_Code, fc.Cell_sk, fc.Row_Column_Code, fc.Datapoint_sk,
         fa.Open_Axis_value_1
 FROM    {table} fc
 LEFT JOIN {axis_table} fa ON fa.Cell_sk = fc.Cell_sk
-WHERE   fc.{key} = ?
+WHERE   {predicate}
   AND   fc.Current_flg = 1
 """
 
+# The two keys do not match the same way. A DPM_Cell_Code is the whole value. A
+# Row_Column_Code carries a suffix in the warehouse, so a physical column is a prefix of
+# the codes stored under it and the match has to be a LIKE.
+PREDICATES = {
+    "DPM_Cell_Code": "fc.DPM_Cell_Code = ?",
+    "Row_Column_Code": "fc.Row_Column_Code LIKE ? ESCAPE '\\'",
+}
+
 AXIS_VALUE_FIELD = "open_axis_value_1"
+
+
+def like_prefix(value: str) -> str:
+    """A LIKE pattern matching `value` and whatever follows it, wildcards escaped.
+
+    The underscore is the trap. It is a single-character wildcard in LIKE and these column
+    names are full of them, so an unescaped `Y0101_r0010_c0010%` also matches
+    `Y0101Xr0010Yc0010` - a different column, and a wrong regulatory description. Escaping
+    them costs nothing: a literal underscore still matches the literal underscore that is
+    there.
+    """
+    escaped = value
+    for char in ("\\", "%", "_", "["):
+        escaped = escaped.replace(char, "\\" + char)
+    return escaped + "%"
 
 
 def fold_rows(names: Sequence[str], rows: Iterable[Sequence[Any]]) -> list[FormCell]:
@@ -194,8 +217,8 @@ def _query(key: str, value: str, form_bk: str | None) -> list[FormCell]:
 
     import pyodbc  # noqa: PLC0415 - optional, and only where the connection is used
 
-    sql = QUERY.format(table=SETTINGS.table, axis_table=SETTINGS.axis_table, key=key)
-    params: list[Any] = [value]
+    sql = QUERY.format(table=SETTINGS.table, axis_table=SETTINGS.axis_table, predicate=PREDICATES[key])
+    params: list[Any] = [like_prefix(value) if "LIKE" in PREDICATES[key] else value]
     if form_bk:
         sql += "  AND   fc.Form_BK = ?\n"
         params.append(form_bk)
@@ -231,6 +254,9 @@ def fetch(dpm_cell_code: str, form_bk: str | None = None) -> list[FormCell]:
 
 def fetch_column(row_column_code: str, form_bk: str | None = None) -> list[FormCell]:
     """Every current cell a physical column carries - the variants it can hold.
+
+    Matched as a prefix, because the stored code carries a suffix the column name does
+    not: `Y0101_r0010_c0010` is the column, and the cells under it are what come back.
 
     This is the question the pack cannot answer. A `.01` template gives six candidate
     variants and no way to tell which of them the column actually holds; here they come

@@ -982,7 +982,10 @@ different things in each and only the table's own `Form_BK` says which applies.
 
 A `.01` template has six variants and a column name that names none of them. Connected,
 the tool stops guessing: `BA_Form_Axis` enumerates the `Open_Axis_value_1` values defined
-for that physical column and returns them as `open_axis_values`. Every one of them is in
+for that physical column and returns them as `open_axis_values`. The warehouse stores
+`Row_Column_Code` with a suffix the column name does not carry, so that lookup is a
+prefix `LIKE` - with the underscores escaped, since in `LIKE` an underscore matches any
+single character and these column names are full of them. Every one of them is in
 that column, as rows, so a column description covers all of them and still must not name
 a datapoint id or a unit - those belong to the row.
 
