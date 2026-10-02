@@ -31,6 +31,7 @@ import csv
 import json
 import re
 from collections import defaultdict
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
@@ -42,9 +43,14 @@ from display_names import display_names, table_name
 
 PACK = Path(__file__).parent
 DATAPOINTS = PACK / "05-datapoints.csv"
+DORA_DATAPOINTS = PACK / "source" / "dpm-dora-1.1.0-datapoints.csv"
 
 # Only these are framework columns. Everything else is warehouse context and is left alone.
 DATAPOINT_COLUMN = re.compile(r"^[A-Za-z][0-9]{4}_r[0-9]{4}_c[0-9]{4}$")
+
+# The same shape, taken apart. A DORA row is an ordinal and can be any length, which is
+# why this is looser than the PAY-only pattern above.
+DATAPOINT_COLUMN_PARTS = re.compile(r"^(?P<prefix>[A-Za-z]+[0-9]{4})_r(?P<row>[0-9]+)_c(?P<col>[0-9]{4})$")
 
 # The DPM's sheet axis becomes an open axis in the warehouse: rather than one table per
 # variant, one table holds all of them and a context column says which row is which. Its
@@ -144,6 +150,93 @@ class Datapoint(BaseModel):
             if fqn not in terms:
                 terms.append(fqn)
         return terms
+
+
+class DoraDatapoint(BaseModel):
+    """One row of the DORA datapoint export. Fewer fields than PAY, and no variants."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    column_name_pattern: str
+    table_name: str
+    template: str
+    template_name: str
+    row_code: str
+    row_label: str
+    column_code: str
+    column_label: str
+    datapoint_id: str
+    row_kind: str
+
+    def description(self, keep_labels: bool = False) -> str:
+        """What the column holds, the template, the datapoint id. Nothing is withheld.
+
+        DORA has no variants, so unlike PAY there is no case where the id has to be left
+        out. The note about the ordinal is the one thing a reader will otherwise get wrong.
+        """
+        opening = f"{self.column_label}. " if keep_labels else ""
+        if self.row_kind == "open":
+            return (
+                f"{opening}Column {self.column_code} of template {self.template} "
+                f"({self.template_name}) in the DORA register of information. "
+                f"Datapoint {self.datapoint_id} (EBA DPM, module DORA 1.1.0). One row per record; "
+                "the row number in the column name is an ordinal, not a framework code."
+            )
+        return (
+            f"{opening}Column {self.column_code}, row {self.row_code}"
+            + (f" ({self.row_label})" if self.row_label else "")
+            + f", of template {self.template} ({self.template_name}) in the DORA register of "
+            f"information. Datapoint {self.datapoint_id} (EBA DPM, module DORA 1.1.0)."
+        )
+
+    def display_name(self) -> str:
+        """The column label, which is the whole of the name - a DORA row says nothing.
+
+        A fixed row is the exception: there the row label is what distinguishes the
+        columns of one template from each other.
+        """
+        if self.row_kind != "open" and self.row_label and self.row_label != self.column_label:
+            return f"{self.row_label} - {self.column_label}"
+        return self.column_label
+
+
+def load_dora() -> list[DoraDatapoint]:
+    """Every DORA datapoint. Small enough that a list beats an index."""
+    if not DORA_DATAPOINTS.exists():
+        return []
+    with DORA_DATAPOINTS.open(encoding="utf-8") as fh:
+        return [DoraDatapoint.model_validate(row) for row in csv.DictReader(fh)]
+
+
+def dora_for_table(table: str, columns: list[str]) -> dict[str, DoraDatapoint]:
+    """Match a table's physical columns to DORA datapoints.
+
+    Two rules, because DORA templates come both ways. An open template has one row per
+    record, so the ordinal in the column name carries no meaning and the match is on the
+    column code alone. A fixed template names its rows, so the column name matches
+    exactly - which is what B_99_01 needs.
+    """
+    datapoints = [dp for dp in load_dora() if dp.table_name == table]
+    if not datapoints:
+        return {}
+
+    by_exact = {dp.column_name_pattern: dp for dp in datapoints}
+    by_code = {dp.column_code: dp for dp in datapoints if dp.row_kind == "open"}
+
+    matched = {}
+    for name in columns:
+        parts = split_column_name(name)
+        if name in by_exact:
+            matched[name] = by_exact[name]
+        elif parts and parts["col"] in by_code:
+            matched[name] = by_code[parts["col"]]
+    return matched
+
+
+def split_column_name(name: str) -> dict[str, str] | None:
+    """The row and column codes out of a warehouse column name, or None if it is context."""
+    match = DATAPOINT_COLUMN_PARTS.match(name)
+    return match.groupdict() if match else None
 
 
 def load_datapoints() -> dict[str, list[Datapoint]]:
@@ -800,9 +893,240 @@ CATALOGUE_TOOL_DEFINITIONS = (
 )
 
 
+def dora_display_names(dora: dict[str, DoraDatapoint]) -> dict[str, str]:
+    """Column name to display name, unique within the table.
+
+    Two ways a DORA label repeats, and they need different disambiguators. An open-row
+    template matches on the column code alone, so several physical columns resolve to one
+    datapoint and only the row ordinal differs. And a fixed template can reuse a column
+    label under several column groups - B_99.01 has "Low", "Medium" and "High" three times
+    over, same row, three different column codes - where only the column code differs.
+
+    So the group decides: whichever of the two codes varies inside it is appended. That is
+    a code in a label, which the PAY rule avoids, but the DORA export carries no
+    column-group label, so there is nothing else that tells these apart. A code beats
+    three columns that look identical.
+    """
+    groups: dict[str, list[str]] = defaultdict(list)
+    for name, dp in dora.items():
+        groups[dp.display_name()].append(name)
+
+    labels: dict[str, str] = {}
+    for label, names in groups.items():
+        if len(names) == 1:
+            labels[names[0]] = label
+            continue
+        # The physical name carries the ordinal an open template needs; the datapoint
+        # carries the codes when the name is a pattern rather than a column.
+        parts = {
+            name: split_column_name(name) or {"row": dora[name].row_code, "col": dora[name].column_code}
+            for name in names
+        }
+        rows = {part["row"] for part in parts.values()}
+        columns = {part["col"] for part in parts.values()}
+        for name in names:
+            part = parts[name]
+            codes = [f"r{part['row']}"] if len(rows) > 1 else []
+            codes += [f"c{part['col']}"] if len(columns) > 1 else []
+            labels[name] = f"{label} ({' '.join(codes)})" if codes else label
+    return labels
+
+
+def write_dora(
+    http: httpx.Client, args: argparse.Namespace, fqn: str, table: str, dora: dict[str, DoraDatapoint]
+) -> bool:
+    """Describe a DORA table. Separate from the PAY path because almost nothing is shared.
+
+    No variants, so there is no variant to establish and nothing to withhold; no open
+    sheet axis either, so every column gets its datapoint id.
+    """
+    first = next(iter(dora.values()))
+    label = f"{first.template.replace('_', ' ')} {first.template_name}"
+    labels = dora_display_names(dora)
+    print(f"{fqn}: {len(dora)} DORA datapoint column(s) to describe")
+
+    if not args.commit:
+        name, dp = next(iter(dora.items()))
+        print(f"\n  Table display name: {label}")
+        print(f"\n  Example, {name}:")
+        print(f"    display name: {labels[name]}")
+        print(f"    {dp.description(args.labels_in_description)}")
+        print(f"\n  Nothing written. Re-run with --commit to write all {len(dora)}.")
+        return True
+
+    table_label = write_table_metadata(fqn, display_name=label)
+    print(f"  table display name: {'set' if table_label.get('written') else table_label.get('reason') or 'unchanged'}")
+
+    failed, unlabelled = [], 0
+    for name, dp in dora.items():
+        response, dropped = put_column(
+            http,
+            column_fqn(fqn, name),
+            {"description": dp.description(args.labels_in_description), "displayName": labels[name]},
+        )
+        unlabelled += dropped
+        if response.status_code >= 400:
+            failed.append(f"{name}: {response.status_code} {response.text[:160]}")
+
+    print(f"  {len(dora) - len(failed)} written, {len(failed)} failed")
+    if unlabelled:
+        print(f"  {unlabelled} description(s) written without a display name: this token may not set them.")
+    for line in failed[:10]:
+        print(f"  x {line}")
+    return not failed
+
+
+def describe_one(http: httpx.Client, args: argparse.Namespace, fqn: str, by_column: dict) -> bool:
+    """Describe one table. Returns whether it was clean, and never exits the process."""
+    by_column = load_datapoints()
+    try:
+        columns = fetch_columns(http, fqn)
+    except CatalogueError as exc:
+        print(f"{fqn}: {exc}")
+        return False
+    table = fqn.rsplit(".", 1)[-1]
+    axis_column = find_open_axis(columns)
+
+    # DORA first, because a DORA table has no PAY datapoints at all and would
+    # otherwise report "0 to describe" with no reason given - which is what it did.
+    dora = dora_for_table(table, [column.get("name", "") for column in columns])
+    if dora:
+        return write_dora(http, args, fqn, table, dora)
+
+    if axis_column and args.variant:
+        print(
+            f"{fqn}: has an open axis, `{axis_column}`, so it holds every variant as rows "
+            f"and a column is not one of them. Drop --variant: the descriptions will say what "
+            f"holds for all six and name `{axis_column}` as where the rest comes from."
+        )
+        return False
+    check_variant(by_column, table, args.variant)
+
+    write, skipped = columns_to_write(columns, by_column, args.variant, axis_column)
+
+    # Over every datapoint of the template, not just the columns present: the rule
+    # disambiguates a repeated label from its siblings, and a sibling missing from
+    # this table must not change what the others are called.
+    labels = display_names([dps[0].model_dump() for dps in by_column.values() if dps[0].table_name == table])
+
+    print(f"{fqn}: {len(columns)} columns, {len(write)} to describe")
+    if axis_column:
+        print(f"  open axis `{axis_column}`: every variant is present as rows, so descriptions omit")
+        print("  the datapoint id and the unit and point at that column instead.")
+    if skipped:
+        per_variant = len({dp.column_name for dps in by_column.values() for dp in dps if dp.table_name == table})
+        print(
+            f"  {len(skipped)} datapoint column(s) skipped because no variant was given. "
+            f"{table} has {per_variant} datapoint columns per variant; this table has "
+            f"{len(skipped)}, so it holds one variant and only the pipeline that loads it "
+            "knows which. Pass --variant once you know."
+        )
+    if not write:
+        print(
+            "  Nothing to write. "
+            + (
+                f"No datapoint in this pack belongs to {table}. PAY templates are Y_*, DORA are "
+                "B_*; anything else is a framework this pack does not cover."
+                if not any(dps[0].table_name == table for dps in by_column.values())
+                else "Every datapoint column is already current."
+            )
+        )
+        return True
+
+    if not args.commit:
+        fqn, dp = write[0]
+        print(f"\n  Table display name: {table_name(dp.model_dump())}")
+        print(f"\n  Example, {fqn.rsplit('.', 1)[-1]}:")
+        print(f"    display name: {labels[dp.column_name]}")
+        print(
+            "    "
+            + (
+                dp.description_without_variant(axis_column, args.labels_in_description)
+                if axis_column
+                else dp.description(args.labels_in_description)
+            )
+        )
+        if not args.no_terms:
+            for term in dp.glossary_terms():
+                print(f"    term: {term}")
+        print(f"\n  Nothing written. Re-run with --commit to write all {len(write)}.")
+        return True
+
+    table_label = write_table_metadata(fqn, display_name=table_name(write[0][1].model_dump()))
+    print(f"  table display name: {'set' if table_label.get('written') else table_label.get('reason') or 'unchanged'}")
+
+    failed = []
+    unlabelled = 0
+    for fqn, dp in write:
+        if args.no_terms:
+            text = (
+                dp.description_without_variant(axis_column, args.labels_in_description)
+                if axis_column
+                else dp.description(args.labels_in_description)
+            )
+            response, dropped = put_column(http, fqn, {"description": text, "displayName": labels[dp.column_name]})
+        else:
+            response, dropped = update_column(
+                http, fqn, dp, axis_column, labels[dp.column_name], args.labels_in_description
+            )
+        unlabelled += dropped
+        if response.status_code >= 400:
+            failed.append(f"{fqn.rsplit('.', 1)[-1]}: {response.status_code} {response.text[:160]}")
+
+    print(f"  {len(write) - len(failed)} written, {len(failed)} failed")
+    if unlabelled:
+        print(
+            f"  {unlabelled} description(s) written without a display name: this token may not "
+            "edit display names.\n  OpenMetadata denies EditDisplayName to application bots by "
+            "policy. Use a personal access token to set labels."
+        )
+    for line in failed[:10]:
+        print(f"  x {line}")
+    if failed:
+        print(
+            "  A 404 here usually means a glossary term does not exist: the endpoint validates "
+            "them. Load the glossary first, or re-run with --no-terms."
+        )
+    return not failed
+
+
+def list_tables(http: httpx.Client, pattern: str) -> list[str]:
+    """Table FQNs in a schema matching a shell-style pattern in the last part.
+
+    `SQLSASTest.FIDW_BI.dbo.Y*` asks the catalogue which tables exist rather than guessing
+    from the pack: a template this pack describes may not be loaded, and a table that is
+    loaded may be a framework it does not cover. Only the table name may be a pattern -
+    the schema has to be named, because that is what the listing is scoped to.
+    """
+    schema, _, name = pattern.rpartition(".")
+    if not schema:
+        raise CatalogueError(f"{pattern} is not a table FQN: it needs service.database.schema.table")
+
+    found: list[str] = []
+    after: str | None = None
+    while True:
+        params: dict[str, Any] = {"databaseSchema": schema, "limit": 500}
+        if after:
+            params["after"] = after
+        response = http.get("/v1/tables", params=params)
+        if response.status_code >= 400:
+            raise CatalogueError(f"Listing {schema} failed: {response.status_code} {response.text[:300]}")
+        body = response.json()
+        found.extend(
+            table["fullyQualifiedName"] for table in body.get("data") or [] if fnmatch(table.get("name", ""), name)
+        )
+        after = (body.get("paging") or {}).get("after")
+        if not after:
+            return sorted(found)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("fqn", help="table FQN, e.g. SQLSASTest.FIDW_BI.dbo.Y_01_01")
+    parser.add_argument(
+        "fqn",
+        help="table FQN, e.g. SQLSASTest.FIDW_BI.dbo.Y_01_01. The table part may be a pattern: "
+        "'SQLSASTest.FIDW_BI.dbo.Y*' - quote it, or the shell will try to expand it",
+    )
     parser.add_argument("--variant", help="which variant this table holds, e.g. 0010")
     parser.add_argument("--commit", action="store_true", help="write for real; dry run only without it")
     parser.add_argument("--no-terms", action="store_true", help="set descriptions but do not attach glossary terms")
@@ -814,106 +1138,39 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.show:
-        print(json.dumps(read_table_metadata(args.fqn), ensure_ascii=False, indent=2))
-        return
-
     settings = Settings()  # type: ignore[call-arg]
     with client(settings) as http:
-        by_column = load_datapoints()
         try:
-            columns = fetch_columns(http, args.fqn)
-        except CatalogueError as exc:  # at the command line this is an exit, in a tool it is not
+            targets = list_tables(http, args.fqn) if "*" in args.fqn or "?" in args.fqn else [args.fqn]
+        except CatalogueError as exc:
             raise SystemExit(f"  {exc}") from exc
-        table = args.fqn.rsplit(".", 1)[-1]
-        axis_column = find_open_axis(columns)
 
-        if axis_column and args.variant:
-            raise SystemExit(
-                f"  {table} has an open axis, `{axis_column}`, so it holds every variant as rows "
-                f"and a column is not one of them. Drop --variant: the descriptions will say what "
-                f"holds for all six and name `{axis_column}` as where the rest comes from."
-            )
-        check_variant(by_column, table, args.variant)
+        if not targets:
+            raise SystemExit(f"  No table in the catalogue matches {args.fqn}.")
 
-        write, skipped = columns_to_write(columns, by_column, args.variant, axis_column)
-
-        # Over every datapoint of the template, not just the columns present: the rule
-        # disambiguates a repeated label from its siblings, and a sibling missing from
-        # this table must not change what the others are called.
-        labels = display_names([dps[0].model_dump() for dps in by_column.values() if dps[0].table_name == table])
-
-        print(f"{args.fqn}: {len(columns)} columns, {len(write)} to describe")
-        if axis_column:
-            print(f"  open axis `{axis_column}`: every variant is present as rows, so descriptions omit")
-            print("  the datapoint id and the unit and point at that column instead.")
-        if skipped:
-            per_variant = len({dp.column_name for dps in by_column.values() for dp in dps if dp.table_name == table})
-            print(
-                f"  {len(skipped)} datapoint column(s) skipped because no variant was given. "
-                f"{table} has {per_variant} datapoint columns per variant; this table has "
-                f"{len(skipped)}, so it holds one variant and only the pipeline that loads it "
-                "knows which. Pass --variant once you know."
-            )
-        if not write:
-            raise SystemExit("  Nothing to write.")
-
-        if not args.commit:
-            fqn, dp = write[0]
-            print(f"\n  Table display name: {table_name(dp.model_dump())}")
-            print(f"\n  Example, {fqn.rsplit('.', 1)[-1]}:")
-            print(f"    display name: {labels[dp.column_name]}")
-            print(
-                "    "
-                + (
-                    dp.description_without_variant(axis_column, args.labels_in_description)
-                    if axis_column
-                    else dp.description(args.labels_in_description)
-                )
-            )
-            if not args.no_terms:
-                for term in dp.glossary_terms():
-                    print(f"    term: {term}")
-            print(f"\n  Nothing written. Re-run with --commit to write all {len(write)}.")
+        if args.show:
+            for fqn in targets:
+                print(json.dumps(read_table_metadata(fqn), ensure_ascii=False, indent=2))
             return
 
-        table_label = write_table_metadata(args.fqn, display_name=table_name(write[0][1].model_dump()))
-        print(
-            f"  table display name: {'set' if table_label.get('written') else table_label.get('reason') or 'unchanged'}"
-        )
-
-        failed = []
-        unlabelled = 0
-        for fqn, dp in write:
-            if args.no_terms:
-                text = (
-                    dp.description_without_variant(axis_column, args.labels_in_description)
-                    if axis_column
-                    else dp.description(args.labels_in_description)
-                )
-                response, dropped = put_column(http, fqn, {"description": text, "displayName": labels[dp.column_name]})
-            else:
-                response, dropped = update_column(
-                    http, fqn, dp, axis_column, labels[dp.column_name], args.labels_in_description
-                )
-            unlabelled += dropped
-            if response.status_code >= 400:
-                failed.append(f"{fqn.rsplit('.', 1)[-1]}: {response.status_code} {response.text[:160]}")
-
-        print(f"  {len(write) - len(failed)} written, {len(failed)} failed")
-        if unlabelled:
-            print(
-                f"  {unlabelled} description(s) written without a display name: this token may not "
-                "edit display names.\n  OpenMetadata denies EditDisplayName to application bots by "
-                "policy. Use a personal access token to set labels."
-            )
-        for line in failed[:10]:
-            print(f"  x {line}")
-        if failed:
+        # A variant belongs to one table, so it cannot mean anything across a pattern.
+        if args.variant and len(targets) > 1:
             raise SystemExit(
-                "\n  A 404 here usually means a glossary term does not exist: the endpoint validates "
-                "them. Load the glossary first, or re-run with --no-terms."
+                f"  --variant names the variant one table holds, and {args.fqn} matched {len(targets)}. "
+                "Run them one at a time, or drop it."
             )
+
+        by_column = load_datapoints()
+        results = {fqn: describe_one(http, args, fqn, by_column) for fqn in targets}
+
+    if len(results) > 1:
+        clean = sum(results.values())
+        print(f"\n{len(results)} tables: {clean} clean, {len(results) - clean} with problems")
+        for fqn, ok in sorted(results.items()):
+            if not ok:
+                print(f"  x {fqn}")
+    if not all(results.values()):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

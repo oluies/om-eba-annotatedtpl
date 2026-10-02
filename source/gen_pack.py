@@ -845,6 +845,25 @@ rather than the CSV round trip:
 
     uv run describe_table.py SQLSASTest.FIDW_BI.dbo.Y_01_01 --variant 0010 --commit
 
+The table part may be a pattern, which the catalogue expands rather than this pack - a
+template described here may not be loaded, and a table that is loaded may be a framework
+this pack does not cover:
+
+    uv run describe_table.py 'SQLSASTest.FIDW_BI.dbo.Y*' --commit
+    uv run describe_table.py 'SQLSASTest.EBATAX.bet.B*' --commit
+
+Quote it. An unquoted `Y*` is a shell glob, and a shell with no matching file either passes
+it through or fails outright depending on which shell. Only the table name may be a
+pattern: the schema has to be named, because that is what the listing is scoped to.
+
+Each table is reported on its own and one failure does not stop the rest; the run ends with
+a count and the FQNs that had problems. `--variant` is refused against a pattern, since it
+names what a single table holds.
+
+Both frameworks are handled. A `B_*` table resolves against the DORA export: an open
+template matches on the column code alone, because the ordinal in the column name carries
+no meaning, and a fixed template like `B_99.01` matches the column name exactly.
+
 Prefer it over doing this by hand. It resolves each column against `05-datapoints.csv`,
 refuses to guess a variant, and never touches a context column.
 
