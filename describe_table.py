@@ -251,18 +251,47 @@ def fetch_columns(http: httpx.Client, table_fqn: str) -> list[dict]:
     return fetch_table(http, table_fqn)["columns"]
 
 
-def update_column(http: httpx.Client, fqn: str, dp: Datapoint, axis_column: str | None, label: str) -> httpx.Response:
-    """Set one column's description and glossary terms, addressed by name.
+# OpenMetadata ships ApplicationBotPolicy with a rule that denies EditDisplayName, so a
+# bot token may write a description but not a label. Both travel in one request and the
+# whole request fails, so a denied label would otherwise take the description with it.
+# Seen for real: 403 EditDisplayName denied by role ApplicationBotImpersonationRole.
+DISPLAY_NAME_DENIED = re.compile(r"EditDisplayName", re.IGNORECASE)
+
+
+def denied_display_name(response: httpx.Response) -> bool:
+    """Whether this 403 is the server refusing the label rather than the whole write."""
+    return response.status_code == 403 and bool(DISPLAY_NAME_DENIED.search(response.text))
+
+
+def put_column(http: httpx.Client, fqn: str, body: dict[str, Any]) -> tuple[httpx.Response, bool]:
+    """PUT one column, retrying without the label if that is what was refused.
+
+    Returns the response and whether the label had to be dropped, so the caller can say
+    so once rather than per column. Losing a label is a worse catalogue; losing the
+    description along with it would be a worse one still.
+    """
+    response = http.put(f"/v1/columns/name/{fqn}", params={"entityType": "table"}, json=body)
+    if "displayName" in body and denied_display_name(response):
+        reduced = {key: value for key, value in body.items() if key != "displayName"}
+        if reduced:
+            return http.put(f"/v1/columns/name/{fqn}", params={"entityType": "table"}, json=reduced), True
+    return response, False
+
+
+def update_column(
+    http: httpx.Client, fqn: str, dp: Datapoint, axis_column: str | None, label: str
+) -> tuple[httpx.Response, bool]:
+    """Set one column's description, display name and glossary terms, addressed by name.
 
     `PUT /v1/columns/name/{fqn}` rather than a JSON patch on /columns/N: the index is
     positional and the array an agent reads back is paginated and trimmed, so N does not
     mean the same thing on both sides. PATCH on this resource answers 405 - verified -
-    so PUT is the path, and it takes description and tags together.
+    so PUT is the path, and it takes all three together.
     """
-    return http.put(
-        f"/v1/columns/name/{fqn}",
-        params={"entityType": "table"},
-        json={
+    return put_column(
+        http,
+        fqn,
+        {
             "description": dp.description_without_variant(axis_column) if axis_column else dp.description(),
             "displayName": label,
             "tags": [{"tagFQN": term, "source": "Glossary"} for term in dp.glossary_terms()],
@@ -459,7 +488,7 @@ def write_column_metadata(
             if terms is not None:
                 # Omitting tags leaves the existing ones alone; an empty list clears them.
                 body["tags"] = [{"tagFQN": term, "source": "Glossary"} for term in terms]
-            response = http.put(f"/v1/columns/name/{fqn}", params={"entityType": "table"}, json=body)
+            response, denied_label = put_column(http, fqn, body)
             if response.status_code >= 400:
                 return {
                     "column_fqn": fqn,
@@ -478,7 +507,7 @@ def write_column_metadata(
         field
         for field, value, now in (
             ("description", wanted, (after.get("description") or "").strip()),
-            ("display_name", label, (after.get("displayName") or "").strip()),
+            ("display_name", label if not denied_label else "", (after.get("displayName") or "").strip()),
         )
         if value and now != value
     ]
@@ -497,8 +526,16 @@ def write_column_metadata(
     answer: dict[str, Any] = {"column_fqn": fqn, "written": True}
     if wanted:
         answer["description"] = wanted
-    if label:
+    if label and not denied_label:
         answer["display_name"] = label
+    if denied_label:
+        # Reported rather than silent: the label is not there, and a later read would make
+        # it look as though nobody had tried.
+        answer["display_name_refused"] = (
+            "this token may not edit display names - OpenMetadata denies EditDisplayName to "
+            "application bots by policy. The description was written. Ask for a personal access "
+            "token if labels matter, and do not retry this call."
+        )
     if terms is not None:
         answer["terms"] = terms
     return answer
@@ -571,11 +608,24 @@ def write_table_metadata(
                 )
                 if value
             ]
-            response = http.patch(
-                f"/v1/tables/name/{table_fqn}",
-                content=json.dumps(patch),
-                headers={"Content-Type": "application/json-patch+json"},
-            )
+            headers = {"Content-Type": "application/json-patch+json"}
+            response = http.patch(f"/v1/tables/name/{table_fqn}", content=json.dumps(patch), headers=headers)
+            denied_label = False
+            if denied_display_name(response):
+                # Drop the label and keep the description, for the same reason as a column.
+                remaining = [op for op in patch if op["path"] != "/displayName"]
+                denied_label = True
+                if not remaining:
+                    return {
+                        "table": table_fqn,
+                        "written": False,
+                        "reason": "this token may not edit display names",
+                        "hint": (
+                            "OpenMetadata denies EditDisplayName to application bots by policy. Use a "
+                            "personal access token to set labels, or set only the description."
+                        ),
+                    }
+                response = http.patch(f"/v1/tables/name/{table_fqn}", content=json.dumps(remaining), headers=headers)
             if response.status_code >= 400:
                 return {"table": table_fqn, "written": False, "reason": f"{response.status_code} {response.text[:200]}"}
             after = http.get(f"/v1/tables/name/{table_fqn}").json()
@@ -586,7 +636,7 @@ def write_table_metadata(
         field
         for field, value, now in (
             ("description", wanted, (after.get("description") or "").strip()),
-            ("display_name", label, (after.get("displayName") or "").strip()),
+            ("display_name", label if not denied_label else "", (after.get("displayName") or "").strip()),
         )
         if value and now != value
     ]
@@ -601,8 +651,10 @@ def write_table_metadata(
     answer: dict[str, Any] = {"table": table_fqn, "written": True}
     if wanted:
         answer["description"] = wanted
-    if label:
+    if label and not denied_label:
         answer["display_name"] = label
+    if denied_label:
+        answer["display_name_refused"] = "this token may not edit display names"
     return answer
 
 
@@ -812,20 +864,24 @@ def main() -> None:
         )
 
         failed = []
+        unlabelled = 0
         for fqn, dp in write:
             if args.no_terms:
                 text = dp.description_without_variant(axis_column) if axis_column else dp.description()
-                response = http.put(
-                    f"/v1/columns/name/{fqn}",
-                    params={"entityType": "table"},
-                    json={"description": text, "displayName": labels[dp.column_name]},
-                )
+                response, dropped = put_column(http, fqn, {"description": text, "displayName": labels[dp.column_name]})
             else:
-                response = update_column(http, fqn, dp, axis_column, labels[dp.column_name])
+                response, dropped = update_column(http, fqn, dp, axis_column, labels[dp.column_name])
+            unlabelled += dropped
             if response.status_code >= 400:
                 failed.append(f"{fqn.rsplit('.', 1)[-1]}: {response.status_code} {response.text[:160]}")
 
         print(f"  {len(write) - len(failed)} written, {len(failed)} failed")
+        if unlabelled:
+            print(
+                f"  {unlabelled} description(s) written without a display name: this token may not "
+                "edit display names.\n  OpenMetadata denies EditDisplayName to application bots by "
+                "policy. Use a personal access token to set labels."
+            )
         for line in failed[:10]:
             print(f"  x {line}")
         if failed:

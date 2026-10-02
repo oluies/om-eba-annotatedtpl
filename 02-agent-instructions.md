@@ -396,6 +396,25 @@ whole of the name.
 `describe_table.py --commit` writes both from the same rule, and its dry run prints them,
 so what will be written can be read before it is.
 
+### A bot token cannot set a display name
+
+OpenMetadata ships `ApplicationBotPolicy` with a rule that denies `EditDisplayName`, so an
+application bot may write a description but not a label:
+
+```text
+403 Principal: CatalogPrincipal{name='mcpapplicationbot'} operation EditDisplayName
+denied by role ApplicationBotImpersonationRole, policy ApplicationBotPolicy
+```
+
+Both travel in one request, so without care a denied label takes the description with it.
+The write retries once without the label and reports `display_name_refused` alongside the
+description it did write. **Do not retry that call** - the answer is about the token, not
+about the label, and a second attempt is denied the same way.
+
+To set display names, use a personal access token rather than the bot, or amend the policy.
+With a label-only write there is nothing left to retry, so that one comes back as a plain
+failure.
+
 `patch_entity` is still right for the **table's own** description, which is not an array:
 
 ```json
