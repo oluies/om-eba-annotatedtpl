@@ -63,6 +63,9 @@ These hold regardless of what you find:
   Taxonomy_Name and the like. They have no framework meaning, so do not describe them
   from a framework. Check Taxonomy_Name to confirm which framework a table belongs to:
   the naming convention is shared, so a Y0101_ column only means PAY 4.2 if the table is.
+  Their suffix says what they are: _sk surrogate key, always present; _bk business key,
+  the source system's own identifier; _bid business id. Period_Type is coded Y year,
+  Q quarter, M month.
 ```
 
 ## Where to put it instead

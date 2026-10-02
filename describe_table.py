@@ -104,7 +104,11 @@ class Datapoint(BaseModel):
                     pairs.append((dimension.strip(), member.strip()))
         return pairs
 
-    def description_without_variant(self, axis_column: str) -> str:
+    # The row and column labels are the display name, so they are not repeated here. A
+    # description that opened with them said the same thing twice in two adjacent fields.
+    # The consequence, accepted deliberately: where a token may not set display names, the
+    # labels are not in the catalogue at all - so set the name, or pass keep_labels.
+    def description_without_variant(self, axis_column: str, keep_labels: bool = False) -> str:
         """What holds across every variant, for a table that carries all of them.
 
         No datapoint id and no unit: those differ per variant, and here the variant is a
@@ -113,18 +117,19 @@ class Datapoint(BaseModel):
         """
         members = "; ".join(f"{dim} = {member}" for dim, member in self.dimension_members)
         return (
-            f"{self.row_label} — {self.column_label}. "
+            (f"{self.row_label} — {self.column_label}. " if keep_labels else "")
             + (f"Dimension members: {members}. " if members else "")
             + f"Template {self.template} (EBA PAY 4.2), row {self.row_code}, column {self.column_code}. "
             f"This table holds every variant; `{axis_column}` on each row gives the metric and "
             "geography, and with it the datapoint id and the unit. Non-negative."
         )
 
-    def description(self) -> str:
+    def description(self, keep_labels: bool = False) -> str:
         unit = "monetary amount" if self.unit != "#" else "count"
         members = "; ".join(f"{dim} = {member}" for dim, member in self.dimension_members)
         return (
-            f"{self.row_label} — {self.column_label}, {self.metric.lower()} for {self.geography}. "
+            (f"{self.row_label} — {self.column_label}. " if keep_labels else "")
+            + f"{self.metric}, {self.geography.lower()}. "
             + (f"Dimension members: {members}. " if members else "")
             + f"Datapoint {self.datapoint_id} of template {self.template} (EBA PAY 4.2), "
             f"row {self.row_code}, column {self.column_code}. Unit: {unit}, {self.sign}."
@@ -279,7 +284,7 @@ def put_column(http: httpx.Client, fqn: str, body: dict[str, Any]) -> tuple[http
 
 
 def update_column(
-    http: httpx.Client, fqn: str, dp: Datapoint, axis_column: str | None, label: str
+    http: httpx.Client, fqn: str, dp: Datapoint, axis_column: str | None, label: str, keep_labels: bool = False
 ) -> tuple[httpx.Response, bool]:
     """Set one column's description, display name and glossary terms, addressed by name.
 
@@ -292,7 +297,9 @@ def update_column(
         http,
         fqn,
         {
-            "description": dp.description_without_variant(axis_column) if axis_column else dp.description(),
+            "description": (
+                dp.description_without_variant(axis_column, keep_labels) if axis_column else dp.description(keep_labels)
+            ),
             "displayName": label,
             "tags": [{"tagFQN": term, "source": "Glossary"} for term in dp.glossary_terms()],
         },
@@ -800,6 +807,11 @@ def main() -> None:
     parser.add_argument("--commit", action="store_true", help="write for real; dry run only without it")
     parser.add_argument("--no-terms", action="store_true", help="set descriptions but do not attach glossary terms")
     parser.add_argument("--show", action="store_true", help="print what the columns say now, as JSON, and stop")
+    parser.add_argument(
+        "--labels-in-description",
+        action="store_true",
+        help="repeat the row and column labels in the description, for a token that may not set display names",
+    )
     args = parser.parse_args()
 
     if args.show:
@@ -851,7 +863,14 @@ def main() -> None:
             print(f"\n  Table display name: {table_name(dp.model_dump())}")
             print(f"\n  Example, {fqn.rsplit('.', 1)[-1]}:")
             print(f"    display name: {labels[dp.column_name]}")
-            print(f"    {dp.description_without_variant(axis_column) if axis_column else dp.description()}")
+            print(
+                "    "
+                + (
+                    dp.description_without_variant(axis_column, args.labels_in_description)
+                    if axis_column
+                    else dp.description(args.labels_in_description)
+                )
+            )
             if not args.no_terms:
                 for term in dp.glossary_terms():
                     print(f"    term: {term}")
@@ -867,10 +886,16 @@ def main() -> None:
         unlabelled = 0
         for fqn, dp in write:
             if args.no_terms:
-                text = dp.description_without_variant(axis_column) if axis_column else dp.description()
+                text = (
+                    dp.description_without_variant(axis_column, args.labels_in_description)
+                    if axis_column
+                    else dp.description(args.labels_in_description)
+                )
                 response, dropped = put_column(http, fqn, {"description": text, "displayName": labels[dp.column_name]})
             else:
-                response, dropped = update_column(http, fqn, dp, axis_column, labels[dp.column_name])
+                response, dropped = update_column(
+                    http, fqn, dp, axis_column, labels[dp.column_name], args.labels_in_description
+                )
             unlabelled += dropped
             if response.status_code >= 400:
                 failed.append(f"{fqn.rsplit('.', 1)[-1]}: {response.status_code} {response.text[:160]}")

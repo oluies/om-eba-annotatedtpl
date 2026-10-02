@@ -79,6 +79,23 @@ not match the datapoint pattern is warehouse context - describe it as such or le
 The pattern matches all 320 datapoint column names in this framework and none of the
 context columns above.
 
+They are describable, just not from the framework. The suffix is the convention, and it
+says what the column is for:
+
+| Suffix | What it is | Always there |
+|---|---|---|
+| `_sk` | surrogate key (surrogatnyckel), the warehouse's own identifier | yes |
+| `_bk` | business key (affärsnyckel), the identifier the source system uses | no |
+| `_bid` | business id | no |
+
+A surrogate key is warehouse plumbing and means nothing outside it; a business key is
+what someone would recognise from the source system, which is the one worth describing in
+business terms.
+
+`Period_Type` is a coded column with three values: `Y` year, `Q` quarter, `M` month. State
+the codes and what they mean rather than paraphrasing, since the codes are what a query
+filters on.
+
 Check `Taxonomy_Name` first. A warehouse holding several EBA taxonomies uses the same
 naming convention for all of them, so a `Y0101_...` column only means PAY 4.2 when the
 table is PAY 4.2. FI's `BA_Form_Cell` spans 33 taxonomy names, from `DPM_2.6` to
@@ -209,6 +226,10 @@ service provider, for transactions cross-border within the EEA. Datapoint 326089
 template Y_03.01 (EBA PAY 4.2), row 0080, column 0020. Unit: count, non-negative.
 ```
 
+The display name alongside it carries the labels - "Of which authenticated via strong
+customer authentication - Fraudulent payment transactions" - so the description does not
+repeat them.
+
 Rules:
 
 - **Do not invent regulatory definitions.** The labels here are the framework's own
@@ -217,6 +238,10 @@ Rules:
   layout. Use the corrected spelling in prose, keep the original as a synonym so a search
   against the framework still matches.
 - **Keep the codes in the text.** They are what a reporting analyst greps for.
+- **Do not repeat the display name.** The row and column labels are the display name, and
+  the two fields sit next to each other in the UI, so opening a description with them says
+  the same thing twice. Start with what is measured. The exception is a catalogue where
+  display names could not be set at all, where the labels have to go somewhere.
 - **Do not assert the physical column's semantics** beyond what the datapoint says. If a
   column is named after a datapoint but contains something else, that is a data quality
   finding, not a description.
