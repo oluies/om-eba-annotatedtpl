@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     host: str = "http://localhost:8585/api"
     jwt_token: str
     ca_bundle: str | None = None
+    # Where a Context Center article lives in the UI. The route changed when Knowledge
+    # Center became Context Center and is not the same across versions, so it is
+    # configured rather than guessed: copy it out of the browser once, with {name} where
+    # the page name goes. Unset means the article is named in prose instead of linked.
+    page_url: str | None = None
 
 
 class Datapoint(BaseModel):
@@ -202,7 +207,7 @@ class DoraDatapoint(BaseModel):
         return self.column_label
 
 
-def dora_table_description(dora: dict[str, DoraDatapoint]) -> str:
+def dora_table_description(dora: dict[str, DoraDatapoint], article: str = "") -> str:
     """What the table is, for the table's own description field."""
     first = next(iter(dora.values()))
     rows = sorted({dp.row_code for dp in dora.values()})
@@ -215,7 +220,7 @@ def dora_table_description(dora: dict[str, DoraDatapoint]) -> str:
         f"Template {first.template} ({first.template_name}) of the DORA register of information, "
         f"EBA DPM module DORA 1.1.0. {shape}"
         f"{len(dora)} datapoint column(s), named <TEMPLATE><ROW><COLUMN> as in "
-        f"{min(dora)}. Every other column is warehouse context and carries no framework meaning."
+        f"{min(dora)}. Every other column is warehouse context and carries no framework meaning. " + article
     )
 
 
@@ -291,7 +296,9 @@ def split_column_name(name: str) -> dict[str, str] | None:
     return match.groupdict() if match else None
 
 
-def pay_table_description(datapoints: list[Datapoint], axis_column: str | None, variant: str | None) -> str:
+def pay_table_description(
+    datapoints: list[Datapoint], axis_column: str | None, variant: str | None, article: str = ""
+) -> str:
     """What the table is, for the table's own description field.
 
     Says which variant it holds, because that is the one thing about a PAY table that a
@@ -322,7 +329,7 @@ def pay_table_description(datapoints: list[Datapoint], axis_column: str | None, 
         f"{per_variant} datapoint column(s) per variant, {len(variants)} variant(s) - metric crossed "
         f"with geography. {holds} Datapoint columns are named <TEMPLATE><ROW><COLUMN> as in "
         f"{min(dp.column_name for dp in datapoints)}. Every other column is warehouse context and "
-        "carries no framework meaning."
+        "carries no framework meaning. " + article
     )
 
 
@@ -734,6 +741,7 @@ def write_table_metadata(
     display_name: str | None = None,
     expect_current: str | None = None,
     replace: bool = False,
+    terms: list[str] | None = None,
 ) -> dict[str, Any]:
     """Set the table's own description and display name, and prove they landed.
 
@@ -752,7 +760,7 @@ def write_table_metadata(
 
     try:
         with client(Settings()) as http:  # type: ignore[call-arg]
-            response = http.get(f"/v1/tables/name/{table_fqn}")
+            response = http.get(f"/v1/tables/name/{table_fqn}", params={"fields": "tags"})
             if response.status_code == 404:
                 return {"table": table_fqn, "written": False, "reason": "no such table"}
             response.raise_for_status()
@@ -790,7 +798,7 @@ def write_table_metadata(
 
             # `add` and `replace` are not interchangeable: replace on a field the entity
             # does not carry yet is rejected, which is why the current value decides.
-            patch = [
+            patch: list[dict[str, Any]] = [
                 {"op": "replace" if present else "add", "path": path, "value": value}
                 for path, value, present in (
                     ("/description", wanted, bool(current)),
@@ -798,6 +806,14 @@ def write_table_metadata(
                 )
                 if value
             ]
+            # Tags are a whole-array patch, so the existing ones have to be carried over:
+            # a table may well have a tier or a PII tag that is nothing to do with us.
+            existing = before.get("tags") or []
+            if terms and not {tag.get("tagFQN") for tag in existing} >= set(terms):
+                keep = [{"tagFQN": tag["tagFQN"], "source": tag.get("source", "Classification")} for tag in existing]
+                have = {tag["tagFQN"] for tag in keep}
+                keep += [{"tagFQN": term, "source": "Glossary"} for term in terms if term not in have]
+                patch.append({"op": "replace" if existing else "add", "path": "/tags", "value": keep})
             headers = {"Content-Type": "application/json-patch+json"}
             response = http.patch(f"/v1/tables/name/{table_fqn}", content=json.dumps(patch), headers=headers)
             denied_label = False
@@ -983,6 +999,18 @@ CATALOGUE_TOOL_DEFINITIONS = (
 )
 
 
+def article_reference(table: str, settings: Settings) -> str:
+    """How to point at the Context Center article for a template.
+
+    A link when the route is configured, the article's name otherwise. Naming it is worth
+    doing either way: `find_context` resolves an article by name, so an agent can reach it
+    from the name alone even where a person needs the URL.
+    """
+    if settings.page_url:
+        return f"Full template reference: [{table}]({settings.page_url.format(name=table, fqn=table)})."
+    return f"Full template reference: the Context Center article named {table}."
+
+
 def report_table_write(written: dict[str, Any]) -> None:
     """Say what landed on the table itself. Both frameworks write it the same way."""
     if written.get("written"):
@@ -1050,7 +1078,9 @@ def write_dora(
     if not args.commit:
         name, dp = next(iter(dora.items()))
         print(f"\n  Table display name: {label}")
-        print(f"  Table description: {dora_table_description(dora)}")
+        print(f"  Table description: {dora_table_description(dora, article_reference(table, Settings()))}")  # type: ignore[call-arg]
+        if not args.no_terms:
+            print(f"  Table term: {DORA_GLOSSARY}.Templates.{table}")
         print(f"\n  Example, {name}:")
         print(f"    display name: {labels[name]}")
         print(f"    {dp.description(args.labels_in_description)}")
@@ -1060,7 +1090,14 @@ def write_dora(
         print(f"\n  Nothing written. Re-run with --commit to write all {len(dora)}.")
         return True
 
-    written = write_table_metadata(fqn, dora_table_description(dora), label, replace=True)
+    settings = Settings()  # type: ignore[call-arg]
+    written = write_table_metadata(
+        fqn,
+        dora_table_description(dora, article_reference(table, settings)),
+        label,
+        replace=True,
+        terms=None if args.no_terms else [f"{DORA_GLOSSARY}.Templates.{table}"],
+    )
     report_table_write(written)
 
     terms = {} if args.no_terms else load_dora_terms()
@@ -1155,7 +1192,12 @@ def describe_one(http: httpx.Client, args: argparse.Namespace, fqn: str, by_colu
         for_table = [dp for dps in by_column.values() for dp in dps if dp.table_name == table]
         for_table = [dp for dps in by_column.values() for dp in dps if dp.table_name == table]
         print(f"\n  Table display name: {table_name(dp.model_dump())}")
-        print(f"  Table description: {pay_table_description(for_table, axis_column, args.variant)}")
+        print(
+            "  Table description: "
+            + pay_table_description(for_table, axis_column, args.variant, article_reference(table, Settings()))  # type: ignore[call-arg]
+        )
+        if not args.no_terms:
+            print(f"  Table term: {GLOSSARY}.Templates.{table}")
         print(f"  Table description: {pay_table_description(for_table, axis_column, args.variant)}")
         print(f"\n  Example, {fqn.rsplit('.', 1)[-1]}:")
         print(f"    display name: {labels[dp.column_name]}")
@@ -1174,12 +1216,14 @@ def describe_one(http: httpx.Client, args: argparse.Namespace, fqn: str, by_colu
         return True
 
     for_table = [dp for dps in by_column.values() for dp in dps if dp.table_name == table]
+    settings = Settings()  # type: ignore[call-arg]
     report_table_write(
         write_table_metadata(
             fqn,
-            pay_table_description(for_table, axis_column, args.variant),
+            pay_table_description(for_table, axis_column, args.variant, article_reference(table, settings)),
             table_name(write[0][1].model_dump()),
             replace=True,
+            terms=None if args.no_terms else [f"{GLOSSARY}.Templates.{table}"],
         )
     )
 

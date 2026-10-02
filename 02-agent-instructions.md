@@ -351,6 +351,30 @@ is, how many datapoint columns it has, and - for PAY - which variant it holds. T
 part is the one thing about a PAY table a reader cannot work out from the columns, and the
 reason the column descriptions have to stay silent about it when nobody knows.
 
+### Linking the table to its article
+
+Two links, and they do different jobs.
+
+A **glossary term per template** now exists in both glossaries - `PAY_4_2.Templates.Y_01_01`,
+`DORA_1_1_0.Templates.B_99_01` - and the table carries the one for its own template. That is
+a modelled edge, so it is navigable in the UI and shows in the ontology explorer, where a
+sentence is not. Existing tags on the table are kept: a tier or a PII tag has nothing to do
+with this pack, and tags are a whole-array patch.
+
+The term name uses underscores. A dot in an FQN part has to be quoted, and that has broken
+this import before.
+
+The **article** is named in the table description, and linked when `OM_PAGE_URL` is set:
+
+```bash
+OM_PAGE_URL='https://your-host/contextCenter/articles/{name}' uv run describe_table.py ... --commit
+```
+
+The route is configured rather than guessed because it changed when Knowledge Center became
+Context Center and is not the same across versions - copy it out of the browser once. Unset,
+the description names the article instead of linking it, which is not a loss for an agent:
+`find_context` resolves an article by name.
+
 Prefer it over doing this by hand. It resolves each column against `05-datapoints.csv`,
 refuses to guess a variant, and never touches a context column.
 

@@ -26,7 +26,7 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `03-glossary/metrics.md` | The 3 metrics and their units | You need the unit |
 | `04-tables/<TEMPLATE>.md` | One per template: variants, columns, rows, datapoint ids | You are describing a table |
 | `05-datapoints.csv` | All 1830 datapoints, keyed by `table_name` and `column_name` | You have a column to describe |
-| `06-openmetadata-glossary.csv` | Bulk glossary import, 78 terms | You are loading the glossary |
+| `06-openmetadata-glossary.csv` | Bulk glossary import, 93 terms | You are loading the glossary |
 
 ## Warehouse column names
 

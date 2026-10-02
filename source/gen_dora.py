@@ -297,7 +297,25 @@ def write_glossary_csv() -> None:
         row(
             "", "Domains", "Value domains used by the DORA columns that carry a dimensional context.", status="Approved"
         ),
+        row("", "Templates", "The templates of the DORA register of information.", status="Approved"),
     ]
+
+    # One term per template, so a table can carry a link a reader can follow rather than a
+    # sentence. Underscores in the name: a dot in an FQN part has to be quoted, and that
+    # has broken this import before.
+    for code, rs in sorted(by_template.items()):
+        table = code.replace(".", "_")
+        name = rs[0]["template_name"]
+        rows_out.append(
+            row(
+                f"{GLOSSARY}.Templates",
+                table,
+                f"Template {code} of the DORA register of information, EBA DPM module 1.1.0: {name}. "
+                f"Warehouse table {table}, {len(rs)} datapoint column(s). The Context Center article "
+                f"named {table} holds the columns and datapoint ids.",
+                status="Approved",
+            )
+        )
 
     for name, v in sorted(PROPERTIES.items()):
         used = sorted(set(COLUMNS_USING[name]))
