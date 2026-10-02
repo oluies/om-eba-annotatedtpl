@@ -219,7 +219,7 @@ def dora_table_description(dora: dict[str, DoraDatapoint], article: str = "") ->
     return (
         f"Template {first.template} ({first.template_name}) of the DORA register of information, "
         f"EBA DPM module DORA 1.1.0. {shape}"
-        f"{len(dora)} datapoint column(s), named <TEMPLATE><ROW><COLUMN> as in "
+        f"{len(dora)} datapoint column(s), named for their template, row and column, as in "
         f"{min(dora)}. Every other column is warehouse context and carries no framework meaning. " + article
     )
 
@@ -327,7 +327,7 @@ def pay_table_description(
     return (
         f"Template {first.template} ({first.template_name}) of EBA PAY 4.2, module PSD_FRP 1.1.0. "
         f"{per_variant} datapoint column(s) per variant, {len(variants)} variant(s) - metric crossed "
-        f"with geography. {holds} Datapoint columns are named <TEMPLATE><ROW><COLUMN> as in "
+        f"with geography. {holds} Datapoint columns are named for their template, row and column, as in "
         f"{min(dp.column_name for dp in datapoints)}. Every other column is warehouse context and "
         "carries no framework meaning. " + article
     )
@@ -699,11 +699,11 @@ def write_column_metadata(
 
     kept = [
         field
-        for field, value, now in (
-            ("description", wanted, (after.get("description") or "").strip()),
-            ("display_name", label if not denied_label else "", (after.get("displayName") or "").strip()),
+        for field, value, stored in (
+            ("description", wanted, after.get("description")),
+            ("display_name", label if not denied_label else "", after.get("displayName")),
         )
-        if value and now != value
+        if value and not landed(value, stored)
     ]
     if kept:
         return {
@@ -840,11 +840,11 @@ def write_table_metadata(
 
     kept = [
         field
-        for field, value, now in (
-            ("description", wanted, (after.get("description") or "").strip()),
-            ("display_name", label if not denied_label else "", (after.get("displayName") or "").strip()),
+        for field, value, stored in (
+            ("description", wanted, after.get("description")),
+            ("display_name", label if not denied_label else "", after.get("displayName")),
         )
-        if value and now != value
+        if value and not landed(value, stored)
     ]
     if kept:
         return {
@@ -997,6 +997,26 @@ CATALOGUE_TOOL_DEFINITIONS = (
     WRITE_COLUMN_METADATA_TOOL_DEFINITION,
     WRITE_TABLE_METADATA_TOOL_DEFINITION,
 )
+
+
+# The server sanitises on write: the OWASP policy HTML-escapes `<`, `>`, `&` and `+`, so
+# what comes back is never byte-identical to what went out. Comparing exactly reported a
+# write that had in fact landed as "the server kept the old description" - a false alarm
+# that reads exactly like the real bot-token refusal it was meant to catch.
+ESCAPES = (("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&#43;", "+"), ("&#39;", "'"), ("&quot;", '"'))
+
+
+def unescaped(stored: str | None) -> str:
+    """Stored text with the sanitiser's escapes undone, for comparison only."""
+    text = stored or ""
+    for escape, char in ESCAPES:
+        text = text.replace(escape, char)
+    return text.strip()
+
+
+def landed(wanted: str, stored: str | None) -> bool:
+    """Did what we sent survive the write, allowing for sanitisation?"""
+    return unescaped(stored) == wanted.strip()
 
 
 def article_reference(table: str, settings: Settings) -> str:
