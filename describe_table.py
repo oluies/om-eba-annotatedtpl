@@ -44,6 +44,8 @@ from display_names import display_names, table_name
 PACK = Path(__file__).parent
 DATAPOINTS = PACK / "05-datapoints.csv"
 DORA_DATAPOINTS = PACK / "source" / "dpm-dora-1.1.0-datapoints.csv"
+DORA_VOCABULARY = PACK / "source" / "dpm-dora-1.1.0-vocabulary.csv"
+DORA_GLOSSARY = "DORA_1_1_0"
 
 # Only these are framework columns. Everything else is warehouse context and is left alone.
 DATAPOINT_COLUMN = re.compile(r"^[A-Za-z][0-9]{4}_r[0-9]{4}_c[0-9]{4}$")
@@ -200,6 +202,56 @@ class DoraDatapoint(BaseModel):
         return self.column_label
 
 
+def dora_table_description(dora: dict[str, DoraDatapoint]) -> str:
+    """What the table is, for the table's own description field."""
+    first = next(iter(dora.values()))
+    rows = sorted({dp.row_code for dp in dora.values()})
+    shape = (
+        "One row per record; the row number in a column name is an ordinal, not a framework code. "
+        if first.row_kind == "open"
+        else f"{len(rows)} fixed row(s): {', '.join(rows)}. "
+    )
+    return (
+        f"Template {first.template} ({first.template_name}) of the DORA register of information, "
+        f"EBA DPM module DORA 1.1.0. {shape}"
+        f"{len(dora)} datapoint column(s), named <TEMPLATE><ROW><COLUMN> as in "
+        f"{min(dora)}. Every other column is warehouse context and carries no framework meaning."
+    )
+
+
+def dora_terms_by_column(rows: list[dict[str, str]]) -> dict[tuple[str, str], list[str]]:
+    """Glossary term FQNs per (template, column code), from the DORA vocabulary.
+
+    Two kinds, and both belong on the column. The `property` row is what the column holds -
+    one per column, no exceptions in this export. A `member` row is a fixed characteristic
+    of the column, the same sense as a PAY dimension member: column 0060 of B_01.02 is the
+    LEI code *of the direct parent*, so `Direct parent` in the Related parties domain is a
+    fact about that column rather than one of its possible values.
+
+    Pure, so the mapping can be checked without loading the file.
+    """
+    terms: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for row in rows:
+        key = (row["template"], row["column_code"])
+        if row["kind"] == "property":
+            fqn = f"{DORA_GLOSSARY}.Properties.{row['name']}"
+        elif row["kind"] == "member" and row["domain"]:
+            fqn = f"{DORA_GLOSSARY}.Domains.{row['domain']}.{row['name']}"
+        else:
+            continue
+        if fqn not in terms[key]:
+            terms[key].append(fqn)
+    return dict(terms)
+
+
+def load_dora_terms() -> dict[tuple[str, str], list[str]]:
+    """The vocabulary mapping, or nothing if the export is not in the checkout."""
+    if not DORA_VOCABULARY.exists():
+        return {}
+    with DORA_VOCABULARY.open(encoding="utf-8") as fh:
+        return dora_terms_by_column(list(csv.DictReader(fh)))
+
+
 def load_dora() -> list[DoraDatapoint]:
     """Every DORA datapoint. Small enough that a list beats an index."""
     if not DORA_DATAPOINTS.exists():
@@ -237,6 +289,41 @@ def split_column_name(name: str) -> dict[str, str] | None:
     """The row and column codes out of a warehouse column name, or None if it is context."""
     match = DATAPOINT_COLUMN_PARTS.match(name)
     return match.groupdict() if match else None
+
+
+def pay_table_description(datapoints: list[Datapoint], axis_column: str | None, variant: str | None) -> str:
+    """What the table is, for the table's own description field.
+
+    Says which variant it holds, because that is the one thing about a PAY table that a
+    reader cannot work out from the columns - and the thing the column descriptions have
+    to stay silent about when nobody knows.
+    """
+    first = datapoints[0]
+    variants = sorted({dp.variant: dp.variant_label for dp in datapoints}.items())
+    per_variant = len({dp.column_name for dp in datapoints})
+
+    if axis_column:
+        holds = (
+            f"This table holds all {len(variants)} variant(s) as rows; `{axis_column}` on each row says "
+            "which, and with it the datapoint id and the unit. A column description therefore covers "
+            "all of them and states neither."
+        )
+    elif variant:
+        label = dict(variants).get(variant, variant)
+        holds = f"This table holds one variant: {label}."
+    else:
+        holds = (
+            f"Which of the {len(variants)} variants this table holds is not recorded here, so the "
+            "column descriptions state neither a datapoint id nor a unit."
+        )
+
+    return (
+        f"Template {first.template} ({first.template_name}) of EBA PAY 4.2, module PSD_FRP 1.1.0. "
+        f"{per_variant} datapoint column(s) per variant, {len(variants)} variant(s) - metric crossed "
+        f"with geography. {holds} Datapoint columns are named <TEMPLATE><ROW><COLUMN> as in "
+        f"{min(dp.column_name for dp in datapoints)}. Every other column is warehouse context and "
+        "carries no framework meaning."
+    )
 
 
 def load_datapoints() -> dict[str, list[Datapoint]]:
@@ -646,6 +733,7 @@ def write_table_metadata(
     description: str | None = None,
     display_name: str | None = None,
     expect_current: str | None = None,
+    replace: bool = False,
 ) -> dict[str, Any]:
     """Set the table's own description and display name, and prove they landed.
 
@@ -653,7 +741,9 @@ def write_table_metadata(
     displayName are scalar fields at known paths, not positions in an array that is
     paginated differently on each side.
 
-    Same guard and same read-back as the column tool, for the same reasons.
+    Same guard and same read-back as the column tool, for the same reasons. `replace` skips
+    the guard and is not in the tool schema: the batch writer regenerates a description it
+    wrote itself, which is not the case the guard is about.
     """
     wanted = (description or "").strip()
     label = (display_name or "").strip()
@@ -678,7 +768,7 @@ def write_table_metadata(
                     "description": current,
                     "display_name": current_label,
                 }
-            if wanted and current:
+            if wanted and current and not replace:
                 if expect_current is None:
                     return {
                         "table": table_fqn,
@@ -893,6 +983,18 @@ CATALOGUE_TOOL_DEFINITIONS = (
 )
 
 
+def report_table_write(written: dict[str, Any]) -> None:
+    """Say what landed on the table itself. Both frameworks write it the same way."""
+    if written.get("written"):
+        refused = written.get("display_name_refused")
+        print(
+            "  table: description set"
+            + (", display name refused (token may not set them)" if refused else ", display name set")
+        )
+    else:
+        print(f"  table: not written - {written.get('reason')}")
+
+
 def dora_display_names(dora: dict[str, DoraDatapoint]) -> dict[str, str]:
     """Column name to display name, unique within the table.
 
@@ -948,27 +1050,42 @@ def write_dora(
     if not args.commit:
         name, dp = next(iter(dora.items()))
         print(f"\n  Table display name: {label}")
+        print(f"  Table description: {dora_table_description(dora)}")
         print(f"\n  Example, {name}:")
         print(f"    display name: {labels[name]}")
         print(f"    {dp.description(args.labels_in_description)}")
+        if not args.no_terms:
+            for term in load_dora_terms().get((dp.template, dp.column_code), []):
+                print(f"    term: {term}")
         print(f"\n  Nothing written. Re-run with --commit to write all {len(dora)}.")
         return True
 
-    table_label = write_table_metadata(fqn, display_name=label)
-    print(f"  table display name: {'set' if table_label.get('written') else table_label.get('reason') or 'unchanged'}")
+    written = write_table_metadata(fqn, dora_table_description(dora), label, replace=True)
+    report_table_write(written)
+
+    terms = {} if args.no_terms else load_dora_terms()
 
     failed, unlabelled = [], 0
     for name, dp in dora.items():
-        response, dropped = put_column(
-            http,
-            column_fqn(fqn, name),
-            {"description": dp.description(args.labels_in_description), "displayName": labels[name]},
-        )
+        body: dict[str, Any] = {
+            "description": dp.description(args.labels_in_description),
+            "displayName": labels[name],
+        }
+        if not args.no_terms:
+            # Omitting tags leaves the existing ones alone, so only send the key when there
+            # is something to say. A column with no vocabulary row keeps whatever it has.
+            for_column = terms.get((dp.template, dp.column_code), [])
+            if for_column:
+                body["tags"] = [{"tagFQN": term, "source": "Glossary"} for term in for_column]
+        response, dropped = put_column(http, column_fqn(fqn, name), body)
         unlabelled += dropped
         if response.status_code >= 400:
             failed.append(f"{name}: {response.status_code} {response.text[:160]}")
 
     print(f"  {len(dora) - len(failed)} written, {len(failed)} failed")
+    if not args.no_terms:
+        tagged = sum(1 for dp in dora.values() if terms.get((dp.template, dp.column_code)))
+        print(f"  {tagged} column(s) carried glossary terms from {DORA_GLOSSARY}")
     if unlabelled:
         print(f"  {unlabelled} description(s) written without a display name: this token may not set them.")
     for line in failed[:10]:
@@ -1035,7 +1152,11 @@ def describe_one(http: httpx.Client, args: argparse.Namespace, fqn: str, by_colu
 
     if not args.commit:
         fqn, dp = write[0]
+        for_table = [dp for dps in by_column.values() for dp in dps if dp.table_name == table]
+        for_table = [dp for dps in by_column.values() for dp in dps if dp.table_name == table]
         print(f"\n  Table display name: {table_name(dp.model_dump())}")
+        print(f"  Table description: {pay_table_description(for_table, axis_column, args.variant)}")
+        print(f"  Table description: {pay_table_description(for_table, axis_column, args.variant)}")
         print(f"\n  Example, {fqn.rsplit('.', 1)[-1]}:")
         print(f"    display name: {labels[dp.column_name]}")
         print(
@@ -1052,8 +1173,15 @@ def describe_one(http: httpx.Client, args: argparse.Namespace, fqn: str, by_colu
         print(f"\n  Nothing written. Re-run with --commit to write all {len(write)}.")
         return True
 
-    table_label = write_table_metadata(fqn, display_name=table_name(write[0][1].model_dump()))
-    print(f"  table display name: {'set' if table_label.get('written') else table_label.get('reason') or 'unchanged'}")
+    for_table = [dp for dps in by_column.values() for dp in dps if dp.table_name == table]
+    report_table_write(
+        write_table_metadata(
+            fqn,
+            pay_table_description(for_table, axis_column, args.variant),
+            table_name(write[0][1].model_dump()),
+            replace=True,
+        )
+    )
 
     failed = []
     unlabelled = 0

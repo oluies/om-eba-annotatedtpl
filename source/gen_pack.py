@@ -862,7 +862,14 @@ names what a single table holds.
 
 Both frameworks are handled. A `B_*` table resolves against the DORA export: an open
 template matches on the column code alone, because the ordinal in the column name carries
-no meaning, and a fixed template like `B_99.01` matches the column name exactly.
+no meaning, and a fixed template like `B_99.01` matches the column name exactly. DORA
+columns get terms from the `DORA_1_1_0` glossary rather than PAY's, and all 85 of them
+carry at least one.
+
+The table itself gets a description as well as a display name, saying which template it
+is, how many datapoint columns it has, and - for PAY - which variant it holds. That last
+part is the one thing about a PAY table a reader cannot work out from the columns, and the
+reason the column descriptions have to stay silent about it when nobody knows.
 
 Prefer it over doing this by hand. It resolves each column against `05-datapoints.csv`,
 refuses to guess a variant, and never touches a context column.
