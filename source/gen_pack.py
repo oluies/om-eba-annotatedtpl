@@ -896,6 +896,17 @@ with this pack, and tags are a whole-array patch.
 The term name uses underscores. A dot in an FQN part has to be quoted, and that has broken
 this import before.
 
+A template's **article and its term are linked to each other too**, and not by a URL: a
+Context Center page carries `tags`, so `import_to_openmetadata.py` tags each template
+article with its own template term. The term then lists the article and the article shows
+the term, which is one object seen twice rather than two that happen to mention each other.
+It needs no route, which is the point - the Context Center route is not the same across
+versions.
+
+That step runs last, after the glossary import, because the server validates every tag and
+answers 404 for a term it does not know. If the glossaries are not loaded yet it says so
+once and tells you to load them, rather than failing 29 times. Running it again is a no-op.
+
 The **article** is named in the table description, and linked when `OM_PAGE_URL` is set:
 
 ```bash

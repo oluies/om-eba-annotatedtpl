@@ -25,6 +25,7 @@ import argparse
 import csv
 import io
 import json
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Literal
@@ -320,16 +321,20 @@ def upsert_page(client: httpx.Client, page: Page, parent_id: str | None) -> tupl
     return page_id, body_matches(page.body, patched.json().get("description"))
 
 
-def upsert_tree(client: httpx.Client, page: Page, parent_id: str | None = None, depth: int = 0) -> list[str]:
+def upsert_tree(client: httpx.Client, page: Page, parent_id: str | None = None, depth: int = 0) -> dict[str, str]:
     """Parents before children, because a child needs its parent's id.
 
-    Returns every id written, which is what the reindex call needs.
+    Returns name to id for every page written: the ids are what the reindex call needs, and
+    the names are how a page is found again afterwards without knowing its FQN.
     """
     page_id, ok = upsert_page(client, page, parent_id)
     if not ok:
         STALE.append(page.display_name)
     print(f"{'  ' * depth}{'✓' if ok else '!'} {page.display_name}  ({page_id})")
-    return [page_id, *(i for child in page.children for i in upsert_tree(client, child, page_id, depth + 1))]
+    written = {page.name: page_id}
+    for child in page.children:
+        written |= upsert_tree(client, child, page_id, depth + 1)
+    return written
 
 
 def reindex(client: httpx.Client, page_ids: list[str]) -> None:
@@ -588,6 +593,68 @@ def run_glossary_import(client: httpx.Client, spec: GlossarySpec, *, commit: boo
         print(f"\n  Glossary {glossary!r} loaded.")
 
 
+# A template article and its glossary term are the same thing seen twice: the article is
+# the reference text, the term is the node other entities hang off. Tagging the article with
+# the term makes that one object in the UI - the term lists the article, the article shows
+# the term - and needs no URL, which matters because the Context Center route is not the
+# same across versions.
+TEMPLATE_PAGE = re.compile(r"^(?P<prefix>[YB])_(?P<major>[0-9]{2})_(?P<minor>[0-9]{2})$")
+GLOSSARY_OF_PREFIX = {"Y": "PAY_4_2", "B": "DORA_1_1_0"}
+
+
+def term_for_page(name: str) -> str | None:
+    """The glossary term FQN for a template article, or None if it is not one."""
+    match = TEMPLATE_PAGE.match(name)
+    return f"{GLOSSARY_OF_PREFIX[match['prefix']]}.Templates.{name}" if match else None
+
+
+def link_articles_to_terms(client: httpx.Client, pages: dict[str, str]) -> None:
+    """Tag each template article with its template glossary term.
+
+    Runs after the glossary import, because the term has to exist first: the server
+    validates every tag and answers 404 for one it does not know. A term that is missing is
+    reported rather than retried - it means the glossary was not loaded, which is a thing to
+    fix once, not per page.
+    """
+    targets = {name: term for name in pages if (term := term_for_page(name))}
+    if not targets:
+        return
+
+    linked, missing, failed = 0, [], []
+    for name, term in sorted(targets.items()):
+        current = client.get(f"{PAGES_PATH}/{pages[name]}", params={"fields": "tags"})
+        if current.status_code >= 400:
+            failed.append(f"{name}: read {current.status_code}")
+            continue
+        existing = current.json().get("tags") or []
+        if any(tag.get("tagFQN") == term for tag in existing):
+            linked += 1
+            continue
+        # Tags are a whole-array patch, so what is already there has to be carried over.
+        keep = [{"tagFQN": t["tagFQN"], "source": t.get("source", "Classification")} for t in existing]
+        keep.append({"tagFQN": term, "source": "Glossary"})
+        patched = client.patch(
+            f"{PAGES_PATH}/{pages[name]}",
+            content=json.dumps([{"op": "replace" if existing else "add", "path": "/tags", "value": keep}]),
+            headers={"Content-Type": "application/json-patch+json"},
+        )
+        if patched.status_code == 404:
+            missing.append(term)
+        elif patched.status_code >= 400:
+            failed.append(f"{name}: {patched.status_code} {patched.text[:120]}")
+        else:
+            linked += 1
+
+    print(f"\n{linked} of {len(targets)} template article(s) linked to their glossary term")
+    if missing:
+        print(
+            f"  {len(missing)} term(s) do not exist yet, e.g. {missing[0]}.\n"
+            "  Load the glossaries first: --glossary-only --commit, then re-run."
+        )
+    for line in failed[:5]:
+        print(f"  x {line}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="print the page tree, contact nothing")
@@ -637,9 +704,10 @@ def main() -> None:
             verify_listing(client)
             return
 
+        pages: dict[str, str] = {}
         if not args.glossary_only:
-            page_ids = upsert_tree(client, tree)
-            print(f"\n{len(page_ids)} pages written.")
+            pages = upsert_tree(client, tree)
+            print(f"\n{len(pages)} pages written.")
             if STALE:
                 print(
                     f"  {len(STALE)} page(s) kept their old body, e.g. {STALE[0]!r}.\n"
@@ -648,11 +716,15 @@ def main() -> None:
                     "  and re-run so they are created fresh."
                 )
             if not args.no_reindex:
-                reindex(client, page_ids)
+                reindex(client, list(pages.values()))
 
         if not args.pages_only:
             for spec in GLOSSARIES:
                 run_glossary_import(client, spec, commit=args.commit, reset=args.reset_glossary)
+
+        # Last, because it is the one step that needs both halves to be in place.
+        if pages and (args.pages_only or args.commit):
+            link_articles_to_terms(client, pages)
 
 
 if __name__ == "__main__":
