@@ -23,10 +23,20 @@ DATA = SOURCE_DIR / "dpm-dora-1.1.0-datapoints.csv"
 VOCAB = SOURCE_DIR / "dpm-dora-1.1.0-vocabulary.csv"
 OUT = REPO / "dora"
 
-SOURCE = "EBA DPM 2.0 database, module DORA 1.1.0"
+# Where the DPM database this pack is built from is published. Cited everywhere a reader
+# might otherwise take this pack as the authority.
+DICTIONARY_URL = "https://www.eba.europa.eu/risk-and-data-analysis/reporting/dpm-data-dictionary"
+SOURCE = f"EBA DPM 2.0 database, module DORA 1.1.0, from the EBA DPM Data Dictionary, {DICTIONARY_URL}"
 # No dot in the glossary NAME: OpenMetadata quotes FQN parts that contain one.
 GLOSSARY = "DORA_1_1_0"
 AUTHORITY = "the DORA Implementing Technical Standards on the register of information"
+
+# Every term here is derived from the EBA Data Point Model, so every term carries a
+# reference to the dictionary it came from. The CSV format for this column is
+# name;url, repeated - so a comma in either would break the row, and neither has one.
+DPM_DICTIONARY = (
+    "EBA DPM Data Dictionary;https://www.eba.europa.eu/risk-and-data-analysis/reporting/dpm-data-dictionary"
+)
 
 # The warehouse writes an open row as r999. The DPM writes it as r*. Same thing.
 OPEN_ROW_PLACEHOLDER = "999"
@@ -289,7 +299,7 @@ def write_glossary_csv() -> None:
     ]
 
     def row(parent: str, name: str, desc: str, synonyms: str = "", status: str = "Draft") -> list[str]:
-        out = [parent, name, name, desc, synonyms, "", "", "", "", "", status]
+        out = [parent, name, name, desc, synonyms, "", DPM_DICTIONARY, "", "", "", status]
         return out + [""] * (len(header) - len(out))
 
     rows_out = [

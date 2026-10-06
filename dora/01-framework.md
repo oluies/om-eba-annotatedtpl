@@ -4,7 +4,7 @@ The register of information under the Digital Operational Resilience Act: which 
 report, which contractual arrangements they hold with ICT third-party service providers,
 which functions those services support, and how the arrangements are assessed.
 
-**85 datapoints across 15 templates.** Transcribed from EBA DPM 2.0 database, module DORA 1.1.0.
+**85 datapoints across 15 templates.** Transcribed from EBA DPM 2.0 database, module DORA 1.1.0, from the EBA DPM Data Dictionary, https://www.eba.europa.eu/risk-and-data-analysis/reporting/dpm-data-dictionary.
 
 **Definitions.** The labels here are the framework's own wording, not a legal definition.
 Where a precise definition is needed, cite the DORA Implementing Technical Standards on the register of information rather than paraphrasing this file.

@@ -1,6 +1,6 @@
 # DORA glossary
 
-The vocabulary behind the 85 columns, from EBA DPM 2.0 database, module DORA 1.1.0.
+The vocabulary behind the 85 columns, from EBA DPM 2.0 database, module DORA 1.1.0, from the EBA DPM Data Dictionary, https://www.eba.europa.eu/risk-and-data-analysis/reporting/dpm-data-dictionary.
 
 **Definitions.** These are the framework's own wording, not legal definitions. Where a
 precise one is needed, cite the DORA Implementing Technical Standards on the register of information.

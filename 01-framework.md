@@ -1,6 +1,6 @@
 # PAY 4.2 (FRPPAY 4.2) — framework overview
 
-Transcribed from EBA PAY 4.2 (FRPPAY 4.2) annotated table layout, 2026-01-06; datapoint ids from the DPM 2.0 database, module PSD_FRP 1.1.0.
+Transcribed from EBA PAY 4.2 (FRPPAY 4.2) annotated table layout, 2026-01-06; datapoint ids from the DPM 2.0 database, module PSD_FRP 1.1.0; both from the EBA DPM Data Dictionary, https://www.eba.europa.eu/risk-and-data-analysis/reporting/dpm-data-dictionary.
 
 ## What this framework is
 
