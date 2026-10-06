@@ -854,7 +854,7 @@ def write_table_metadata(
             "current_description": (after.get("description") or "").strip(),
             "current_display_name": (after.get("displayName") or "").strip(),
         }
-    answer: dict[str, Any] = {"table": table_fqn, "written": True}
+    answer: dict[str, Any] = {"table": table_fqn, "written": True, "id": after.get("id")}
     if wanted:
         answer["description"] = wanted
     if label and not denied_label:
@@ -1031,6 +1031,72 @@ def article_reference(table: str, settings: Settings) -> str:
     return f"Full template reference: the Context Center article named {table}."
 
 
+# The other half of the article link. import_to_openmetadata.py tags the article with its
+# glossary term; only this script knows which warehouse tables a template actually landed
+# in, so it is the one that can fill in relatedEntities. A Context Center page carries that
+# field, so the article lists the tables and each table's article is one hop away - with no
+# URL, which is the point: the Context Center route is not the same across versions.
+PAGES_PATH = "/v1/contextCenter/pages"
+
+
+def find_article(http: httpx.Client, name: str) -> dict | None:
+    """The Context Center article with this name, by listing rather than by FQN.
+
+    A page's FQN depends on where it sits in the tree, and the tree is the importer's
+    business, not this script's. The names are unique and there are only tens of pages, so
+    a listing is both cheaper to reason about and harder to get wrong.
+    """
+    after: str | None = None
+    while True:
+        params: dict[str, Any] = {"limit": 500, "fields": "relatedEntities"}
+        if after:
+            params["after"] = after
+        response = http.get(PAGES_PATH, params=params)
+        if response.status_code >= 400:
+            # Not the same as "there is no article": say which it was, or a token that may
+            # not list pages reads as a pack that was never imported.
+            raise CatalogueError(f"listing {PAGES_PATH} failed: {response.status_code} {response.text[:160]}")
+        body = response.json()
+        for page in body.get("data") or []:
+            if page.get("name") == name:
+                return page
+        after = (body.get("paging") or {}).get("after")
+        if not after:
+            return None
+
+
+def link_article_to_table(http: httpx.Client, table: str, table_id: str) -> str:
+    """Add this table to its template article's relatedEntities. Returns what happened.
+
+    Best-effort by design: the article only exists if the pack has been imported, and a
+    description is worth writing either way. Nothing here raises.
+    """
+    try:
+        article = find_article(http, table)
+        if article is None:
+            return f"no Context Center article named {table} - import the pack to get one"
+
+        existing = article.get("relatedEntities") or []
+        if any(entity.get("id") == table_id for entity in existing):
+            return "already linked"
+
+        # An entity reference list is a whole-array patch, so the existing members have to
+        # be carried over. Reduced to id and type: the server resolves the rest, and sending
+        # back a stale name would be asserting something this script did not look up.
+        keep = [{"id": entity["id"], "type": entity["type"]} for entity in existing]
+        keep.append({"id": table_id, "type": "table"})
+        patched = http.patch(
+            f"{PAGES_PATH}/{article['id']}",
+            content=json.dumps([{"op": "replace" if existing else "add", "path": "/relatedEntities", "value": keep}]),
+            headers={"Content-Type": "application/json-patch+json"},
+        )
+        if patched.status_code >= 400:
+            return f"article not updated: {patched.status_code} {patched.text[:120]}"
+    except Exception as exc:  # noqa: BLE001 - a link is not worth failing a description over
+        return f"article not updated: {type(exc).__name__}: {exc}"
+    return f"linked to the article named {table}"
+
+
 def report_table_write(written: dict[str, Any]) -> None:
     """Say what landed on the table itself. Both frameworks write it the same way."""
     if written.get("written"):
@@ -1119,6 +1185,8 @@ def write_dora(
         terms=None if args.no_terms else [f"{DORA_GLOSSARY}.Templates.{table}"],
     )
     report_table_write(written)
+    if written.get("id"):
+        print(f"  article: {link_article_to_table(http, table, written['id'])}")
 
     terms = {} if args.no_terms else load_dora_terms()
 
@@ -1237,15 +1305,16 @@ def describe_one(http: httpx.Client, args: argparse.Namespace, fqn: str, by_colu
 
     for_table = [dp for dps in by_column.values() for dp in dps if dp.table_name == table]
     settings = Settings()  # type: ignore[call-arg]
-    report_table_write(
-        write_table_metadata(
-            fqn,
-            pay_table_description(for_table, axis_column, args.variant, article_reference(table, settings)),
-            table_name(write[0][1].model_dump()),
-            replace=True,
-            terms=None if args.no_terms else [f"{GLOSSARY}.Templates.{table}"],
-        )
+    written = write_table_metadata(
+        fqn,
+        pay_table_description(for_table, axis_column, args.variant, article_reference(table, settings)),
+        table_name(write[0][1].model_dump()),
+        replace=True,
+        terms=None if args.no_terms else [f"{GLOSSARY}.Templates.{table}"],
     )
+    report_table_write(written)
+    if written.get("id"):
+        print(f"  article: {link_article_to_table(http, table, written['id'])}")
 
     failed = []
     unlabelled = 0

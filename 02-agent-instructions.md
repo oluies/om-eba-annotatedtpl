@@ -375,6 +375,13 @@ That step runs last, after the glossary import, because the server validates eve
 answers 404 for a term it does not know. If the glossaries are not loaded yet it says so
 once and tells you to load them, rather than failing 29 times. Running it again is a no-op.
 
+The other direction is `describe_table.py`'s job, because only it knows which warehouse
+tables a template actually landed in: writing a table adds it to that article's
+`relatedEntities`, so the article lists its tables and each table is one hop from its
+reference text. Existing relations are kept, a second run is a no-op, and a template with no
+article imported yet is reported rather than treated as an error - a description is worth
+writing either way.
+
 The **article** is named in the table description, and linked when `OM_PAGE_URL` is set:
 
 ```bash
