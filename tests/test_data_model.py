@@ -9,7 +9,7 @@ import re
 import pytest
 
 import gen_dpm2_doc as gen
-from conftest import REPO, needs_dpm2
+from conftest import DPM2_DB, PAY42_DB, REPO, needs_dpm2, needs_store
 from gen_dpm2_doc import Shape, cardinality
 
 README = REPO / "README_DPM2.md"
@@ -69,6 +69,7 @@ def test_the_document_draws_the_two_one_to_one_relationships():
 
 
 @needs_dpm2
+@needs_store  # query 9 joins pack.datapoints, so this needs both stores, not just the model
 @pytest.mark.skipif(not README.exists(), reason="README_DPM2.md has not been generated")
 def test_every_published_query_runs():
     """Ten worked queries, and the counts the prose quotes for nine of them."""
@@ -78,9 +79,11 @@ def test_every_published_query_runs():
     blocks = re.findall(r"```sql\n(.*?)```", README.read_text(), re.S)
     assert len(blocks) >= 10
 
-    con = duckdb.connect(str(gen.DPM2), read_only=True)
-    con.execute(f"ATTACH '{REPO / 'pay42.duckdb'}' AS pack (READ_ONLY)")
+    con = duckdb.connect(str(DPM2_DB), read_only=True)
     try:
+        # Inside the try: an ATTACH of a store that is not there must close the connection
+        # it was opened on, not leak it.
+        con.execute(f"ATTACH '{PAY42_DB}' AS pack (READ_ONLY)")
         for n, sql in enumerate(blocks, 1):
             # The ATTACH is shown in the prose for the reader; it is already done here.
             body = "\n".join(line for line in sql.splitlines() if not line.startswith("ATTACH"))
@@ -96,7 +99,7 @@ def test_every_relationship_still_holds_in_this_release():
     """What the generator asserts at build time, asserted again as a test."""
     import duckdb
 
-    con = duckdb.connect(str(gen.DPM2), read_only=True)
+    con = duckdb.connect(str(DPM2_DB), read_only=True)
     try:
         shapes = gen.verify(con)  # raises SystemExit on an orphan
     finally:
@@ -109,7 +112,7 @@ def test_an_excluded_cell_is_exactly_a_cell_with_no_variable():
     """The claim the document makes, measured rather than repeated."""
     import duckdb
 
-    con = duckdb.connect(str(gen.DPM2), read_only=True)
+    con = duckdb.connect(str(DPM2_DB), read_only=True)
     try:
         disagreeing = con.execute(
             "SELECT count(*) FROM TableVersionCell WHERE (IsExcluded <> 0) <> (VariableVID IS NULL)"

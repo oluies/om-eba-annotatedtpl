@@ -50,6 +50,9 @@ testpaths = ["tests"]
 addopts = "-q"
 
 [tool.ruff.lint.per-file-ignores]
+# conftest.py puts the repository root on sys.path, which has to happen before the modules
+# that live there can be imported. The late imports are the point of the file.
+"tests/conftest.py" = ["E402"]
 # gen_pack.py embeds the generated Markdown as string literals. Wrapping those lines
 # would wrap the output, so the limit applies to the code around them, not to prose.
 "source/gen_pack.py" = ["E501"]

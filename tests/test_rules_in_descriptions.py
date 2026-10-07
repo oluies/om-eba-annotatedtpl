@@ -92,11 +92,14 @@ def test_rules_of_table_counts_distinct_codes_for_that_table_only():
 # --- against the real pack data, when it is in the checkout --------------------------
 
 
+@pytest.mark.skipif(not d.DATAPOINTS.exists(), reason="05-datapoints.csv is not in this checkout")
 def test_every_generated_description_is_viewer_safe():
-    """All 2249 of them, because the build guard only covers markdown files."""
+    """All 2249 of them, because the build guard only covers markdown files.
+
+    Guarded on the file: load_datapoints() opens it without an exists() check, unlike
+    load_rules() and load_dora(), so an absent CSV raises rather than returning nothing.
+    """
     index, by_column = d.load_rules(), d.load_datapoints()
-    if not by_column:
-        pytest.skip("05-datapoints.csv is not in this checkout")
     texts = [
         d.pay_column_description(dp, axis, False, index, by_column)
         for dps in by_column.values()
