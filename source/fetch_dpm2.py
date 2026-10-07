@@ -108,7 +108,8 @@ def load(csv_dir: Path, names: Iterable[str], db: Path) -> dict[str, int]:
             f'CREATE TABLE "{name}" AS SELECT * FROM read_csv(?, sample_size=-1, header=true)',
             [str(csv_dir / f"{name}.csv")],
         )
-        counts[name] = con.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0]
+        counted = con.execute(f'SELECT count(*) FROM "{name}"').fetchone()
+        counts[name] = counted[0] if counted else 0
     con.execute("CHECKPOINT")
     con.close()
     return counts

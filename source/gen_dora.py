@@ -190,6 +190,24 @@ lookup_datapoint("B0101_r999_c0020")
   template B_01.01, column 0020, "Name of the entity", datapoint 3287126
 ```
 
+## Validation rules
+
+The answer carries `validation_rules`: the EBA rules that reach the cell, with severity
+and the DPM-XL expression. DORA has 71 of them across 11 templates, and they are the
+reason a column such as `B0202_r*_c0080` is not free text - several say it must be
+present whenever certain other columns are.
+
+Name the codes in the description and leave the expressions out:
+
+> ... Datapoint 3296069 (EBA DPM, module DORA 1.1.0). Validation rules (EBA DPM,
+> warning): e23680_e, v8869_m, v8870_m.
+
+Do not paraphrase an expression into English. It is a new claim about what the framework
+requires, and the code is what the EBA's published rule lists are indexed by.
+
+`B_99.01` has no validation rules at all, so its columns name none. That is the model's
+answer, not a gap in this pack.
+
 ## Display names
 
 Set one for the table and for every column, and use the one `lookup_datapoint` returns:

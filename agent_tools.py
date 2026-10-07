@@ -1,13 +1,16 @@
 """The tool definitions an agent registers, and the one dispatcher that runs them.
 
-Four tools, from two modules, assembled here so a host application imports one name
-instead of four and cannot end up with a definition registered but not dispatched:
+Six tools, from three modules, assembled here so a host application imports one name
+instead of six and cannot end up with a definition registered but not dispatched:
 
     lookup_datapoint        resolve a column name to its datapoint, and to the display
                             name to use for it                      (pay42_lookup.py)
     read_table_metadata     what a table and its columns say now
     write_column_metadata   set one column's description, display name and terms
     write_table_metadata    the same for the table itself            (describe_table.py)
+    lookup_dpm_table        a template from any framework in the DPM, with its axes
+    lookup_dpm_cell         one cell of any template: dimensions, type, rules
+                                                                    (dpm_lookup.py)
 
 Registration, with the OpenAI-shaped tools parameter:
 
@@ -27,6 +30,11 @@ or a file, so from an async loop:
 Reading needs `PAY42_DB` to point at the built store; the catalogue tools need `OM_HOST`
 and `OM_JWT_TOKEN`; the warehouse enrichment needs `BA_SERVER`. Each tool reports what it
 is missing rather than failing the turn.
+
+The two DPM tools are the exception: they need a 139 MB database that a checkout does not
+have, so they are registered only when it is there. A tool whose every answer is "not
+downloaded" costs a turn and teaches the model to stop calling it. `dispatch` still knows
+them either way, so a host that registered them before the file moved does not break.
 """
 
 import enum
@@ -34,6 +42,7 @@ import json
 from typing import Any
 
 import describe_table
+import dpm_lookup
 import pay42_lookup
 
 
@@ -44,9 +53,15 @@ class ToolName(enum.StrEnum):
     READ_TABLE_METADATA = describe_table.READ_TABLE_METADATA_TOOL_NAME
     WRITE_COLUMN_METADATA = describe_table.WRITE_COLUMN_METADATA_TOOL_NAME
     WRITE_TABLE_METADATA = describe_table.WRITE_TABLE_METADATA_TOOL_NAME
+    LOOKUP_DPM_TABLE = dpm_lookup.LOOKUP_DPM_TABLE_TOOL_NAME
+    LOOKUP_DPM_CELL = dpm_lookup.LOOKUP_DPM_CELL_TOOL_NAME
 
 
-TOOLS = (pay42_lookup.LOOKUP_DATAPOINT_TOOL_DEFINITION, *describe_table.CATALOGUE_TOOL_DEFINITIONS)
+TOOLS = (
+    pay42_lookup.LOOKUP_DATAPOINT_TOOL_DEFINITION,
+    *describe_table.CATALOGUE_TOOL_DEFINITIONS,
+    *(dpm_lookup.DPM_TOOL_DEFINITIONS if dpm_lookup.available() else ()),
+)
 
 
 def dispatch(name: str, arguments: str | dict[str, Any]) -> dict[str, Any]:
@@ -96,6 +111,10 @@ def _run(name: str, args: dict[str, Any]) -> dict[str, Any]:
                 args.get("display_name"),
                 args.get("expect_current"),
             )
+        case ToolName.LOOKUP_DPM_TABLE:
+            return dpm_lookup.lookup_dpm_table(args["table"])
+        case ToolName.LOOKUP_DPM_CELL:
+            return dpm_lookup.lookup_dpm_cell(args["table"], args["row"], args["column"], args.get("sheet"))
         case _:
             return {
                 "error": f"no such tool: {name}",

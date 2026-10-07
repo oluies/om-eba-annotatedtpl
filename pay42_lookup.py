@@ -16,7 +16,7 @@ Build it with `uv run source/build_duckdb.py`; it is derived, so it is gitignore
 
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +85,7 @@ class Resolved(BaseModel):
     common: dict[str, Any] = {}
     variant: dict[str, Any] = {}
     candidates: list[dict[str, Any]] = []
+    validation_rules: list[dict[str, Any]] = []
 
 
 # Columns the store must have for a lookup to answer. The file is derived and gitignored,
@@ -92,6 +93,7 @@ class Resolved(BaseModel):
 # field added since it was built surfaces as a bare KeyError from a dict comprehension,
 # which says nothing about what to do.
 REQUIRED_COLUMNS = frozenset(CONSTANT_ACROSS_VARIANTS) | frozenset(VARIES_BY_VARIANT)
+REQUIRED_TABLES = frozenset({"datapoints", "dora", "terms", "column_terms", "rules"})
 _CHECKED: set[Path] = set()
 
 
@@ -110,7 +112,8 @@ def check_store(db: Path) -> None:
         return
     with duckdb.connect(str(db), read_only=True) as con:
         present = {row[0] for row in con.execute("DESCRIBE datapoints").fetchall()}
-    missing = sorted(REQUIRED_COLUMNS - present)
+        tables = {row[0] for row in con.execute("SHOW TABLES").fetchall()}
+    missing = sorted(REQUIRED_COLUMNS - present) + sorted(REQUIRED_TABLES - tables)
     if missing:
         raise StoreError(
             f"{db.name} is out of date: it has no {', '.join(missing)}.\n"
@@ -221,6 +224,43 @@ def warehouse_column_context(column_name: str) -> dict[str, Any]:
     return _consult(lambda module: module.fetch_column(column_name))
 
 
+RULES = """
+SELECT rule_code, severity, expression, list_sort(array_agg(DISTINCT sheet_code)) AS sheets
+FROM   rules
+WHERE  table_name = ? AND row_code = ? AND column_code = ?
+GROUP  BY rule_code, severity, expression
+ORDER  BY rule_code
+"""
+
+
+def fold_rules(
+    rows: list[dict[str, Any]], variant: str | None = None, variants: Sequence[str] = ()
+) -> list[dict[str, Any]]:
+    """The rules that reach a cell, with the DPM-XL expression, for the agent to read.
+
+    Pure. Unlike a catalogue description this keeps the expression verbatim: it goes to a
+    model as JSON, not through OpenMetadata's sanitiser, so the plus signs survive.
+
+    A rule recorded against no sheet, or against the open sheet axis as a whole, reaches
+    every variant. One recorded against particular sheets reaches only those, and with a
+    variant chosen the rest are dropped rather than listed - they constrain a different
+    cell of the same column.
+
+    `variants` is every variant the column has, and only narrows what is said: a rule
+    that reaches all of them says nothing about variants, so the key appears exactly when
+    it carries information.
+    """
+    folded = []
+    for row in rows:
+        sheets = [sheet for sheet in row["sheets"] if sheet not in ("", "*")]
+        if variant and sheets and variant not in sheets:
+            continue
+        rule = {"rule_code": row["rule_code"], "severity": row["severity"], "expression": row["expression"]}
+        partial = sheets and not variant and not set(variants) <= set(sheets)
+        folded.append(rule | {"variants": sheets} if partial else rule)
+    return folded
+
+
 SIBLINGS = """
 SELECT DISTINCT column_name, row_code, row_label, column_label, row_dimensions, template, template_name
 FROM   datapoints
@@ -246,6 +286,11 @@ def lookup_dora(column_name: str, parts: dict[str, str]) -> dict[str, Any]:
             "SELECT * FROM dora WHERE template = ? AND column_code = ?",
             parts["template"],
             parts["col"],
+        )
+        chosen_rules = (
+            fold_rules(_rows(con, RULES, rows[0]["table_name"], rows[0]["row_code"], rows[0]["column_code"]))
+            if rows
+            else []
         )
     if not rows:
         return Resolved(
@@ -293,6 +338,7 @@ def lookup_dora(column_name: str, parts: dict[str, str]) -> dict[str, Any]:
         }
         | warehouse_context(dpm_cell_code),
         variant={"datapoint_id": chosen["datapoint_id"], "sign": chosen["sign"]},
+        validation_rules=chosen_rules,
     ).model_dump()
 
 
@@ -315,6 +361,9 @@ def lookup_datapoint(column_name: str, variant: str | None = None) -> dict[str, 
         # row labels across nested rows, so the siblings are what decide the answer. One
         # extra query here rather than an agent comparing 54 columns by eye.
         siblings = _rows(con, SIBLINGS, rows[0]["table_name"]) if rows else []
+        rule_rows = (
+            _rows(con, RULES, rows[0]["table_name"], rows[0]["row_code"], rows[0]["column_code"]) if rows else []
+        )
 
     if not rows and parts is not None:
         dora = lookup_dora(column_name, parts)
@@ -352,6 +401,7 @@ def lookup_datapoint(column_name: str, variant: str | None = None) -> dict[str, 
             column_name=column_name,
             common=common | warehouse_context(chosen["dpm_cell_code"]),
             variant={field: chosen[field] for field in VARIES_BY_VARIANT},
+            validation_rules=fold_rules(rule_rows, variant),
         ).model_dump()
 
     if len(rows) == 1:
@@ -360,6 +410,7 @@ def lookup_datapoint(column_name: str, variant: str | None = None) -> dict[str, 
             column_name=column_name,
             common=common | warehouse_context(rows[0]["dpm_cell_code"]),
             variant={field: rows[0][field] for field in VARIES_BY_VARIANT},
+            validation_rules=fold_rules(rule_rows, rows[0]["variant"] or None),
         ).model_dump()
 
     # Spell the variants out rather than leaving the caller to characterise them from
@@ -390,6 +441,7 @@ def lookup_datapoint(column_name: str, variant: str | None = None) -> dict[str, 
         ),
         common=common | variant_hint | warehouse,
         candidates=[{field: r[field] for field in VARIES_BY_VARIANT} for r in rows],
+        validation_rules=fold_rules(rule_rows, None, [r["variant"] for r in rows if r["variant"]]),
     ).model_dump()
 
 

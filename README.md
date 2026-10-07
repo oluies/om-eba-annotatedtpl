@@ -18,7 +18,8 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `07-agent-prompt.md` | The stanza to paste into an agent's system prompt, covering every framework | You are configuring an agent |
 | `describe_table.py` | Writes descriptions and glossary terms onto a table's columns, by name | You are describing a real table |
 | `pay42_lookup.py` | Deterministic datapoint lookup over DuckDB, and its tool definition | You are giving an agent a lookup tool |
-| `agent_tools.py` | All four tool definitions and one dispatcher | You are wiring the tools into an agent |
+| `agent_tools.py` | All six tool definitions and one dispatcher | You are wiring the tools into an agent |
+| `dpm_lookup.py` | Lookup over the whole DPM 2.0 database, for frameworks this pack does not cover | A warehouse table is COREP, FINREP or anything but PAY and DORA |
 | `display_names.py` | The rule for what a table and its columns are called | You are setting display names |
 | `08-lookup-tool.md` | How to register and dispatch that tool | You are wiring it into an agent |
 | `03-glossary/domains-and-members.md` | The 54 controlled values across 4 domains | You need the vocabulary |
@@ -27,6 +28,7 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `04-tables/<TEMPLATE>.md` | One per template: variants, columns, rows, datapoint ids | You are describing a table |
 | `05-datapoints.csv` | All 1830 datapoints, keyed by `table_name` and `column_name` | You have a column to describe |
 | `06-openmetadata-glossary.csv` | Bulk glossary import, 93 terms | You are loading the glossary |
+| `09-validation-rules.csv` | The 185 EBA validation rules of both modules, and every cell each one reaches | You want to know what constrains a column |
 
 ## Warehouse column names
 
@@ -55,6 +57,88 @@ The spreadsheet is built on merged-cell blocks: the row axis sits to the right o
 data columns, the column axis in a footer block, and the sheet axis in the header. The
 merge *spans* are what identify where each block starts and ends, which is why the
 extraction uses openpyxl — a plain cell reader gives you the values but not the geometry.
+
+## The DPM 2.0 database
+
+The annotated table layout is a spreadsheet rendering of the model. The model itself is
+published as an Access database, and three scripts use it:
+
+```bash
+uv run source/fetch_dpm2.py          # download, unpack, load into DuckDB (needs mdbtools)
+uv run source/check_against_dpm2.py  # does this pack match the model, cell for cell?
+uv run source/extract_rules.py       # → 09-validation-rules.csv
+```
+
+It is release 4.2.1 of the DPM 2.0 database, the same release the layout comes from, at
+[the DPM data dictionary](https://www.eba.europa.eu/risk-and-data-analysis/reporting/dpm-data-dictionary). 167 MB of zip, 539 MB of Access, 139 MB of
+DuckDB, all under `source/dpm2/` and all gitignored. Reading the Access file needs
+`mdbtools` 1.0 or newer — the file is ACE12, and older releases read only Jet `.mdb`.
+
+`check_against_dpm2.py` is the one check this pack cannot do on itself. It matches every
+pack datapoint against the module's reportable cells, both directions, and exits non-zero
+on a difference:
+
+```
+DPM 2.0 release 4.2.1 (2026-02-15)
+PSD_FRP 1.1.0: all 1830 pack rows match the model, none missing
+DORA 1.1.0: all 85 pack rows match the model, none missing
+```
+
+Two details it has to absorb. The DPM writes a table code `Y_01.01` where the layout and
+the warehouse write `Y 01.01`. And a cell with `IsExcluded` set is a greyed-out box in
+the template — in the model, not reportable — which the pack leaves out, so the
+comparison does too. `Y_01.01` has 396 cells, 72 of them excluded, and the pack has 324.
+
+### What the model has that the layout does not
+
+Validation rules, nesting and every other framework. The first two are extracted into the
+pack; the third is reachable through `dpm_lookup.py`, which reads the database directly
+and so needs the download.
+
+There are no member definitions to harvest. Of the 54 controlled values this pack
+documents, the DPM publishes a definition for **none** — the 1453 items that do carry one
+belong to COREP, PILLAR3, MiCA and the rest. The definitions in this pack are the only
+ones there are, which is also why they must not be invented.
+
+## Validation rules
+
+`09-validation-rules.csv` holds the 114 rules of PSD_FRP 1.1.0 and the
+71 of DORA 1.1.0, one row per rule and each cell it reaches:
+
+| Field | |
+|---|---|
+| `module` | `PSD_FRP 1.1.0` or `DORA 1.1.0` |
+| `rule_code`, `severity` | e.g. `v09123_m`, `warning` |
+| `table_name`, `row_code`, `column_code`, `sheet_code` | the cell, in warehouse spelling; `*` is an open axis, empty is an axis the table does not have |
+| `expression` | the rule in DPM-XL, verbatim |
+
+Which cells a rule reaches is **not** parsed out of the expression. The model resolves
+its own operands, in `OperandReferenceLocation`, and that is what the extraction reads —
+so a rule is attached to a column because the EBA says it is, not because a regular
+expression agreed. All 4635 rule-cell rows resolve to a datapoint this pack has.
+
+A column description names the rules that reach it and stops there:
+
+> ... Non-negative. Validation rules (EBA DPM, warning): v09123_m, v09124_m, v09247_s,
+> v89551_h. v89551_h reaches only variant(s) 0030.
+
+The expression is deliberately not in it. 93 of the 114 PAY expressions contain a plus
+sign, which the OpenMetadata viewer renders as a literal `&amp;#43;` — the same reason the
+build guard refuses one anywhere in this pack. The code is the handle: the EBA's own rule
+lists are indexed by it, the CSV has the expression, and `lookup_datapoint` hands an agent
+the whole thing under `validation_rules`.
+
+A rule can reach only some of a column's six variants — 186 of the 845 PAY rule-column
+pairs do — so the description says which, and a table that holds one variant does not
+list a rule belonging to another.
+
+### A rule code is not one rule
+
+The same code is re-issued per module version, and both the expression and the severity
+change between them. `v09247_s` is a `warning` in PSD_FRP 1.1.0 and an `error` in 1.2.0.
+`09-validation-rules.csv` is scoped to the two module versions this pack describes;
+`lookup_dpm_cell` is not, and returns one entry per version with the versions listed, so
+two entries with the same code there are a change, not a duplicate.
 
 ## Importing into OpenMetadata
 

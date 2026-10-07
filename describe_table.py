@@ -31,6 +31,7 @@ import csv
 import json
 import re
 from collections import defaultdict
+from collections.abc import Sequence
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,7 @@ PACK = Path(__file__).parent
 DATAPOINTS = PACK / "05-datapoints.csv"
 DORA_DATAPOINTS = PACK / "source" / "dpm-dora-1.1.0-datapoints.csv"
 DORA_VOCABULARY = PACK / "source" / "dpm-dora-1.1.0-vocabulary.csv"
+RULES = PACK / "09-validation-rules.csv"
 DORA_GLOSSARY = "DORA_1_1_0"
 
 # Only these are framework columns. Everything else is warehouse context and is left alone.
@@ -81,6 +83,88 @@ class Settings(BaseSettings):
     # configured rather than guessed: copy it out of the browser once, with {name} where
     # the page name goes. Unset means the article is named in prose instead of linked.
     page_url: str | None = None
+
+
+class Rule(BaseModel):
+    """One row of 09-validation-rules.csv: a validation rule and one cell it reaches."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    module: str
+    rule_code: str
+    severity: str
+    table_name: str
+    row_code: str = ""
+    column_code: str = ""
+    sheet_code: str = ""
+    expression: str
+
+
+def rules_sentence(rules: Sequence[Rule], variants: Sequence[str] = ()) -> str:
+    """Which rules constrain this cell, by code and severity.
+
+    The expressions are deliberately not inlined. Most of them contain a plus sign, and
+    the OpenMetadata viewer renders that as a literal `&amp;#43;` - the same reason the
+    build guard refuses one anywhere in the pack. The code is the handle: it is what the
+    EBA validation rule lists are indexed by, 09-validation-rules.csv carries the
+    expression, and the lookup tool hands the agent the whole thing.
+
+    `variants` is every variant the column covers in this table. A rule that reaches only
+    some of them is said to, because 186 of the 845 PAY rule-column pairs do.
+    """
+    if not rules:
+        return ""
+    sheets: dict[str, set[str]] = defaultdict(set)
+    severity: dict[str, str] = {}
+    for rule in rules:
+        sheets[rule.rule_code].add(rule.sheet_code)
+        severity[rule.rule_code] = rule.severity
+
+    # Which of this column's variants each rule actually reaches. A rule recorded against
+    # no sheet, or against the open sheet axis as a whole, reaches all of them.
+    wanted = set(variants)
+    reach = {code: wanted if got <= {"", "*"} else got & wanted for code, got in sheets.items()}
+
+    whole = sorted(code for code, got in reach.items() if got == wanted)
+    partial = sorted(code for code, got in reach.items() if got and got != wanted)
+    if not whole and not partial:
+        return ""  # every rule on this cell is for a variant this table does not hold
+
+    kinds = sorted({severity[code] for code in whole + partial})
+    label = f"EBA DPM, {kinds[0]}" if len(kinds) == 1 else "EBA DPM"
+    said = f" Validation rules ({label}): {', '.join(whole + partial)}."
+    for code in partial:
+        said += f" {code} reaches only variant(s) {', '.join(sorted(reach[code]))}."
+    return said
+
+
+def rule_count_sentence(count: int) -> str:
+    """How many rules reach the template, for the table's own description."""
+    return (
+        f"{count} EBA validation rule(s) reach this template; each column description names its own. " if count else ""
+    )
+
+
+def rules_of_table(index: dict[tuple[str, str, str], list[Rule]], table: str) -> int:
+    """How many distinct rules reach a template."""
+    return len({rule.rule_code for key, rules in index.items() if key[0] == table for rule in rules})
+
+
+def load_rules() -> dict[tuple[str, str, str], list[Rule]]:
+    """Rules by table, row and column - the identity of one warehouse column.
+
+    The sheet stays inside the rule rather than in the key: a warehouse column holds
+    every variant as rows, so which sheets a rule covers is something the description
+    says, not something that splits the column in two.
+    """
+    index: dict[tuple[str, str, str], list[Rule]] = defaultdict(list)
+    if not RULES.exists():
+        return index
+    with RULES.open(encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            rule = Rule.model_validate(row)
+            index[(rule.table_name, rule.row_code, rule.column_code)].append(rule)
+    return index
 
 
 class Datapoint(BaseModel):
@@ -121,7 +205,9 @@ class Datapoint(BaseModel):
     # description that opened with them said the same thing twice in two adjacent fields.
     # The consequence, accepted deliberately: where a token may not set display names, the
     # labels are not in the catalogue at all - so set the name, or pass keep_labels.
-    def description_without_variant(self, axis_column: str, keep_labels: bool = False) -> str:
+    def description_without_variant(
+        self, axis_column: str, keep_labels: bool = False, rules: Sequence["Rule"] = (), variants: Sequence[str] = ()
+    ) -> str:
         """What holds across every variant, for a table that carries all of them.
 
         No datapoint id and no unit: those differ per variant, and here the variant is a
@@ -134,10 +220,10 @@ class Datapoint(BaseModel):
             + (f"Dimension members: {members}. " if members else "")
             + f"Template {self.template} (EBA PAY 4.2), row {self.row_code}, column {self.column_code}. "
             f"This table holds every variant; `{axis_column}` on each row gives the metric and "
-            "geography, and with it the datapoint id and the unit. Non-negative."
+            "geography, and with it the datapoint id and the unit. Non-negative." + rules_sentence(rules, variants)
         )
 
-    def description(self, keep_labels: bool = False) -> str:
+    def description(self, keep_labels: bool = False, rules: Sequence["Rule"] = ()) -> str:
         unit = "monetary amount" if self.unit != "#" else "count"
         members = "; ".join(f"{dim} = {member}" for dim, member in self.dimension_members)
         return (
@@ -146,6 +232,7 @@ class Datapoint(BaseModel):
             + (f"Dimension members: {members}. " if members else "")
             + f"Datapoint {self.datapoint_id} of template {self.template} (EBA PAY 4.2), "
             f"row {self.row_code}, column {self.column_code}. Unit: {unit}, {self.sign}."
+            + rules_sentence(rules, (self.variant,) if self.variant else ())
         )
 
     def glossary_terms(self) -> list[str]:
@@ -175,7 +262,7 @@ class DoraDatapoint(BaseModel):
     datapoint_id: str
     row_kind: str
 
-    def description(self, keep_labels: bool = False) -> str:
+    def description(self, keep_labels: bool = False, rules: Sequence["Rule"] = ()) -> str:
         """What the column holds, the template, the datapoint id. Nothing is withheld.
 
         DORA has no variants, so unlike PAY there is no case where the id has to be left
@@ -187,13 +274,13 @@ class DoraDatapoint(BaseModel):
                 f"{opening}Column {self.column_code} of template {self.template} "
                 f"({self.template_name}) in the DORA register of information. "
                 f"Datapoint {self.datapoint_id} (EBA DPM, module DORA 1.1.0). One row per record; "
-                "the row number in the column name is an ordinal, not a framework code."
+                "the row number in the column name is an ordinal, not a framework code." + rules_sentence(rules)
             )
         return (
             f"{opening}Column {self.column_code}, row {self.row_code}"
             + (f" ({self.row_label})" if self.row_label else "")
             + f", of template {self.template} ({self.template_name}) in the DORA register of "
-            f"information. Datapoint {self.datapoint_id} (EBA DPM, module DORA 1.1.0)."
+            f"information. Datapoint {self.datapoint_id} (EBA DPM, module DORA 1.1.0)." + rules_sentence(rules)
         )
 
     def display_name(self) -> str:
@@ -207,7 +294,7 @@ class DoraDatapoint(BaseModel):
         return self.column_label
 
 
-def dora_table_description(dora: dict[str, DoraDatapoint], article: str = "") -> str:
+def dora_table_description(dora: dict[str, DoraDatapoint], article: str = "", rule_count: int = 0) -> str:
     """What the table is, for the table's own description field."""
     first = next(iter(dora.values()))
     rows = sorted({dp.row_code for dp in dora.values()})
@@ -220,7 +307,9 @@ def dora_table_description(dora: dict[str, DoraDatapoint], article: str = "") ->
         f"Template {first.template} ({first.template_name}) of the DORA register of information, "
         f"EBA DPM module DORA 1.1.0. {shape}"
         f"{len(dora)} datapoint column(s), named for their template, row and column, as in "
-        f"{min(dora)}. Every other column is warehouse context and carries no framework meaning. " + article
+        f"{min(dora)}. Every other column is warehouse context and carries no framework meaning. "
+        + rule_count_sentence(rule_count)
+        + article
     )
 
 
@@ -297,7 +386,11 @@ def split_column_name(name: str) -> dict[str, str] | None:
 
 
 def pay_table_description(
-    datapoints: list[Datapoint], axis_column: str | None, variant: str | None, article: str = ""
+    datapoints: list[Datapoint],
+    axis_column: str | None,
+    variant: str | None,
+    article: str = "",
+    rule_count: int = 0,
 ) -> str:
     """What the table is, for the table's own description field.
 
@@ -329,8 +422,28 @@ def pay_table_description(
         f"{per_variant} datapoint column(s) per variant, {len(variants)} variant(s) - metric crossed "
         f"with geography. {holds} Datapoint columns are named for their template, row and column, as in "
         f"{min(dp.column_name for dp in datapoints)}. Every other column is warehouse context and "
-        "carries no framework meaning. " + article
+        "carries no framework meaning. " + rule_count_sentence(rule_count) + article
     )
+
+
+def pay_column_description(
+    dp: Datapoint,
+    axis_column: str | None,
+    keep_labels: bool,
+    rule_index: dict[tuple[str, str, str], list[Rule]],
+    by_column: dict[str, list[Datapoint]],
+) -> str:
+    """The text for one PAY column, with the rules that reach it.
+
+    Which variants to measure a rule against depends on the table: where an open axis
+    holds all six as rows the column covers all of them, and where the table holds one
+    the only variant that matters is the one on this datapoint.
+    """
+    rules = rule_index.get((dp.table_name, dp.row_code, dp.column_code), [])
+    if not axis_column:
+        return dp.description(keep_labels, rules)
+    variants = tuple(sorted({d.variant for d in by_column.get(dp.column_name, []) if d.variant}))
+    return dp.description_without_variant(axis_column, keep_labels, rules, variants)
 
 
 def load_datapoints() -> dict[str, list[Datapoint]]:
@@ -471,7 +584,7 @@ def put_column(http: httpx.Client, fqn: str, body: dict[str, Any]) -> tuple[http
 
 
 def update_column(
-    http: httpx.Client, fqn: str, dp: Datapoint, axis_column: str | None, label: str, keep_labels: bool = False
+    http: httpx.Client, fqn: str, description: str, label: str, terms: Sequence[str] = ()
 ) -> tuple[httpx.Response, bool]:
     """Set one column's description, display name and glossary terms, addressed by name.
 
@@ -479,18 +592,14 @@ def update_column(
     positional and the array an agent reads back is paginated and trimmed, so N does not
     mean the same thing on both sides. PATCH on this resource answers 405 - verified -
     so PUT is the path, and it takes all three together.
+
+    No terms means the key is left out rather than sent empty, so a column the pack has
+    no term for keeps whatever it was given by hand.
     """
-    return put_column(
-        http,
-        fqn,
-        {
-            "description": (
-                dp.description_without_variant(axis_column, keep_labels) if axis_column else dp.description(keep_labels)
-            ),
-            "displayName": label,
-            "tags": [{"tagFQN": term, "source": "Glossary"} for term in dp.glossary_terms()],
-        },
-    )
+    body: dict[str, Any] = {"description": description, "displayName": label}
+    if terms:
+        body["tags"] = [{"tagFQN": term, "source": "Glossary"} for term in terms]
+    return put_column(http, fqn, body)
 
 
 # --------------------------------------------------------------------------------------
@@ -1159,17 +1268,24 @@ def write_dora(
     first = next(iter(dora.values()))
     label = f"{first.template.replace('_', ' ')} {first.template_name}"
     labels = dora_display_names(dora)
+    rule_index = load_rules()
+    rule_count = rules_of_table(rule_index, table)
+
+    def rules_of(dp: DoraDatapoint) -> list[Rule]:
+        return rule_index.get((dp.table_name, dp.row_code, dp.column_code), [])
+
     print(f"{fqn}: {len(dora)} DORA datapoint column(s) to describe")
 
     if not args.commit:
         name, dp = next(iter(dora.items()))
         print(f"\n  Table display name: {label}")
-        print(f"  Table description: {dora_table_description(dora, article_reference(table, Settings()))}")  # type: ignore[call-arg]
+        article = article_reference(table, Settings())  # type: ignore[call-arg]
+        print(f"  Table description: {dora_table_description(dora, article, rule_count)}")
         if not args.no_terms:
             print(f"  Table term: {DORA_GLOSSARY}.Templates.{table}")
         print(f"\n  Example, {name}:")
         print(f"    display name: {labels[name]}")
-        print(f"    {dp.description(args.labels_in_description)}")
+        print(f"    {dp.description(args.labels_in_description, rules_of(dp))}")
         if not args.no_terms:
             for term in load_dora_terms().get((dp.template, dp.column_code), []):
                 print(f"    term: {term}")
@@ -1179,7 +1295,7 @@ def write_dora(
     settings = Settings()  # type: ignore[call-arg]
     written = write_table_metadata(
         fqn,
-        dora_table_description(dora, article_reference(table, settings)),
+        dora_table_description(dora, article_reference(table, settings), rule_count),
         label,
         replace=True,
         terms=None if args.no_terms else [f"{DORA_GLOSSARY}.Templates.{table}"],
@@ -1193,7 +1309,7 @@ def write_dora(
     failed, unlabelled = [], 0
     for name, dp in dora.items():
         body: dict[str, Any] = {
-            "description": dp.description(args.labels_in_description),
+            "description": dp.description(args.labels_in_description, rules_of(dp)),
             "displayName": labels[name],
         }
         if not args.no_terms:
@@ -1221,6 +1337,7 @@ def write_dora(
 def describe_one(http: httpx.Client, args: argparse.Namespace, fqn: str, by_column: dict) -> bool:
     """Describe one table. Returns whether it was clean, and never exits the process."""
     by_column = load_datapoints()
+    rule_index = load_rules()
     try:
         columns = fetch_columns(http, fqn)
     except CatalogueError as exc:
@@ -1278,25 +1395,22 @@ def describe_one(http: httpx.Client, args: argparse.Namespace, fqn: str, by_colu
     if not args.commit:
         fqn, dp = write[0]
         for_table = [dp for dps in by_column.values() for dp in dps if dp.table_name == table]
-        for_table = [dp for dps in by_column.values() for dp in dps if dp.table_name == table]
         print(f"\n  Table display name: {table_name(dp.model_dump())}")
         print(
             "  Table description: "
-            + pay_table_description(for_table, axis_column, args.variant, article_reference(table, Settings()))  # type: ignore[call-arg]
+            + pay_table_description(
+                for_table,
+                axis_column,
+                args.variant,
+                article_reference(table, Settings()),  # type: ignore[call-arg]
+                rules_of_table(rule_index, table),
+            )
         )
         if not args.no_terms:
             print(f"  Table term: {GLOSSARY}.Templates.{table}")
-        print(f"  Table description: {pay_table_description(for_table, axis_column, args.variant)}")
         print(f"\n  Example, {fqn.rsplit('.', 1)[-1]}:")
         print(f"    display name: {labels[dp.column_name]}")
-        print(
-            "    "
-            + (
-                dp.description_without_variant(axis_column, args.labels_in_description)
-                if axis_column
-                else dp.description(args.labels_in_description)
-            )
-        )
+        print("    " + pay_column_description(dp, axis_column, args.labels_in_description, rule_index, by_column))
         if not args.no_terms:
             for term in dp.glossary_terms():
                 print(f"    term: {term}")
@@ -1307,7 +1421,13 @@ def describe_one(http: httpx.Client, args: argparse.Namespace, fqn: str, by_colu
     settings = Settings()  # type: ignore[call-arg]
     written = write_table_metadata(
         fqn,
-        pay_table_description(for_table, axis_column, args.variant, article_reference(table, settings)),
+        pay_table_description(
+            for_table,
+            axis_column,
+            args.variant,
+            article_reference(table, settings),
+            rules_of_table(rule_index, table),
+        ),
         table_name(write[0][1].model_dump()),
         replace=True,
         terms=None if args.no_terms else [f"{GLOSSARY}.Templates.{table}"],
@@ -1319,17 +1439,13 @@ def describe_one(http: httpx.Client, args: argparse.Namespace, fqn: str, by_colu
     failed = []
     unlabelled = 0
     for fqn, dp in write:
-        if args.no_terms:
-            text = (
-                dp.description_without_variant(axis_column, args.labels_in_description)
-                if axis_column
-                else dp.description(args.labels_in_description)
-            )
-            response, dropped = put_column(http, fqn, {"description": text, "displayName": labels[dp.column_name]})
-        else:
-            response, dropped = update_column(
-                http, fqn, dp, axis_column, labels[dp.column_name], args.labels_in_description
-            )
+        response, dropped = update_column(
+            http,
+            fqn,
+            pay_column_description(dp, axis_column, args.labels_in_description, rule_index, by_column),
+            labels[dp.column_name],
+            () if args.no_terms else dp.glossary_terms(),
+        )
         unlabelled += dropped
         if response.status_code >= 400:
             failed.append(f"{fqn.rsplit('.', 1)[-1]}: {response.status_code} {response.text[:160]}")

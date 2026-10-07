@@ -69,13 +69,22 @@ WHERE  d.tbl IS NULL OR p.tbl IS NULL
 """
 
 
+def one(con: duckdb.DuckDBPyConnection, sql: str, *params: object) -> tuple:
+    """A query that must return a row. fetchone() types as optional and a None here would
+    mean the DPM database is not the one this was written against, which is worth saying."""
+    row = con.execute(sql, list(params)).fetchone()
+    if row is None:
+        raise SystemExit(f"{DPM2.name} answered nothing to: {sql.strip()}")
+    return row
+
+
 def module_vid(con: duckdb.DuckDBPyConnection, code: str, version: str) -> int:
     row = con.execute(
         "SELECT ModuleVID FROM ModuleVersion WHERE Code = ? AND VersionNumber = ?", [code, version]
     ).fetchone()
     if row is None:
         raise SystemExit(f"no module version {code} {version} in {DPM2.name}")
-    return row[0]
+    return int(row[0])
 
 
 def report(label: str, differences: list[tuple[str, bool, bool]]) -> bool:
@@ -96,7 +105,7 @@ def main() -> None:
 
     con = duckdb.connect(str(DPM2), read_only=True)
     con.execute(f"ATTACH '{PACK}' AS pack (READ_ONLY)")
-    release = con.execute("SELECT Code, Date FROM Release ORDER BY ReleaseID DESC LIMIT 1").fetchone()
+    release = one(con, "SELECT Code, Date FROM Release ORDER BY ReleaseID DESC LIMIT 1")
     print(f"DPM 2.0 release {release[0]} ({release[1]})")
 
     ok = True
@@ -107,7 +116,7 @@ def main() -> None:
         vid = module_vid(con, code, version)
         differences = con.execute(sql, [vid]).fetchall()
         table = "datapoints" if label == "PAY" else "dora"
-        total = con.execute(f"SELECT count(*) FROM pack.{table}").fetchone()[0]  # noqa: S608 - fixed above
+        total = one(con, f"SELECT count(*) FROM pack.{table}")[0]  # noqa: S608 - fixed above
         ok &= report(f"{code} {version}", differences)
         if not differences:
             print(f"{code} {version}: all {total} pack rows match the model, none missing")
@@ -122,7 +131,7 @@ def main() -> None:
         """,
         [tuple(module_vid(con, c, v) for c, v in MODULES.values())],
     ).fetchall()
-    print("validation rules in the model, not yet in the pack: " + ", ".join(f"{c} {n}" for c, n in rules))
+    print("validation rules, extracted to 09-validation-rules.csv: " + ", ".join(f"{c} {n}" for c, n in rules))
     con.close()
     sys.exit(0 if ok else 1)
 

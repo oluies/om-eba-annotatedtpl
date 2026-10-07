@@ -22,6 +22,14 @@ OUT = REPO
 DATA = json.loads(DPM_JSON.read_text(encoding="utf-8"))
 VOCAB = json.loads(VOCAB_JSON.read_text(encoding="utf-8"))
 
+# Extracted from the DPM database by source/extract_rules.py, which needs the 139 MB
+# download. The file is committed, so a checkout without the download still documents the
+# real counts; zero only if it has never been generated.
+RULES_CSV = REPO / "09-validation-rules.csv"
+RULE_ROWS = list(csv.DictReader(RULES_CSV.open(encoding="utf-8"))) if RULES_CSV.exists() else []
+PAY_RULES = len({r["rule_code"] for r in RULE_ROWS if r["module"].startswith("PSD_FRP")})
+DORA_RULES = len({r["rule_code"] for r in RULE_ROWS if r["module"].startswith("DORA")})
+
 LEADING_CODE = re.compile(r"^(?P<code>\d{4})\s+(?P<label>.+)$")
 PAIR_RE = re.compile(r"^\((?P<a>[A-Za-z0-9]+):(?P<b>[A-Za-z0-9]+)\)\s*(?P<label>.+)$")
 SOURCE = (
@@ -777,6 +785,35 @@ Rules:
 - **Do not assert the physical column's semantics** beyond what the datapoint says. If a
   column is named after a datapoint but contains something else, that is a data quality
   finding, not a description.
+- **Name the validation rules, do not restate them.** `lookup_datapoint` returns them under
+  `validation_rules` with the DPM-XL expression. Write the codes; paraphrasing an expression
+  into English is how a description ends up asserting a constraint the framework does not
+  impose. See below.
+
+## Validation rules
+
+A datapoint is usually constrained by EBA validation rules, and the lookup returns them:
+
+```json
+"validation_rules": [
+  {{"rule_code": "v09123_m", "severity": "warning",
+   "expression": "with {{tY_01.01, c*, s*, default: 0, interval: true}}: {{r0030}} ... {{r0010}}"}},
+  {{"rule_code": "v89551_h", "severity": "warning", "expression": "...", "variants": ["0030"]}}
+]
+```
+
+Put the codes in the description and stop there:
+
+> ... Unit: count, non-negative. Validation rules (EBA DPM, warning): v09123_m, v09124_m.
+
+Three reasons not to go further. The expression contains characters OpenMetadata's viewer
+mangles. An English restatement of a formal rule is a new claim, and a wrong one in a
+regulatory catalogue is worse than no claim. And the code is what the EBA's own published
+rule lists are indexed by, so it is what a reporting analyst searches for.
+
+A `variants` key means the rule reaches only those sheet variants of the column, not all
+six. If the table holds one variant, the lookup has already dropped the rules belonging to
+the others - do not re-add them.
 
 ## Writing the description back over MCP
 
@@ -965,6 +1002,32 @@ pack avoid those characters anyway: all 3788 of them are clean.
 `terms` left null leaves the existing glossary terms alone; an empty list clears them.
 Every term is validated against the glossary, so a term that does not exist fails the
 whole write with a 404 - set the description alone if the glossary is not loaded yet.
+
+### Two more tools, for frameworks this pack does not cover
+
+A warehouse holds more than PAY and DORA. For a table named after any other template,
+`lookup_datapoint` correctly answers that it knows nothing, and two further tools read the
+EBA DPM 2.0 database directly:
+
+| Tool | Answers |
+|---|---|
+| `lookup_dpm_table` | A template in any framework: its name, the module versions it belongs to, which axes are open, and every row, column and sheet with its code, label and parent |
+| `lookup_dpm_cell` | One cell: its dimension members, data type, period type, whether it is reportable, and the validation rules with their expressions |
+
+`parent_code` on a row is what an "Of which" row is a breakdown of — the nesting the
+annotated layout shows only by indentation.
+
+Both are registered **only when the DPM database has been downloaded**, because it is
+139 MB and not in the repository. If they are not in your tool list, that is why, and
+`uv run source/fetch_dpm2.py` is the fix. Prefer `lookup_datapoint` for PAY and DORA: it
+knows the warehouse column naming and these two do not.
+
+Two things to be careful of in their answers. Two entries with the same `rule_code` are
+not a duplicate — the rule differs between the module versions listed on each, in
+expression or in severity, and `v09247_s` really is a warning in PSD_FRP 1.1.0 and an
+error in 1.2.0. And a template that comes back with no rows and no columns is one the
+model records nothing for, 143 of 1052 in this release; it does not mean the report has no
+columns.
 
 ### Registering all of this in an agent
 
@@ -1181,6 +1244,29 @@ are exactly what differs. It never picks a variant on its own.
 
 For a name that resolves to nothing it says so and repeats the pattern, so a context
 column like `Period_SK` comes back as a refusal rather than a guess.
+
+Either way the answer carries `validation_rules`: the EBA validation rules that reach the
+cell, each with its code, its severity and its DPM-XL expression verbatim. With a variant
+given, the rules belonging to the other variants are dropped rather than listed. Without
+one, a rule that reaches only some variants carries a `variants` key saying which.
+
+Put the codes in a description, not the expressions - `02-agent-instructions.md` says why.
+
+## Two more tools, for the rest of the DPM
+
+`lookup_dpm_table` and `lookup_dpm_cell` read the EBA DPM 2.0 database itself, so they
+answer for COREP, FINREP, resolution, ESG and every other framework in it - everything
+`lookup_datapoint` correctly refuses. `agent_tools.TOOLS` includes them only when the
+database has been downloaded, because a tool whose every answer is "not downloaded" costs
+a turn and teaches the model to stop calling it:
+
+```bash
+uv run source/fetch_dpm2.py     # 167 MB download, then 539 MB of Access, then DuckDB
+uv run dpm_lookup.py C_01.00    # the same answers, from the command line
+```
+
+`dispatch` knows both names whether or not they are registered, so a host that registered
+them before the file moved gets an explanation rather than an exception.
 
 ## The warehouse's own form metadata, where there is one
 
@@ -1400,6 +1486,15 @@ These hold regardless of what you find:
 - DORA only: the row carries no meaning. Every template has one row, written r* in the
   framework and as an ordinal in the warehouse. Template and column identify the
   datapoint on their own, and there are no variants.
+- Validation rules: lookup_datapoint returns them under validation_rules, with the
+  rule code, the severity and the DPM-XL expression. Put the codes in the description -
+  "Validation rules (EBA DPM, warning): v09123_m, v09124_m." - and not the expressions.
+  Do not restate a rule in English: that is a new claim, and a wrong one about what the
+  framework requires is worse than saying nothing.
+- A framework this pack does not cover - COREP, FINREP and the rest - is answered by
+  lookup_dpm_table and lookup_dpm_cell if they are in your tool list. They read the EBA
+  DPM database directly. Two entries there with the same rule code are not a duplicate:
+  the rule differs between the module versions listed on each.
 - Columns that do not match the pattern are warehouse context - Period_SK, Company_BK,
   Taxonomy_Name and the like. They have no framework meaning, so do not describe them
   from a framework. Check Taxonomy_Name to confirm which framework a table belongs to:
@@ -1586,7 +1681,8 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `07-agent-prompt.md` | The stanza to paste into an agent's system prompt, covering every framework | You are configuring an agent |
 | `describe_table.py` | Writes descriptions and glossary terms onto a table's columns, by name | You are describing a real table |
 | `pay42_lookup.py` | Deterministic datapoint lookup over DuckDB, and its tool definition | You are giving an agent a lookup tool |
-| `agent_tools.py` | All four tool definitions and one dispatcher | You are wiring the tools into an agent |
+| `agent_tools.py` | All six tool definitions and one dispatcher | You are wiring the tools into an agent |
+| `dpm_lookup.py` | Lookup over the whole DPM 2.0 database, for frameworks this pack does not cover | A warehouse table is COREP, FINREP or anything but PAY and DORA |
 | `display_names.py` | The rule for what a table and its columns are called | You are setting display names |
 | `08-lookup-tool.md` | How to register and dispatch that tool | You are wiring it into an agent |
 | `03-glossary/domains-and-members.md` | The {sum(len(m) for m in VOCAB["domains"].values())} controlled values across {len(VOCAB["domains"])} domains | You need the vocabulary |
@@ -1595,6 +1691,7 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `04-tables/<TEMPLATE>.md` | One per template: variants, columns, rows, datapoint ids | You are describing a table |
 | `05-datapoints.csv` | All {len(DPS)} datapoints, keyed by `table_name` and `column_name` | You have a column to describe |
 | `06-openmetadata-glossary.csv` | Bulk glossary import, {GLOSSARY_TERMS} terms | You are loading the glossary |
+| `09-validation-rules.csv` | The {PAY_RULES + DORA_RULES} EBA validation rules of both modules, and every cell each one reaches | You want to know what constrains a column |
 
 ## Warehouse column names
 
@@ -1623,6 +1720,88 @@ The spreadsheet is built on merged-cell blocks: the row axis sits to the right o
 data columns, the column axis in a footer block, and the sheet axis in the header. The
 merge *spans* are what identify where each block starts and ends, which is why the
 extraction uses openpyxl — a plain cell reader gives you the values but not the geometry.
+
+## The DPM 2.0 database
+
+The annotated table layout is a spreadsheet rendering of the model. The model itself is
+published as an Access database, and three scripts use it:
+
+```bash
+uv run source/fetch_dpm2.py          # download, unpack, load into DuckDB (needs mdbtools)
+uv run source/check_against_dpm2.py  # does this pack match the model, cell for cell?
+uv run source/extract_rules.py       # → 09-validation-rules.csv
+```
+
+It is release 4.2.1 of the DPM 2.0 database, the same release the layout comes from, at
+[the DPM data dictionary]({DICTIONARY_URL}). 167 MB of zip, 539 MB of Access, 139 MB of
+DuckDB, all under `source/dpm2/` and all gitignored. Reading the Access file needs
+`mdbtools` 1.0 or newer — the file is ACE12, and older releases read only Jet `.mdb`.
+
+`check_against_dpm2.py` is the one check this pack cannot do on itself. It matches every
+pack datapoint against the module's reportable cells, both directions, and exits non-zero
+on a difference:
+
+```
+DPM 2.0 release 4.2.1 (2026-02-15)
+PSD_FRP 1.1.0: all {len(DPS)} pack rows match the model, none missing
+DORA 1.1.0: all 85 pack rows match the model, none missing
+```
+
+Two details it has to absorb. The DPM writes a table code `Y_01.01` where the layout and
+the warehouse write `Y 01.01`. And a cell with `IsExcluded` set is a greyed-out box in
+the template — in the model, not reportable — which the pack leaves out, so the
+comparison does too. `Y_01.01` has 396 cells, 72 of them excluded, and the pack has 324.
+
+### What the model has that the layout does not
+
+Validation rules, nesting and every other framework. The first two are extracted into the
+pack; the third is reachable through `dpm_lookup.py`, which reads the database directly
+and so needs the download.
+
+There are no member definitions to harvest. Of the {sum(len(m) for m in VOCAB["domains"].values())} controlled values this pack
+documents, the DPM publishes a definition for **none** — the 1453 items that do carry one
+belong to COREP, PILLAR3, MiCA and the rest. The definitions in this pack are the only
+ones there are, which is also why they must not be invented.
+
+## Validation rules
+
+`09-validation-rules.csv` holds the {PAY_RULES} rules of PSD_FRP 1.1.0 and the
+{DORA_RULES} of DORA 1.1.0, one row per rule and each cell it reaches:
+
+| Field | |
+|---|---|
+| `module` | `PSD_FRP 1.1.0` or `DORA 1.1.0` |
+| `rule_code`, `severity` | e.g. `v09123_m`, `warning` |
+| `table_name`, `row_code`, `column_code`, `sheet_code` | the cell, in warehouse spelling; `*` is an open axis, empty is an axis the table does not have |
+| `expression` | the rule in DPM-XL, verbatim |
+
+Which cells a rule reaches is **not** parsed out of the expression. The model resolves
+its own operands, in `OperandReferenceLocation`, and that is what the extraction reads —
+so a rule is attached to a column because the EBA says it is, not because a regular
+expression agreed. All 4635 rule-cell rows resolve to a datapoint this pack has.
+
+A column description names the rules that reach it and stops there:
+
+> ... Non-negative. Validation rules (EBA DPM, warning): v09123_m, v09124_m, v09247_s,
+> v89551_h. v89551_h reaches only variant(s) 0030.
+
+The expression is deliberately not in it. 93 of the {PAY_RULES} PAY expressions contain a plus
+sign, which the OpenMetadata viewer renders as a literal `&amp;#43;` — the same reason the
+build guard refuses one anywhere in this pack. The code is the handle: the EBA's own rule
+lists are indexed by it, the CSV has the expression, and `lookup_datapoint` hands an agent
+the whole thing under `validation_rules`.
+
+A rule can reach only some of a column's six variants — 186 of the 845 PAY rule-column
+pairs do — so the description says which, and a table that holds one variant does not
+list a rule belonging to another.
+
+### A rule code is not one rule
+
+The same code is re-issued per module version, and both the expression and the severity
+change between them. `v09247_s` is a `warning` in PSD_FRP 1.1.0 and an `error` in 1.2.0.
+`09-validation-rules.csv` is scoped to the two module versions this pack describes;
+`lookup_dpm_cell` is not, and returns one entry per version with the versions listed, so
+two entries with the same code there are a change, not a duplicate.
 
 ## Importing into OpenMetadata
 

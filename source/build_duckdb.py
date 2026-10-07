@@ -50,6 +50,20 @@ con.execute(
     f"CREATE TABLE dora AS SELECT * FROM read_csv('{REPO / 'source' / 'dpm-dora-1.1.0-datapoints.csv'}', header=true)"
 )
 
+# The validation rules, one row per rule and the cell it reaches. all_varchar because
+# every code in here is a code: '0010' is a row, not the number ten. An empty axis code
+# survives the CSV round trip as NULL, so it is folded back to '' on the way in - the
+# lookups match on it, and NULL would never match anything.
+con.execute(
+    f"""CREATE TABLE rules AS
+        SELECT module, rule_code, severity, table_name,
+               coalesce(row_code, '')    AS row_code,
+               coalesce(column_code, '') AS column_code,
+               coalesce(sheet_code, '')  AS sheet_code,
+               expression
+        FROM   read_csv('{REPO / "09-validation-rules.csv"}', header=true, all_varchar=true)"""
+)
+
 # Column to glossary term, flattened out of the two dimension strings so the lookup tool
 # does not have to parse them at call time.
 mapping: list[tuple[str, int, str]] = []
@@ -75,10 +89,11 @@ con.execute("CREATE INDEX idx_dp_column ON datapoints(column_name)")
 con.execute("CREATE INDEX idx_dp_id ON datapoints(datapoint_id)")
 con.execute("CREATE INDEX idx_ct_column ON column_terms(column_name)")
 con.execute("CREATE INDEX idx_dora ON dora(template, column_code)")
+con.execute("CREATE INDEX idx_rules ON rules(table_name, row_code, column_code)")
 
 counts = {
     name: con.execute(f"SELECT count(*) FROM {name}").fetchone()[0]  # noqa: S608 - fixed names above
-    for name in ("datapoints", "terms", "column_terms", "dora")
+    for name in ("datapoints", "terms", "column_terms", "dora", "rules")
 }
 con.execute("CHECKPOINT")  # compress and compact before the handle closes
 con.close()

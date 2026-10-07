@@ -245,6 +245,35 @@ Rules:
 - **Do not assert the physical column's semantics** beyond what the datapoint says. If a
   column is named after a datapoint but contains something else, that is a data quality
   finding, not a description.
+- **Name the validation rules, do not restate them.** `lookup_datapoint` returns them under
+  `validation_rules` with the DPM-XL expression. Write the codes; paraphrasing an expression
+  into English is how a description ends up asserting a constraint the framework does not
+  impose. See below.
+
+## Validation rules
+
+A datapoint is usually constrained by EBA validation rules, and the lookup returns them:
+
+```json
+"validation_rules": [
+  {"rule_code": "v09123_m", "severity": "warning",
+   "expression": "with {tY_01.01, c*, s*, default: 0, interval: true}: {r0030} ... {r0010}"},
+  {"rule_code": "v89551_h", "severity": "warning", "expression": "...", "variants": ["0030"]}
+]
+```
+
+Put the codes in the description and stop there:
+
+> ... Unit: count, non-negative. Validation rules (EBA DPM, warning): v09123_m, v09124_m.
+
+Three reasons not to go further. The expression contains characters OpenMetadata's viewer
+mangles. An English restatement of a formal rule is a new claim, and a wrong one in a
+regulatory catalogue is worse than no claim. And the code is what the EBA's own published
+rule lists are indexed by, so it is what a reporting analyst searches for.
+
+A `variants` key means the rule reaches only those sheet variants of the column, not all
+six. If the table holds one variant, the lookup has already dropped the rules belonging to
+the others - do not re-add them.
 
 ## Writing the description back over MCP
 
@@ -433,6 +462,32 @@ pack avoid those characters anyway: all 3788 of them are clean.
 `terms` left null leaves the existing glossary terms alone; an empty list clears them.
 Every term is validated against the glossary, so a term that does not exist fails the
 whole write with a 404 - set the description alone if the glossary is not loaded yet.
+
+### Two more tools, for frameworks this pack does not cover
+
+A warehouse holds more than PAY and DORA. For a table named after any other template,
+`lookup_datapoint` correctly answers that it knows nothing, and two further tools read the
+EBA DPM 2.0 database directly:
+
+| Tool | Answers |
+|---|---|
+| `lookup_dpm_table` | A template in any framework: its name, the module versions it belongs to, which axes are open, and every row, column and sheet with its code, label and parent |
+| `lookup_dpm_cell` | One cell: its dimension members, data type, period type, whether it is reportable, and the validation rules with their expressions |
+
+`parent_code` on a row is what an "Of which" row is a breakdown of — the nesting the
+annotated layout shows only by indentation.
+
+Both are registered **only when the DPM database has been downloaded**, because it is
+139 MB and not in the repository. If they are not in your tool list, that is why, and
+`uv run source/fetch_dpm2.py` is the fix. Prefer `lookup_datapoint` for PAY and DORA: it
+knows the warehouse column naming and these two do not.
+
+Two things to be careful of in their answers. Two entries with the same `rule_code` are
+not a duplicate — the rule differs between the module versions listed on each, in
+expression or in severity, and `v09247_s` really is a warning in PSD_FRP 1.1.0 and an
+error in 1.2.0. And a template that comes back with no rows and no columns is one the
+model records nothing for, 143 of 1052 in this release; it does not mean the report has no
+columns.
 
 ### Registering all of this in an agent
 

@@ -59,6 +59,15 @@ These hold regardless of what you find:
 - DORA only: the row carries no meaning. Every template has one row, written r* in the
   framework and as an ordinal in the warehouse. Template and column identify the
   datapoint on their own, and there are no variants.
+- Validation rules: lookup_datapoint returns them under validation_rules, with the
+  rule code, the severity and the DPM-XL expression. Put the codes in the description -
+  "Validation rules (EBA DPM, warning): v09123_m, v09124_m." - and not the expressions.
+  Do not restate a rule in English: that is a new claim, and a wrong one about what the
+  framework requires is worse than saying nothing.
+- A framework this pack does not cover - COREP, FINREP and the rest - is answered by
+  lookup_dpm_table and lookup_dpm_cell if they are in your tool list. They read the EBA
+  DPM database directly. Two entries there with the same rule code are not a duplicate:
+  the rule differs between the module versions listed on each.
 - Columns that do not match the pattern are warehouse context - Period_SK, Company_BK,
   Taxonomy_Name and the like. They have no framework meaning, so do not describe them
   from a framework. Check Taxonomy_Name to confirm which framework a table belongs to:

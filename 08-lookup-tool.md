@@ -74,6 +74,29 @@ are exactly what differs. It never picks a variant on its own.
 For a name that resolves to nothing it says so and repeats the pattern, so a context
 column like `Period_SK` comes back as a refusal rather than a guess.
 
+Either way the answer carries `validation_rules`: the EBA validation rules that reach the
+cell, each with its code, its severity and its DPM-XL expression verbatim. With a variant
+given, the rules belonging to the other variants are dropped rather than listed. Without
+one, a rule that reaches only some variants carries a `variants` key saying which.
+
+Put the codes in a description, not the expressions - `02-agent-instructions.md` says why.
+
+## Two more tools, for the rest of the DPM
+
+`lookup_dpm_table` and `lookup_dpm_cell` read the EBA DPM 2.0 database itself, so they
+answer for COREP, FINREP, resolution, ESG and every other framework in it - everything
+`lookup_datapoint` correctly refuses. `agent_tools.TOOLS` includes them only when the
+database has been downloaded, because a tool whose every answer is "not downloaded" costs
+a turn and teaches the model to stop calling it:
+
+```bash
+uv run source/fetch_dpm2.py     # 167 MB download, then 539 MB of Access, then DuckDB
+uv run dpm_lookup.py C_01.00    # the same answers, from the command line
+```
+
+`dispatch` knows both names whether or not they are registered, so a host that registered
+them before the file moved gets an explanation rather than an exception.
+
 ## The warehouse's own form metadata, where there is one
 
 `05-datapoints.csv` carries two keys a warehouse's form metadata also keys on:
