@@ -23,7 +23,11 @@ from typing import Any
 import duckdb
 
 PACK = Path(__file__).parent
-DB = Path(os.environ.get("DPM2_DB") or PACK / "source" / "dpm2" / "dpm2.duckdb")
+# DPM2_DIR has to be honoured wherever DPM2_DB is, because fetch_dpm2.py puts the database
+# inside it: resolving only DPM2_DB leaves this looking in the default directory for a file
+# that was downloaded somewhere else, and reporting it as never downloaded.
+DIR = Path(os.environ.get("DPM2_DIR") or PACK / "source" / "dpm2")
+DB = Path(os.environ.get("DPM2_DB") or DIR / "dpm2.duckdb")
 
 # 143 of the 1052 templates in release 4.2.1 have no headers and no cells recorded. That
 # is a fact about the model, not about the report, and an empty answer would read as the

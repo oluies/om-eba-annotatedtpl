@@ -12,14 +12,22 @@ uv run source/gen_dpm2_doc.py        # this file
 duckdb source/dpm2/dpm2.duckdb       # or just poke at it
 ```
 
-Nothing has to be configured. `DPM2_DIR` moves the download and `DPM2_DB` the database;
-both default into `source/dpm2/`, which is gitignored. Note that these are read with
+Nothing has to be configured. `DPM2_DIR` moves the whole download directory and
+`DPM2_DB` the database alone; the database defaults to `dpm2.duckdb` inside `DPM2_DIR`,
+which defaults to `source/dpm2/` and is gitignored. Note that both are read with
 `os.environ` and so, unlike `PAY42_*` and `OM_*`, are **not** read from a `.env` file.
 
-The Access export carries no foreign keys, so every relationship drawn below was checked
+The Access export carries no foreign keys, so every relationship drawn below was measured
 against the data instead: all 36 hold with no orphaned key, and the generator fails rather
-than draw one that does not. An optional parent is drawn `|o`, which is exactly the
-relationships whose child key is nullable.
+than draw one that does not. The cardinality is measured too, not assumed:
+
+- `||` on the parent side means every child has a parent; `|o` means the child key is
+  nullable, so it may have none.
+- `o{` on the child side means a parent may have any number of children; `o|` means the
+  child key is unique in its own table, so a parent has at most one.
+
+`Item ||--o| Property` therefore says what it means: a property is an item, and an item is
+a property at most once.
 
 ## Reading a version number
 
@@ -218,7 +226,7 @@ erDiagram
     Context ||--o{ ContextComposition : "ContextID"
     Item ||--o{ ContextComposition : "PropertyID"
     Item ||--o{ ContextComposition : "ItemID"
-    Item ||--o{ Property : "PropertyID"
+    Item ||--o| Property : "PropertyID"
     DataType ||--o{ Property : "DataTypeID"
 ```
 
@@ -303,7 +311,7 @@ erDiagram
     OperationVersion ||--o{ OperationNode : "OperationVID"
     Operator |o--o{ OperationNode : "OperatorID"
     OperationNode ||--o{ OperandReference : "NodeID"
-    OperandReference ||--o{ OperandReferenceLocation : "OperandReferenceID"
+    OperandReference ||--o| OperandReferenceLocation : "OperandReferenceID"
     Cell ||--o{ OperandReferenceLocation : "CellID"
 ```
 
@@ -340,8 +348,9 @@ fact about the dictionary, not about the report - do not read it as "this templa
 columns".
 
 **There are almost no published definitions.** 1,453 of 14,551 items carry a `Description`, and
-none of them belong to PAY. The pack's own glossary is not duplicating anything upstream,
-and there is nothing here to harvest for it.
+none of them belong to PSD_FRP, the fraud-reporting module this pack describes. The eight
+that do show up under framework PAY belong to SEPA_IPR. So the pack's own glossary is not
+duplicating anything upstream, and there is nothing here to harvest for it.
 
 **Case varies in free-text fields.** `Property.PeriodType` holds both `Stock` and `stock`.
 Lower-case before grouping on anything that is not a code.

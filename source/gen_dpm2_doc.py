@@ -5,25 +5,52 @@ every one of them, and a stale row count in a data model is worse than none.
 
     uv run source/fetch_dpm2.py && uv run source/gen_dpm2_doc.py
 
-Every relationship below is verified against the data before it is drawn. The Access
-export carries no foreign keys, so a diagram drawn from column names alone would be a
-guess; this one fails the build if a child key has a value its parent does not.
+Every relationship below is measured against the data before it is drawn, never inferred
+from a column name. The Access export carries no foreign keys, so the generator asks three
+questions per relationship - are there orphans, is the child key nullable, is it unique -
+and fails the build on an orphan rather than drawing a relationship that does not hold.
+The other two answers are what the cardinality on the diagram is made of.
 """
 
 import os
 import textwrap
 from pathlib import Path
+from typing import NamedTuple
 
 import duckdb
 
 REPO = Path(__file__).resolve().parent.parent
-DPM2 = Path(os.environ.get("DPM2_DB") or REPO / "source" / "dpm2" / "dpm2.duckdb")
+# DPM2_DIR has to be honoured here exactly as fetch_dpm2.py honours it, or setting only
+# that one leaves the generator looking in the default directory for a database that was
+# downloaded somewhere else - and reporting it as never downloaded.
+DIR = Path(os.environ.get("DPM2_DIR") or REPO / "source" / "dpm2")
+DPM2 = Path(os.environ.get("DPM2_DB") or DIR / "dpm2.duckdb")
 OUT = REPO / "README_DPM2.md"
 
-# child, child key, parent, parent key, mermaid cardinality, which diagram, what it means.
-# Cardinality is read from the verification below: a nullable child key draws as |o, and
-# no child key in this model is unique, so the child side is always o{ or one..many.
-REL = [
+
+class Rel(NamedTuple):
+    """One relationship, as it is drawn and as it is checked. A plain struct: it is never
+    serialised or validated, so Pydantic would add nothing."""
+
+    child: str
+    key: str
+    parent: str
+    parent_key: str
+    group: str
+    note: str
+
+
+class Shape(NamedTuple):
+    """What the data says about one relationship's child key. Both answers come from a
+    query, not from the column name, and together they decide the cardinality drawn."""
+
+    nullable: bool
+    unique: bool
+
+
+# The literal table, kept as plain tuples so it reads as a table; Rel(*row) below gives
+# the named access. Nothing about the cardinality is asserted here - see verify().
+_REL = [
     ("Module", "FrameworkID", "Framework", "FrameworkID", "A", "a framework groups its modules"),
     ("ModuleVersion", "ModuleID", "Module", "ModuleID", "A", "one version per release of a module"),
     ("ModuleVersion", "StartReleaseID", "Release", "ReleaseID", "A", "first release this version appears in"),
@@ -61,6 +88,8 @@ REL = [
     ("OperandReferenceLocation", "OperandReferenceID", "OperandReference", "OperandReferenceID", "D", "resolved to"),
     ("OperandReferenceLocation", "CellID", "Cell", "CellID", "D", "the actual cells"),
 ]
+
+REL = [Rel(*row) for row in _REL]
 
 # Only the fields worth drawing. A diagram with every column of VariableVersion on it is
 # a schema dump, not a model.
@@ -151,50 +180,61 @@ def one(con: duckdb.DuckDBPyConnection, sql: str) -> tuple:
     return row
 
 
-def verify(con: duckdb.DuckDBPyConnection) -> dict[tuple[str, str], bool]:
-    """Orphan check per relationship, and whether the child key is nullable.
+def verify(con: duckdb.DuckDBPyConnection) -> dict[Rel, Shape]:
+    """Measure every relationship: orphans, nullability, uniqueness.
 
-    Fails the generation rather than drawing a relationship that does not hold. The
-    nullable answer decides the mermaid cardinality, so the diagram says which parents
-    are optional instead of implying all are mandatory.
+    Fails the generation on an orphan rather than drawing a relationship that does not
+    hold. Uniqueness is asked because it is half the cardinality: a child key that is
+    unique in its own table means the parent has at most one child, and drawing that as
+    one-to-many is the one kind of guess this document exists to avoid.
     """
-    nullable = {}
-    broken = []
-    for child, ck, parent, pk, _, _ in REL:
+    shapes, broken = {}, []
+    for rel in REL:
         orphans, nulls = one(
             con,
-            f'SELECT count(*) FILTER (WHERE c."{ck}" IS NOT NULL AND p."{pk}" IS NULL), '
-            f'count(*) FILTER (WHERE c."{ck}" IS NULL) '
-            f'FROM "{child}" c LEFT JOIN "{parent}" p ON p."{pk}" = c."{ck}"',
+            f'SELECT count(*) FILTER (WHERE c."{rel.key}" IS NOT NULL AND p."{rel.parent_key}" IS NULL), '
+            f'count(*) FILTER (WHERE c."{rel.key}" IS NULL) '
+            f'FROM "{rel.child}" c LEFT JOIN "{rel.parent}" p ON p."{rel.parent_key}" = c."{rel.key}"',
         )
+        (unique,) = one(con, f'SELECT count(*) = count(DISTINCT "{rel.key}") FROM "{rel.child}"')
         if orphans:
-            broken.append(f"{child}.{ck} -> {parent}.{pk}: {orphans} value(s) with no parent")
-        nullable[(child, ck)] = bool(nulls)
+            broken.append(f"{rel.child}.{rel.key} -> {rel.parent}.{rel.parent_key}: {orphans} value(s) with no parent")
+        shapes[rel] = Shape(nullable=bool(nulls), unique=bool(unique))
     if broken:
         raise SystemExit("Relationships that do not hold in this release:\n  " + "\n  ".join(broken))
-    return nullable
+    return shapes
 
 
-def diagram(group: str, nullable: dict[tuple[str, str], bool]) -> str:
+def cardinality(shape: Shape) -> tuple[str, str]:
+    """The two mermaid markers for one measured relationship, parent side then child side.
+
+    Pure, and the whole mapping in one place. The left marker answers how many parents a
+    child has: exactly one, or none when the key is nullable. The right answers how many
+    children a parent has: at most one when the child key is unique, otherwise any number.
+    Mermaid mirrors its symbols on the right, so zero-or-one is `|o` on the left and `o|`
+    on the right.
+    """
+    return ("|o" if shape.nullable else "||", "o|" if shape.unique else "o{")
+
+
+def diagram(group: str, shapes: dict[Rel, Shape]) -> str:
     """One mermaid erDiagram for one group, with only the tables that group touches."""
-    rels = [r for r in REL if r[4] == group]
-    tables = sorted({r[0] for r in rels} | {r[2] for r in rels})
+    rels = [rel for rel in REL if rel.group == group]
+    tables = sorted({rel.child for rel in rels} | {rel.parent for rel in rels})
     lines = ["erDiagram"]
     for table in tables:
         lines.append(f"    {table} {{")
-        for kind, name, key in ATTRS.get(table, []):
-            lines.append(f"        {kind} {name}{' ' + key if key else ''}")
+        lines += [f"        {kind} {name}{' ' + key if key else ''}" for kind, name, key in ATTRS.get(table, [])]
         lines.append("    }")
-    for child, ck, parent, _pk, _group, _note in rels:
-        # |o on the parent side where the child key may be null: that parent is optional.
-        left = "|o" if nullable[(child, ck)] else "||"
-        lines.append(f'    {parent} {left}--o{{ {child} : "{ck}"')
+    for rel in rels:
+        left, right = cardinality(shapes[rel])
+        lines.append(f'    {rel.parent} {left}--{right} {rel.child} : "{rel.key}"')
     return "\n".join(lines)
 
 
 def inventory(con: duckdb.DuckDBPyConnection) -> str:
     """Every table in the database with its row count, modelled ones marked."""
-    modelled = {r[0] for r in REL} | {r[2] for r in REL}
+    modelled = {rel.child for rel in REL} | {rel.parent for rel in REL}
     rows = con.execute(
         "SELECT table_name, estimated_size, column_count FROM duckdb_tables() ORDER BY estimated_size DESC"
     ).fetchall()
@@ -210,14 +250,17 @@ def main() -> None:
     if not DPM2.exists():
         raise SystemExit(f"{DPM2} does not exist - run source/fetch_dpm2.py first")
     con = duckdb.connect(str(DPM2), read_only=True)
-    nullable = verify(con)
+    shapes = verify(con)
 
     release, date = one(con, "SELECT Code, Date FROM Release ORDER BY ReleaseID DESC LIMIT 1")
     tables, rows = one(con, "SELECT count(*), sum(estimated_size) FROM duckdb_tables()")
     templates, empty = one(
         con,
         """
-        WITH newest AS (SELECT Code, max_by(TableVID, StartReleaseID) AS vid FROM TableVersion GROUP BY Code)
+        -- Tiebreak on TableVID, the same ordering dpm_lookup.py uses, so "newest" means
+        -- one thing across the repo even where two versions share a start release.
+        WITH newest AS (SELECT Code, max_by(TableVID, [StartReleaseID, TableVID]) AS vid
+                        FROM TableVersion GROUP BY Code)
         SELECT count(*), count(*) FILTER (WHERE (SELECT count(*) FROM TableVersionCell c WHERE c.TableVID = n.vid) = 0)
         FROM newest n
         """,
@@ -232,6 +275,7 @@ def main() -> None:
         "SELECT count(*) FILTER (WHERE Description IS NOT NULL AND Description <> ''), count(*) FROM Item",
     )
     size = DPM2.stat().st_size / 1e6
+    tables_md = inventory(con)
     con.close()
 
     body = f"""# The DPM 2.0 database, locally
@@ -248,14 +292,22 @@ uv run source/gen_dpm2_doc.py        # this file
 duckdb source/dpm2/dpm2.duckdb       # or just poke at it
 ```
 
-Nothing has to be configured. `DPM2_DIR` moves the download and `DPM2_DB` the database;
-both default into `source/dpm2/`, which is gitignored. Note that these are read with
+Nothing has to be configured. `DPM2_DIR` moves the whole download directory and
+`DPM2_DB` the database alone; the database defaults to `dpm2.duckdb` inside `DPM2_DIR`,
+which defaults to `source/dpm2/` and is gitignored. Note that both are read with
 `os.environ` and so, unlike `PAY42_*` and `OM_*`, are **not** read from a `.env` file.
 
-The Access export carries no foreign keys, so every relationship drawn below was checked
+The Access export carries no foreign keys, so every relationship drawn below was measured
 against the data instead: all {len(REL)} hold with no orphaned key, and the generator fails rather
-than draw one that does not. An optional parent is drawn `|o`, which is exactly the
-relationships whose child key is nullable.
+than draw one that does not. The cardinality is measured too, not assumed:
+
+- `||` on the parent side means every child has a parent; `|o` means the child key is
+  nullable, so it may have none.
+- `o{{` on the child side means a parent may have any number of children; `o|` means the
+  child key is unique in its own table, so a parent has at most one.
+
+`Item ||--o| Property` therefore says what it means: a property is an item, and an item is
+a property at most once.
 
 ## Reading a version number
 
@@ -276,7 +328,7 @@ that reports it, and almost every query below starts from it.
 
     for group, (title, blurb) in GROUPS.items():
         wrapped = textwrap.fill(blurb, 88)
-        body += f"\n## {title}\n\n{wrapped}\n\n```mermaid\n{diagram(group, nullable)}\n```\n"
+        body += f"\n## {title}\n\n{wrapped}\n\n```mermaid\n{diagram(group, shapes)}\n```\n"
         body += "\n| Relationship | What it means |\n|---|---|\n"
         body += "\n".join(f"| `{c}.{ck}` to `{p}.{pk}` | {note} |" for c, ck, p, pk, g, note in REL if g == group)
         body += "\n"
@@ -303,8 +355,9 @@ fact about the dictionary, not about the report - do not read it as "this templa
 columns".
 
 **There are almost no published definitions.** {defined:,} of {items:,} items carry a `Description`, and
-none of them belong to PAY. The pack's own glossary is not duplicating anything upstream,
-and there is nothing here to harvest for it.
+none of them belong to PSD_FRP, the fraud-reporting module this pack describes. The eight
+that do show up under framework PAY belong to SEPA_IPR. So the pack's own glossary is not
+duplicating anything upstream, and there is nothing here to harvest for it.
 
 **Case varies in free-text fields.** `Property.PeriodType` holds both `Stock` and `stock`.
 Lower-case before grouping on anything that is not a code.
@@ -500,7 +553,7 @@ to the fraud-reporting module this pack describes.
 
 ## Every table in the database
 
-{inventory(duckdb.connect(str(DPM2), read_only=True))}
+{tables_md}
 
 ## Licence
 

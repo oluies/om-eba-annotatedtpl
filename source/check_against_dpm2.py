@@ -23,7 +23,11 @@ from pathlib import Path
 import duckdb
 
 REPO = Path(__file__).resolve().parent.parent
-DPM2 = Path(os.environ.get("DPM2_DB") or REPO / "source" / "dpm2" / "dpm2.duckdb")
+# DPM2_DIR has to be honoured wherever DPM2_DB is, because fetch_dpm2.py puts the database
+# inside it: resolving only DPM2_DB leaves this looking in the default directory for a file
+# that was downloaded somewhere else, and reporting it as never downloaded.
+DIR = Path(os.environ.get("DPM2_DIR") or REPO / "source" / "dpm2")
+DPM2 = Path(os.environ.get("DPM2_DB") or DIR / "dpm2.duckdb")
 PACK = Path(os.environ.get("PAY42_DB") or REPO / "pay42.duckdb")
 
 # The two modules the pack covers, by ModuleVersion.Code and VersionNumber.

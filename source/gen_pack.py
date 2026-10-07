@@ -1725,7 +1725,7 @@ extraction uses openpyxl — a plain cell reader gives you the values but not th
 ## The DPM 2.0 database
 
 The annotated table layout is a spreadsheet rendering of the model. The model itself is
-published as an Access database, and three scripts use it:
+published as an Access database, and four scripts use it:
 
 ```bash
 uv run source/fetch_dpm2.py          # download, unpack, load into DuckDB (needs mdbtools)
