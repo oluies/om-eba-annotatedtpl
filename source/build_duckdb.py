@@ -91,10 +91,15 @@ con.execute("CREATE INDEX idx_ct_column ON column_terms(column_name)")
 con.execute("CREATE INDEX idx_dora ON dora(template, column_code)")
 con.execute("CREATE INDEX idx_rules ON rules(table_name, row_code, column_code)")
 
-counts = {
-    name: con.execute(f"SELECT count(*) FROM {name}").fetchone()[0]  # noqa: S608 - fixed names above
-    for name in ("datapoints", "terms", "column_terms", "dora", "rules")
-}
+
+def rows_in(name: str) -> int:
+    """How many rows a table has. fetchone() types as optional and a count always answers,
+    so this is where that is said once rather than subscripted in a comprehension."""
+    row = con.execute(f"SELECT count(*) FROM {name}").fetchone()  # noqa: S608 - fixed names below
+    return row[0] if row else 0
+
+
+counts = {name: rows_in(name) for name in ("datapoints", "terms", "column_terms", "dora", "rules")}
 con.execute("CHECKPOINT")  # compress and compact before the handle closes
 con.close()
 size = DB.stat().st_size / 1024

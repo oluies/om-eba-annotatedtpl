@@ -215,7 +215,7 @@ def _query(key: str, value: str, form_bk: str | None) -> list[FormCell]:
     if not enabled():
         return []
 
-    import pyodbc  # noqa: PLC0415 - optional, and only where the connection is used
+    import pyodbc  # noqa: PLC0415 - optional, and only where the connection is used  # ty: ignore[unresolved-import]
 
     sql = QUERY.format(table=SETTINGS.table, axis_table=SETTINGS.axis_table, predicate=PREDICATES[key])
     params: list[Any] = [like_prefix(value) if "LIKE" in PREDICATES[key] else value]
@@ -374,7 +374,7 @@ def check_connection() -> dict[str, Any]:
     if not enabled():
         return {"connected": False, "reason": "BA_SERVER is not set, so the warehouse is not consulted at all"}
     try:
-        import pyodbc  # noqa: PLC0415
+        import pyodbc  # noqa: PLC0415  # ty: ignore[unresolved-import]
 
         with pyodbc.connect(connection_string()) as connection:
             cursor = connection.cursor()

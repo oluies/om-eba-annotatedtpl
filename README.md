@@ -55,6 +55,13 @@ uv run source/gen_pack.py       # both  → the markdown and CSV in this repo
 uv run pytest                   # the test suite
 ```
 
+CI runs the same thing on every push: `ruff check`, `ruff format --check`, `ty check`,
+`pytest` on Python 3.12 and 3.14, and one job that regenerates the pack from the workbook
+and fails if anything in git moved. That last one is what stops a hand edit to a generated
+file from shipping — the product here *is* generated files, so without it an edit to
+`README.md` or `05-datapoints.csv` would survive until the next regeneration quietly
+undid it.
+
 `pytest` needs nothing but the checkout. The tests that do need one of the two derived
 databases - `pay42.duckdb` and the DPM 2.0 download - skip with the command that builds
 it rather than failing, so a fresh clone reports what it could check.

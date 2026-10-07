@@ -127,7 +127,9 @@ def _connect() -> duckdb.DuckDBPyConnection:
     if not DB.exists():
         raise StoreError(f"{DB} is missing. Build it with: uv run source/build_duckdb.py")
 
-    config: dict[str, str] = {}
+    # Not dict[str, str]: duckdb's config accepts bools, numbers and lists too, and a
+    # dict is invariant in its value type, so the narrower annotation is not assignable.
+    config: dict[str, str | bool | int | float | list[str]] = {}
     if SETTINGS.temp_dir:
         SETTINGS.temp_dir.mkdir(parents=True, exist_ok=True)
         config["temp_directory"] = str(SETTINGS.temp_dir)

@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to a branch makes the first run's answer worthless, so cancel it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: ruff and ty
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run ty check .
+
+  test:
+    name: pytest (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor declared in pyproject.toml, and the newest. Anything the floor cannot
+        # run is a bug in requires-python, not in the test.
+        python: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked
+
+      # Built from the committed CSVs, so the store-backed tests run here rather than
+      # skipping. The DPM 2.0 database is a 167 MB download and stays skipped.
+      - name: Build the DuckDB store
+        run: uv run source/build_duckdb.py
+
+      - run: uv run pytest -rs
+
+  artefacts:
+    name: the generated pack is up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+
+      # The pack's product is generated files, so a hand edit to one of them would
+      # otherwise ship and survive. This regenerates from the annotated workbook - the
+      # one committed input - and fails if anything in git moved.
+      #
+      # 09-validation-rules.csv and README_DPM2.md are not regenerated: both come from a
+      # 167 MB download that does not belong in a CI run. They are checked by
+      # source/check_against_dpm2.py, locally.
+      - name: Regenerate from the workbook
+        run: |
+          uv run source/extract_dpm.py
+          uv run source/vocab.py
+          uv run source/gen_pack.py
+          uv run source/gen_dora.py
+
+      # --porcelain rather than `git diff --exit-code`: a diff sees only tracked files, so
+      # a generator that started writing a new one would pass unnoticed.
+      - name: Nothing may have changed
+        run: |
+          git status --porcelain --untracked-files=all > /tmp/dirty
+          if [ -s /tmp/dirty ]; then
+            echo "The committed pack does not match what the generators produce:"
+            cat /tmp/dirty
+            git diff --stat
+            exit 1
+          fi
+          echo "the committed pack is what the generators produce"
+

@@ -1,14 +1,14 @@
 """Generate the OpenMetadata documentation pack from the normalised DPM data."""
 
-# Where both the annotated layout and the DPM database this pack is built from are
-# published. Cited everywhere a reader might otherwise take this pack as the authority.
-DICTIONARY_URL = "https://www.eba.europa.eu/risk-and-data-analysis/reporting/dpm-data-dictionary"
-
 import csv
 import json
 import re
 from collections import defaultdict
 from pathlib import Path
+
+# Where both the annotated layout and the DPM database this pack is built from are
+# published. Cited everywhere a reader might otherwise take this pack as the authority.
+DICTIONARY_URL = "https://www.eba.europa.eu/risk-and-data-analysis/reporting/dpm-data-dictionary"
 
 # Paths resolve against the repository root so the pipeline reproduces from a fresh
 # clone: `uv run source/extract_dpm.py && uv run source/vocab.py && uv run source/gen_pack.py`.
@@ -1528,7 +1528,7 @@ pills are extracted asynchronously, so confirm the articles reached
     )
 
 
-def write_csvs() -> None:
+def write_csvs() -> int:
     fields = list(DPS[0].keys())
     with (OUT / "05-datapoints.csv").open("w", encoding="utf-8", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=fields)
@@ -1717,6 +1717,13 @@ uv run source/vocab.py          # dpm   → source/vocab.json    (vocabulary)
 uv run source/gen_pack.py       # both  → the markdown and CSV in this repo
 uv run pytest                   # the test suite
 ```
+
+CI runs the same thing on every push: `ruff check`, `ruff format --check`, `ty check`,
+`pytest` on Python 3.12 and 3.14, and one job that regenerates the pack from the workbook
+and fails if anything in git moved. That last one is what stops a hand edit to a generated
+file from shipping — the product here *is* generated files, so without it an edit to
+`README.md` or `05-datapoints.csv` would survive until the next regeneration quietly
+undid it.
 
 `pytest` needs nothing but the checkout. The tests that do need one of the two derived
 databases - `pay42.duckdb` and the DPM 2.0 download - skip with the command that builds
