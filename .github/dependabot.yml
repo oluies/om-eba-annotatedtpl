@@ -16,3 +16,12 @@ updates:
     commit-message:
       prefix: deps
       include: scope
+
+  # setup-uv publishes no floating major tag past v7, so the workflow pins an exact
+  # version and would otherwise go stale silently. This is what moves it.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
