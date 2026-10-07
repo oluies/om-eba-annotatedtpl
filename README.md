@@ -62,6 +62,12 @@ file from shipping — the product here *is* generated files, so without it an e
 `README.md` or `05-datapoints.csv` would survive until the next regeneration quietly
 undid it.
 
+Dependencies are kept current by Renovate (`renovate.json`), which refreshes `uv.lock`
+on a schedule rather than only when a version constraint moves, and keeps the exact
+action versions in the workflow current. It needs the Renovate GitHub App installed on
+the repository; GitHub's own Dependabot security alerts are separate and need no
+configuration at all.
+
 `pytest` needs nothing but the checkout. The tests that do need one of the two derived
 databases - `pay42.duckdb` and the DPM 2.0 download - skip with the command that builds
 it rather than failing, so a fresh clone reports what it could check.

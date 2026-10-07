@@ -1,0 +1,40 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":semanticCommitTypeAll(deps)"],
+  "timezone": "Europe/Stockholm",
+  "schedule": ["before 6am on monday"],
+  "prConcurrentLimit": 5,
+
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  },
+
+  "minimumReleaseAge": "3 days",
+
+  "packageRules": [
+    {
+      "description": "One PR for the tooling. It moves often and is not what the pack ships.",
+      "matchDepTypes": ["dev", "devDependencies"],
+      "groupName": "dev tooling"
+    },
+    {
+      "description": "And one for the actions. setup-uv publishes no floating major tag past v7, so the workflow pins an exact version that nothing else would move.",
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions"
+    },
+    {
+      "description": "A major bump of a runtime dependency is a decision, not a chore: leave it ungrouped so it is read on its own.",
+      "matchUpdateTypes": ["major"],
+      "matchDepTypes": ["dependencies", "project.dependencies"],
+      "dependencyDashboardApproval": true
+    }
+  ],
+
+  "vulnerabilityAlerts": {
+    "description": "A security fix does not wait for Monday, and does not wait three days.",
+    "schedule": ["at any time"],
+    "minimumReleaseAge": null,
+    "labels": ["security"]
+  }
+}
