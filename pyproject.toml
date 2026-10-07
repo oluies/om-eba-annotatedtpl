@@ -3,18 +3,23 @@ name = "om-eba-annotatedtpl"
 version = "0.1.0"
 description = "EBA PAY 4.2 annotated table layout, normalised into OpenMetadata documentation"
 requires-python = ">=3.12"
+# Two kinds of floor, and the difference is deliberate. Where the code demonstrably needs
+# a major version - the v2 API of pydantic and of pydantic-settings - the floor says so and
+# nothing narrower. Everywhere else it is the version CI actually tests, which is a claim
+# about what is known to work rather than a measured minimum: nobody has established that
+# duckdb 1.4 fails, only that it has never been run. Lower one if you test one.
 dependencies = [
-    "duckdb",
-    "httpx",
-    "openpyxl",
+    "duckdb>=1.5.6",
+    "httpx>=0.28.1",
+    "openpyxl>=3.1.5",
     "pydantic>=2",
-    "pydantic-settings",
+    "pydantic-settings>=2",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
-    "ruff",
+    "ruff>=0.16.9",
     "ty>=0.0.85",
 ]
 

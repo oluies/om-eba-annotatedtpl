@@ -156,17 +156,17 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "duckdb" },
-    { name = "httpx" },
-    { name = "openpyxl" },
+    { name = "duckdb", specifier = ">=1.5.6" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "pydantic", specifier = ">=2" },
-    { name = "pydantic-settings" },
+    { name = "pydantic-settings", specifier = ">=2" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=9.1.1" },
-    { name = "ruff" },
+    { name = "ruff", specifier = ">=0.16.9" },
     { name = "ty", specifier = ">=0.0.85" },
 ]
 
