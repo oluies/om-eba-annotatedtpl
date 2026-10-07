@@ -1692,6 +1692,7 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `05-datapoints.csv` | All {len(DPS)} datapoints, keyed by `table_name` and `column_name` | You have a column to describe |
 | `06-openmetadata-glossary.csv` | Bulk glossary import, {GLOSSARY_TERMS} terms | You are loading the glossary |
 | `09-validation-rules.csv` | The {PAY_RULES + DORA_RULES} EBA validation rules of both modules, and every cell each one reaches | You want to know what constrains a column |
+| `README_DPM2.md` | The DPM 2.0 database's data model, as diagrams, with worked queries | You are querying the model directly |
 
 ## Warehouse column names
 
@@ -1730,7 +1731,12 @@ published as an Access database, and three scripts use it:
 uv run source/fetch_dpm2.py          # download, unpack, load into DuckDB (needs mdbtools)
 uv run source/check_against_dpm2.py  # does this pack match the model, cell for cell?
 uv run source/extract_rules.py       # → 09-validation-rules.csv
+uv run source/gen_dpm2_doc.py        # → README_DPM2.md
 ```
+
+**[`README_DPM2.md`](README_DPM2.md) is the map**: the 73 tables, the relationships that
+actually hold between them as four diagrams, and a worked query for each thing you are
+likely to want. Read it before writing SQL against this database.
 
 It is release 4.2.1 of the DPM 2.0 database, the same release the layout comes from, at
 [the DPM data dictionary]({DICTIONARY_URL}). 167 MB of zip, 539 MB of Access, 139 MB of
