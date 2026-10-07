@@ -12,13 +12,42 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["ruff"]
+dev = [
+    "pytest>=9.1.1",
+    "ruff",
+]
 
 [tool.ruff]
 line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ty.environment]
+# The pack's modules are at the root and the generators in source/; conftest.py puts both
+# on sys.path at run time, and this is the same thing for the type checker.
+extra-paths = [".", "source", "tests"]
+
+[tool.ruff.lint.isort]
+# The pack's modules sit at the repository root rather than in a package, so without this
+# ruff sorts them in with httpx and duckdb and the import block stops saying anything.
+known-first-party = [
+    "agent_tools",
+    "ba_form_cell",
+    "conftest",
+    "describe_table",
+    "display_names",
+    "dpm_lookup",
+    "gen_dpm2_doc",
+    "import_to_openmetadata",
+    "pay42_lookup",
+]
+
+[tool.pytest.ini_options]
+# The pack's modules live at the repository root, not in a package, so the tests import
+# them by name; conftest.py puts the root on sys.path.
+testpaths = ["tests"]
+addopts = "-q"
 
 [tool.ruff.lint.per-file-ignores]
 # gen_pack.py embeds the generated Markdown as string literals. Wrapping those lines

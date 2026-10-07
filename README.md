@@ -52,7 +52,12 @@ uv sync
 uv run source/extract_dpm.py    # xlsx  → source/dpm.json      (structure)
 uv run source/vocab.py          # dpm   → source/vocab.json    (vocabulary)
 uv run source/gen_pack.py       # both  → the markdown and CSV in this repo
+uv run pytest                   # the test suite
 ```
+
+`pytest` needs nothing but the checkout. The tests that do need one of the two derived
+databases - `pay42.duckdb` and the DPM 2.0 download - skip with the command that builds
+it rather than failing, so a fresh clone reports what it could check.
 
 The spreadsheet is built on merged-cell blocks: the row axis sits to the right of the
 data columns, the column axis in a footer block, and the sheet axis in the header. The
