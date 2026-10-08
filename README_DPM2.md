@@ -650,6 +650,155 @@ rule_code = v09604_m
   columns = [0020  Increases due to origination and acquisition]
 ```
 
+### The whole breakdown, not one level of it
+
+A total's terms are often totals themselves, so the sums form a tree. Descending it
+needs a second recursion on top of the first - one over the expression tree, one over
+the totals - and both fit in a single statement.
+
+```sql
+WITH RECURSIVE scoped AS (
+    SELECT op.Code AS rule_code, ov.OperationVID
+    FROM   Operation op
+    JOIN   OperationVersion ov           ON ov.OperationID = op.OperationID
+    JOIN   OperationScope os             ON os.OperationVID = ov.OperationVID
+    JOIN   OperationScopeComposition osc ON osc.OperationScopeID = os.OperationScopeID
+    JOIN   ModuleVersion mv              ON mv.ModuleVID = osc.ModuleVID
+    WHERE  mv.Code = 'FINREP9' AND mv.VersionNumber = '3.3.0'
+), node AS (
+    SELECT s.rule_code, n.NodeID, n.ParentNodeID, n.IsLeaf, o.Symbol
+    FROM   scoped s JOIN OperationNode n ON n.OperationVID = s.OperationVID
+    LEFT JOIN Operator o ON o.OperatorID = n.OperatorID
+), child AS (
+    SELECT r.NodeID AS eq, c.NodeID, c.Symbol, c.IsLeaf
+    FROM   node r JOIN node c ON c.ParentNodeID = r.NodeID
+    WHERE  r.ParentNodeID IS NULL AND r.Symbol = '='
+), addends AS (
+    SELECT eq, NodeID AS node, IsLeaf FROM child WHERE Symbol = '+'
+    UNION ALL
+    SELECT a.eq, n.NodeID, n.IsLeaf FROM addends a JOIN node n ON n.ParentNodeID = a.node
+), cells AS (
+    SELECT r.NodeID, l."Table" AS tbl, coalesce(l."Row",'*') AS row_code,
+           coalesce(l."Column",'*') AS col, coalesce(l.Sheet,'') AS sheet
+    FROM   OperandReference r JOIN OperandReferenceLocation l USING (OperandReferenceID)
+-- One row per total, addend and the rule saying so, for one column of one template.
+), edge AS (
+    SELECT DISTINCT t.rule_code, tc.row_code AS parent, ac.row_code AS child
+    FROM     child eqs
+    JOIN     node t    ON t.NodeID = eqs.NodeID AND eqs.IsLeaf <> 0
+    JOIN     cells tc  ON tc.NodeID = t.NodeID
+    JOIN     addends a ON a.eq = eqs.eq AND a.IsLeaf <> 0
+    JOIN     cells ac  ON ac.NodeID = a.node
+                      AND ac.tbl = tc.tbl AND ac.col = tc.col AND ac.sheet = tc.sheet
+    WHERE    tc.tbl = 'F_12.01.a' AND tc.col = '0010' AND tc.sheet = ''
+), root AS (
+    SELECT DISTINCT parent FROM edge WHERE parent NOT IN (SELECT child FROM edge)
+), tree AS (
+    SELECT r.parent AS node, 0 AS level, r.parent AS path, CAST(NULL AS VARCHAR) AS via
+    FROM   root r
+    UNION ALL
+    -- The rule belongs in the path. A total with two decompositions is two branches, and
+    -- without it they collapse into rows that look like duplicates of each other.
+    SELECT e.child, d.level + 1, d.path || '/' || e.rule_code || '/' || e.child, e.rule_code
+    FROM   tree d JOIN edge e ON e.parent = d.node
+    WHERE  d.level < 10            -- the data has no cycle; a query should not assume it
+)
+SELECT   level, repeat('   ', level) || node AS breakdown, via,
+         node IN (SELECT parent FROM edge) AS splits_further
+FROM     tree
+ORDER BY path;
+```
+
+For `F_12.01.a`, column 0010:
+
+```
+level  breakdown      via         splits_further
+0      0520           NULL        true
+1         0010        v5051_m     true
+2            0020     v23845_h    false
+2            0080     v23845_h    false
+1         0180        v5051_m     true
+2            0190     v23846_h    false
+2            0250     v23846_h    false
+1         0360        v5051_m     true
+2            0370     v23847_h    false
+2            0430     v23847_h    false
+1         0600        v5051_m     true
+2            0610     v23848_h    false
+2            0670     v23848_h    false
+```
+
+Three stages and POCI, each splitting into debt securities and loans. Change `tc.col`
+to `0020` and the answer is ten rows rather than thirteen: **the entire POCI branch is
+gone**, both row 0600 and the two beneath it, and the rule on level 1 is `v09604_m`
+instead of `v5051_m`. That is the same fact the table further up reports as two rows
+with one `TotalRow` and different `AddendRows`, which is easy to read past. As a tree it
+is a branch that eleven columns have and the twelfth does not.
+
+**The rule belongs in the path.** `Y_01.01` row 0040 has three decompositions - 0050 and
+0230, or 0050 and 0240 and 0290, or 0060 and 0110 and 0230 - alternative roll-ups at
+different granularity rather than a contradiction. Without the rule in the path those
+branches collapse into rows that look like duplicates of one another: the first version
+of this query answered 0050 twice at level 2, with everything under it doubled and no
+way to see why. `F_12.01.a` has one rule per total per column, so there the path does
+not need it - but `via` is what shows level 1 changing rule between columns.
+
+The same in T-SQL. `STRING_SPLIT` takes a single-character separator, so the view's
+`'0020, 0080'` splits on the comma and is then trimmed, and both arms of the recursion
+need the same explicit `CAST` or the CTE is rejected for a type mismatch:
+
+```tsql
+WITH edge AS (
+    SELECT DISTINCT
+        s.RuleCode,
+        s.TotalRow AS Parent,
+        LTRIM(p.value) AS Child
+    FROM dpm.RuleSum AS s
+    CROSS APPLY STRING_SPLIT(s.AddendRows, ',') AS p
+    WHERE s.ModuleCode = 'FINREP9'
+        AND s.ModuleVersion = '3.3.0'
+        AND s.TableCode = 'F_12.01.a'
+        AND s.ColumnCode = '0010'
+        AND s.SheetCode = ''
+),
+
+root AS (
+    SELECT DISTINCT e.Parent
+    FROM edge AS e
+    WHERE e.Parent NOT IN (SELECT ec.Child FROM edge AS ec)
+),
+
+descend AS (
+    SELECT
+        r.Parent AS Node,
+        0 AS Level,
+        CAST(r.Parent AS varchar(400)) AS Path,
+        CAST(NULL AS varchar(32)) AS Via
+    FROM root AS r
+    UNION ALL
+    SELECT
+        e.Child AS Node,
+        d.Level + 1 AS Level,
+        CAST(d.Path + '/' + e.RuleCode + '/' + e.Child AS varchar(400)) AS Path,
+        CAST(e.RuleCode AS varchar(32)) AS Via
+    FROM descend AS d
+    INNER JOIN edge AS e ON e.Parent = d.Node
+    WHERE d.Level < 10
+)
+
+SELECT
+    d.Level,
+    REPLICATE('   ', d.Level) + d.Node AS Breakdown,
+    d.Via,
+    CASE WHEN d.Node IN (SELECT e.Parent FROM edge AS e) THEN 1 ELSE 0 END AS SplitsFurther
+FROM descend AS d
+ORDER BY d.Path;
+```
+
+52 rows for `Y_01.01` column 0010 and 13 for `F_12.01.a`, the same on both sides. Depth
+is 4 and 2, so the default limit of 100 recursion levels is not reached; a deeper
+template would need `OPTION (MAXRECURSION 0)`.
+
 ## Reading a reported instance
 
 The EBA publishes sample instances for every module, in both formats, from the reporting
