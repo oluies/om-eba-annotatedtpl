@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 import duckdb
-from pydantic import BaseModel, ConfigDict
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO = Path(__file__).resolve().parent.parent
@@ -42,7 +42,9 @@ class Settings(BaseSettings):
     server: str | None = None
     port: int = 1433
     database: str = "DPM2"
-    db_schema: str = "dpm"
+    # `schema` is taken by Pydantic, so the field is db_schema - but MSSQL_SCHEMA is the
+    # name anyone would reach for, and without the alias it is accepted and ignored.
+    db_schema: str = Field("dpm", validation_alias=AliasChoices("MSSQL_SCHEMA", "MSSQL_DB_SCHEMA"))
     # Kerberos by default: the same ticket the warehouse overlay uses, and no password to
     # keep anywhere. Set MSSQL_TRUSTED_CONNECTION=false to use a SQL login instead.
     trusted_connection: bool = True

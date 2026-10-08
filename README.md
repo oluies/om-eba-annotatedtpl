@@ -208,6 +208,26 @@ Read by `ba_form_cell.py`, the overlay that answers what a physical column actua
 | `PAY42_EXTENSION_DIR` | Extension directory | DuckDB's own |
 | `PAY42_MEMORY_LIMIT` | e.g. `2GB` | unlimited |
 
+### `MSSQL_*` — loading the dictionary into SQL Server
+
+Read by `source/load_to_mssql.py`. Kerberos by default, so with `MSSQL_SERVER` set and a
+`kinit` ticket there is nothing else to configure and no password to keep.
+
+| Variable | What it is | Default |
+|---|---|---|
+| `MSSQL_SERVER` | Host. No default: there is nothing sensible to guess | — |
+| `MSSQL_PORT` | | `1433` |
+| `MSSQL_DATABASE` | The target database, which must already exist | `DPM2` |
+| `MSSQL_SCHEMA` | The target schema, created if absent. Also accepted as `MSSQL_DB_SCHEMA`, because the field cannot be called `schema` — Pydantic has that name | `dpm` |
+| `MSSQL_TRUSTED_CONNECTION` | Kerberos. `Trusted_Connection=yes` resolves to `authenticator=krb5` on POSIX. Set `false` to use the two below | `true` |
+| `MSSQL_USERNAME`, `MSSQL_PASSWORD` | A SQL login; both are required once the trusted connection is off | unset |
+| `MSSQL_ENCRYPT`, `MSSQL_TRUST_SERVER_CERTIFICATE` | TLS on, and whether to accept a self-signed certificate | `true`, `false` |
+
+So the default target is `DPM2.dpm`. The T-SQL in
+[`README_DPM2.md`](README_DPM2.md) writes that schema literally, as `dpm.RuleSum` and
+`dpm.Operation`; point `MSSQL_SCHEMA` somewhere else and those queries need the same
+rename.
+
 ### `DPM2_*` — the DPM 2.0 database
 
 | Variable | What it is | Default |

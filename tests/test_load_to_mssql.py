@@ -63,7 +63,19 @@ def test_redacting_leaves_everything_else_alone():
 
 
 def test_the_schema_setting_is_not_called_schema():
-    """`schema` shadows BaseModel.schema, so the field is db_schema and the variable
-    MSSQL_SCHEMA; a rename here would silently change which environment variable works."""
+    """`schema` shadows Pydantic's own, so the field is db_schema."""
     assert "db_schema" in Settings.model_fields
     assert L.Settings.model_config["env_prefix"] == "MSSQL_"
+
+
+@pytest.mark.parametrize("name", ["MSSQL_SCHEMA", "MSSQL_DB_SCHEMA"])
+def test_both_names_for_the_schema_work(monkeypatch, name):
+    """MSSQL_SCHEMA is what anyone would reach for, and before the alias it was accepted
+    and ignored - the loader wrote to dpm while the environment said otherwise."""
+    monkeypatch.setenv("MSSQL_SERVER", "dbhost.example")
+    monkeypatch.setenv(name, "chosen")
+    assert Settings().db_schema == "chosen"
+
+
+def test_the_schema_defaults_to_dpm():
+    assert settings().db_schema == "dpm"
