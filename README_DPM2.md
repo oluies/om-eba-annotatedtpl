@@ -579,6 +579,120 @@ Across PSD_FRP 1.1.0 this answers 596 sums from 93 of its 114 rules, over 408 di
 total cells. DORA answers none: its 71 rules are presence and comparison checks, not
 arithmetic.
 
+A rule carries no readable name to borrow instead. `OperationVersion.Description` is
+populated for most versions, but it restates the expression - `{r0520} = {r0010} +
+{r0180} + {r0360}` - or holds a status word like `Deactivated`, and for the four
+hierarchy rules of `F_12.01.a` it is null. The prose has to be built, and the axis labels
+are what to build it from: join the headers back on, `Direction = 'Y'` for rows and
+`'X'` for columns.
+
+```sql
+WITH RECURSIVE scoped AS (
+    SELECT op.Code AS rule_code, ov.OperationVID
+    FROM   Operation op
+    JOIN   OperationVersion ov           ON ov.OperationID = op.OperationID
+    JOIN   OperationScope os             ON os.OperationVID = ov.OperationVID
+    JOIN   OperationScopeComposition osc ON osc.OperationScopeID = os.OperationScopeID
+    JOIN   ModuleVersion mv              ON mv.ModuleVID = osc.ModuleVID
+    WHERE  mv.Code = 'FINREP9' AND mv.VersionNumber = '3.3.0'
+), node AS (
+    SELECT s.rule_code, n.NodeID, n.ParentNodeID, n.IsLeaf, o.Symbol
+    FROM   scoped s JOIN OperationNode n ON n.OperationVID = s.OperationVID
+    LEFT JOIN Operator o ON o.OperatorID = n.OperatorID
+), child AS (
+    SELECT r.NodeID AS eq, c.NodeID, c.Symbol, c.IsLeaf
+    FROM   node r JOIN node c ON c.ParentNodeID = r.NodeID
+    WHERE  r.ParentNodeID IS NULL AND r.Symbol = '='
+), descend AS (
+    SELECT eq, NodeID AS node, IsLeaf FROM child WHERE Symbol = '+'
+    UNION ALL
+    SELECT d.eq, n.NodeID, n.IsLeaf FROM descend d JOIN node n ON n.ParentNodeID = d.node
+), cells AS (
+    SELECT r.NodeID, l."Table" AS tbl, coalesce(l."Row",'*') AS row_code,
+           coalesce(l."Column",'*') AS col, coalesce(l.Sheet,'') AS sheet
+    FROM   OperandReference r JOIN OperandReferenceLocation l USING (OperandReferenceID)
+), label AS (
+    SELECT h.Direction, hv.Code, hv.Label
+    FROM   ModuleVersionComposition mvc
+    JOIN   TableVersion tv USING (TableVID)
+    JOIN   ModuleVersion mv USING (ModuleVID)
+    JOIN   TableVersionHeader tvh ON tvh.TableVID = tv.TableVID
+    JOIN   HeaderVersion hv ON hv.HeaderVID = tvh.HeaderVID
+    JOIN   Header h ON h.HeaderID = tvh.HeaderID
+    WHERE  tv.Code = 'F_12.01.a' AND mv.Code = 'FINREP9' AND mv.VersionNumber = '3.3.0'
+)
+SELECT   t.rule_code,
+         tc.row_code || '  ' || tl.Label                           AS total,
+         list_sort(list(DISTINCT ac.row_code || '  ' || al.Label)) AS addends,
+         list_sort(list(DISTINCT tc.col || '  ' || cl.Label))      AS columns
+FROM     child eqs
+JOIN     node t    ON t.NodeID = eqs.NodeID AND eqs.IsLeaf <> 0
+JOIN     cells tc  ON tc.NodeID = t.NodeID
+JOIN     descend a ON a.eq = eqs.eq AND a.IsLeaf <> 0
+JOIN     cells ac  ON ac.NodeID = a.node
+                  AND ac.tbl = tc.tbl AND ac.col = tc.col AND ac.sheet = tc.sheet
+JOIN     label tl ON tl.Direction = 'Y' AND tl.Code = tc.row_code
+JOIN     label al ON al.Direction = 'Y' AND al.Code = ac.row_code
+JOIN     label cl ON cl.Direction = 'X' AND cl.Code = tc.col
+WHERE    tc.tbl = 'F_12.01.a'
+GROUP BY t.rule_code, tc.row_code, tl.Label
+ORDER BY tc.row_code, t.rule_code;
+```
+
+Which turns the nuance about row 0520 into something a reader can act on:
+
+```
+rule_code = v09604_m
+    total = 0520  Total allowance for debt instruments
+  addends = [0010  Allowances for financial assets without increase in credit risk (Stage 1),
+             0180  Allowances for debt instruments with significant increase in credit risk (Stage 2),
+             0360  Allowances for credit-impaired debt instruments (Stage 3)]
+  columns = [0020  Increases due to origination and acquisition]
+```
+
+## Reading a reported instance
+
+The EBA publishes sample instances for every module, in both formats, from the reporting
+framework page: `sample_instances_4.2_hotfix.zip` unpacks into `xBRL-XML.zip` and
+`xBRL-CSV.zip`, and the CSV one has a file per template - `f_12.01.a.csv` among them.
+
+The xBRL-CSV form keys each fact by a datapoint id and nothing else:
+
+```
+datapoint,factValue
+dp150067,53226
+dp150103,80102
+```
+
+**`dp<N>` is `VariableVersion.VariableID`.** Not `CellID`, and not `VariableVID`: of the
+808 facts in `f_12.01.a.csv`, all 808 match on `VariableID` and none on either of the
+others. That is the join from reported data back to the model:
+
+```sql
+SELECT DISTINCT c.CellCode, mv.Code || ' ' || mv.VersionNumber AS module
+FROM   VariableVersion vv
+JOIN   TableVersionCell c ON c.VariableVID = vv.VariableVID
+JOIN   ModuleVersionComposition mvc ON mvc.TableVID = c.TableVID
+JOIN   ModuleVersion mv ON mv.ModuleVID = mvc.ModuleVID
+WHERE  vv.VariableID = 149866
+ORDER  BY module;
+```
+
+`dp149866` is `{F_12.01.a, r0010, c0010}` in all five module versions that contain the
+template, which is the useful part: the datapoint id is the stable identity of a reported
+fact across releases, where `VariableVID` and `CellID` are not.
+
+### The samples will fail every arithmetic rule
+
+Do not reach for them to check a sum. The 808 values in `f_12.01.a.csv` are integers
+uniformly spread between 50044 and 99883, 803 of them distinct, under the LEI
+`DUMMYLEI123456789012`. They are structural samples: they exercise a parser against the
+taxonomy, and none of the six sums above holds in any of the twelve columns.
+
+That is worth stating because the failure looks like a finding. Checking it the other way
+round - does the derived row and column agree with the cell's own `CellCode`? - is what
+separates "the data is noise" from "the query is wrong", and it is the check to run first.
+
 ### Checking the pack against the model
 
 ```sql

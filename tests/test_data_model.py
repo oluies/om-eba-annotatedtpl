@@ -81,7 +81,9 @@ EXPECTED_ROWS = {
     "o.Code, os.Severity, ov.Expression": 114,  # rules in scope
     "o.Code = 'v09123_m'": 36,  # the cells one rule reaches
     "FULL OUTER JOIN pack.datapoints": 0,  # the pack against the model
-    "tc.tbl = 'F_12.01.a'": 6,  # how F 12.01.a adds up
+    "tc.tbl = 'F_12.01.a'\nGROUP BY t.rule_code, tc.row_code\nORDER": 6,  # how F 12.01.a adds up
+    "tl.Direction = 'Y'": 6,  # the same, with the axis labels joined back on
+    "vv.VariableID = 149866": 5,  # a sample instance's datapoint id, resolved to its cell
 }
 
 
