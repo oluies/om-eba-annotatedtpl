@@ -16,8 +16,13 @@ there is not recoverable from here.
 
 A CTAS leaves a heap, so the load also creates 62 indexes - 21 clustered on the identity
 columns and 41 on everything the queries in README_DPM2.md join or filter through. Without
-them every one of those joins is a table scan over up to 1.7 million rows. `--no-indexes`
-skips that if you would rather index by hand.
+them every one of those joins is a table scan over up to 1.7 million rows.
+
+    uv run source/load_to_mssql.py --indexes-only --commit    # already loaded, no indexes
+
+Indexing covers whatever is on the target, not only what the run just created, so that
+command adds them to a schema loaded before this existed. Every statement is guarded on
+sys.indexes, so running it again changes nothing. `--no-indexes` skips the step entirely.
 
 The extension speaks TDS directly, so no ODBC driver is needed. With `MSSQL_SERVER` set
 and nothing else, it authenticates with your Kerberos ticket - `Trusted_Connection=yes`
@@ -219,8 +224,11 @@ def main() -> None:
     )
     parser.add_argument("--tables", nargs="*", help="only these tables; all of them by default")
     parser.add_argument("--no-indexes", action="store_true", help="load the data and index nothing")
+    parser.add_argument("--indexes-only", action="store_true", help="index what is already loaded and move no data")
     args = parser.parse_args()
 
+    if args.indexes_only and args.no_indexes:
+        raise SystemExit("--indexes-only and --no-indexes ask for opposite things")
     if not DPM2.exists():
         raise SystemExit(f"{DPM2} does not exist - run source/fetch_dpm2.py first")
 
@@ -236,7 +244,10 @@ def main() -> None:
     print(f"into {target} on {SETTINGS.server} as {redacted(connection)}")
 
     if not args.commit:
-        print("\nwould create, in this order:")
+        if args.indexes_only:
+            print("\nwould move no data, and index whatever of these is already there:")
+        else:
+            print("\nwould create, in this order:")
         for table in wanted:
             print(f"  {target}.{table:28} {available[table]:>9,} rows".replace(",", " "))
         if not args.no_indexes:
@@ -247,7 +258,8 @@ def main() -> None:
                 print(f"  {index.statement(SETTINGS.db_schema)[:150]}")
             if len(planned) > 3:
                 print(f"  ... and {len(planned) - 3} more")
-        also = "" if args.replace else " (and --replace to drop tables that already exist)"
+        # --replace is meaningless when no data moves, so do not advertise it there.
+        also = "" if args.replace or args.indexes_only else " (and --replace to drop tables that already exist)"
         print(f"\nNothing written. Re-run with --commit{also}.")
         return
 
@@ -269,7 +281,7 @@ def main() -> None:
     }
 
     results: list[Loaded] = []
-    for table in wanted:
+    for table in wanted if not args.indexes_only else []:
         qualified = f'ms.{SETTINGS.db_schema}."{table}"'
         if table in existing:
             if not args.replace:
@@ -293,8 +305,21 @@ def main() -> None:
     # Indexes after the data, and the clustered one before the rest of its table's:
     # creating it afterwards rebuilds every non-clustered index already there. CTAS leaves
     # a heap, so without this every join in README_DPM2.md is a scan.
-    if not args.no_indexes and results:
-        planned = index_plan(unique_parent_keys(con, wanted), [r.table for r in results])
+    #
+    # Over what is on the target now rather than over what this run created. The first
+    # version indexed only the latter, so a re-run against an already-loaded schema
+    # skipped every table as existing and then created no indexes at all - which is the
+    # state anyone who loaded before this existed would be in. Every statement is guarded
+    # on sys.indexes, so covering them all is idempotent and nearly free.
+    present = {
+        row[0]
+        for row in con.execute(
+            "SELECT table_name FROM duckdb_tables() WHERE database_name = 'ms' AND schema_name = ?",
+            [SETTINGS.db_schema],
+        ).fetchall()
+    } & set(wanted)
+    if not args.no_indexes and present:
+        planned = index_plan(unique_parent_keys(con, wanted), present)
         for index in planned:
             con.execute("SELECT mssql_exec('ms', ?)", [index.statement(SETTINGS.db_schema)])
         clustered = sum(1 for i in planned if i.unique)
