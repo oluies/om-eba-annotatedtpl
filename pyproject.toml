@@ -39,6 +39,7 @@ extra-paths = [".", "source", "tests"]
 # ruff sorts them in with httpx and duckdb and the import block stops saying anything.
 known-first-party = [
     "agent_tools",
+    "check_instance",
     "ba_form_cell",
     "conftest",
     "describe_table",

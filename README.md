@@ -20,6 +20,7 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `pay42_lookup.py` | Deterministic datapoint lookup over DuckDB, and its tool definition | You are giving an agent a lookup tool |
 | `agent_tools.py` | All six tool definitions and one dispatcher | You are wiring the tools into an agent |
 | `dpm_lookup.py` | Lookup over the whole DPM 2.0 database, for frameworks this pack does not cover | A warehouse table is COREP, FINREP or anything but PAY and DORA |
+| `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file | You want to know whether a report adds up before you send it |
 | `display_names.py` | The rule for what a table and its columns are called | You are setting display names |
 | `08-lookup-tool.md` | How to register and dispatch that tool | You are wiring it into an agent |
 | `03-glossary/domains-and-members.md` | The 54 controlled values across 4 domains | You need the vocabulary |
