@@ -123,3 +123,86 @@ def test_the_dictionary_is_visible_under_its_alias():
         con.close()
     assert len(tables) == 73, "the DPM 2.0 release has 73 tables"
     assert tables["Cell"] > 0
+
+
+# --- the indexes -----------------------------------------------------------------------
+
+
+def test_a_unique_key_becomes_the_clustered_index():
+    """Cell also joins out through TableID, RowID, ColumnID and SheetID, so the clustered
+    one is the first of several rather than the only one."""
+    plan = L.index_plan({("Cell", "CellID")}, ["Cell"])
+    assert plan[0] == L.Index("Cell", ("CellID",), unique=True)
+    assert "UNIQUE CLUSTERED" in plan[0].statement("dpm")
+    assert sum(1 for i in plan if i.unique) == 1
+
+
+def test_a_join_column_becomes_a_non_clustered_index():
+    plan = L.index_plan(set(), ["ContextComposition"])
+    columns = {i.columns[0] for i in plan if i.table == "ContextComposition"}
+    assert {"ContextID", "ItemID", "PropertyID"} <= columns
+    assert not any(i.unique for i in plan)
+
+
+def test_a_column_that_is_both_is_indexed_once():
+    """Property.PropertyID is its own identity and a join into Item."""
+    plan = L.index_plan({("Property", "PropertyID")}, ["Property"])
+    on_propertyid = [i for i in plan if i.columns == ("PropertyID",)]
+    assert len(on_propertyid) == 1
+    assert on_propertyid[0].unique
+
+
+def test_nothing_is_planned_for_a_table_that_was_not_loaded():
+    assert L.index_plan({("Cell", "CellID")}, ["Concept"]) == []
+
+
+def test_the_clustered_index_comes_before_its_tables_others():
+    """Creating it afterwards rebuilds every non-clustered index already there."""
+    plan = L.index_plan({("VariableVersion", "VariableVID")}, ["VariableVersion"])
+    first = next(i for i, ix in enumerate(plan) if ix.unique)
+    others = [i for i, ix in enumerate(plan) if not ix.unique and ix.table == "VariableVersion"]
+    assert all(first < o for o in others)
+
+
+def test_a_reserved_word_column_is_bracketed():
+    """The model has columns called Table, Row, Column and Order."""
+    statement = L.Index("OperandReferenceLocation", ("Table",), unique=False).statement("dpm")
+    assert "([Table])" in statement
+
+
+def test_the_statement_is_a_no_op_the_second_time():
+    statement = L.Index("Cell", ("CellID",), unique=True).statement("dpm")
+    assert statement.startswith("IF NOT EXISTS (SELECT 1 FROM sys.indexes")
+    assert "OBJECT_ID('[dpm].[Cell]')" in statement
+
+
+def test_the_schema_reaches_the_statement():
+    assert "[other].[Cell]" in L.Index("Cell", ("CellID",), unique=True).statement("other")
+
+
+@needs_dpm2
+def test_the_whole_plan_is_valid_t_sql():
+    """Sixty-two statements that will be sent to a server, parsed before they are."""
+    import sqlfluff
+
+    con = L.open_source(DPM2_DB)
+    try:
+        tables = list(L.source_tables(con))
+        plan = L.index_plan(L.unique_parent_keys(con, tables), tables)
+    finally:
+        con.close()
+    assert len(plan) > 50
+    for index in plan:
+        sqlfluff.parse(index.statement("dpm"), dialect="tsql")
+
+
+@needs_dpm2
+def test_every_identity_column_measures_unique():
+    """The plan calls them unique, so a unique index would fail the load if they were not."""
+    con = L.open_source(DPM2_DB)
+    try:
+        tables = list(L.source_tables(con))
+        found = L.unique_parent_keys(con, tables)
+    finally:
+        con.close()
+    assert len(found) == 21
