@@ -5,8 +5,9 @@ whether the export inside it finished, so an empty or partial one was read as "a
 done" and DuckDB was then told to read a file that was never written.
 """
 
-import fetch_dpm2
 import pytest
+
+import fetch_dpm2
 
 
 def test_nothing_exported_yet(tmp_path):
