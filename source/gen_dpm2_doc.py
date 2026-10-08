@@ -721,10 +721,12 @@ WITH RECURSIVE scoped AS (
     FROM   tree d JOIN edge e ON e.parent = d.node
     WHERE  d.level < 10            -- the data has no cycle; a query should not assume it
 )
+-- breakdown last: it is the only column of unbounded width, and with a FINREP label in
+-- it anything after it scrolls off the page.
 SELECT   t.level,
-         repeat('   ', t.level) || t.node || '  ' || coalesce(l.Label, '(no label)') AS breakdown,
          t.via,
-         t.node IN (SELECT parent FROM edge) AS splits_further
+         t.node IN (SELECT parent FROM edge) AS splits_further,
+         repeat('   ', t.level) || t.node || '  ' || coalesce(l.Label, '(no label)') AS breakdown
 FROM     tree t LEFT JOIN label l ON l.row_code = t.node
 ORDER BY t.path;
 ```
@@ -732,20 +734,26 @@ ORDER BY t.path;
 For `F_12.01.a`, column 0010:
 
 ```
-0  0520  Total allowance for debt instruments
-1     0010  Allowances for financial assets without increase in credit risk ... (Stage 1)
-2        0020  Debt securities
-2        0080  Loans and advances
-1     0180  Allowances for debt instruments with significant increase ... (Stage 2)
-2        0190  Debt securities
-2        0250  Loans and advances
-1     0360  Allowances for credit-impaired debt instruments (Stage 3)
-2        0370  Debt securities
-2        0430  Loans and advances
-1     0600  Allowances for purchased or originated credit-impaired financial assets
-2        0610  Debt securities
-2        0670  Loans and advances
+level  via        splits  breakdown
+0      NULL       true    0520  Total allowance for debt instruments
+1      v5051_m    true       0010  Allowances for financial assets without increase in ... (Stage 1)
+2      v23845_h   false         0020  Debt securities
+2      v23845_h   false         0080  Loans and advances
+1      v5051_m    true       0180  Allowances for debt instruments with significant ... (Stage 2)
+2      v23846_h   false         0190  Debt securities
+2      v23846_h   false         0250  Loans and advances
+1      v5051_m    true       0360  Allowances for credit-impaired debt instruments (Stage 3)
+2      v23847_h   false         0370  Debt securities
+2      v23847_h   false         0430  Loans and advances
+1      v5051_m    true       0600  Allowances for purchased or originated credit-impaired ...
+2      v23848_h   false         0610  Debt securities
+2      v23848_h   false         0670  Loans and advances
 ```
+
+Four columns, and each earns its place. `level` and the indent give the shape, `breakdown`
+the code with its label, `splits` says whether a row breaks down further - a leaf here is
+a row nothing else decomposes - and `via` names the rule that put the row under its
+parent. The labels above are cut to fit this page; the query does not cut them.
 
 Three stages and POCI, each splitting into debt securities and loans. Change `tc.col`
 to `0020` and the answer is ten rows rather than thirteen: **the entire POCI branch is
@@ -826,9 +834,9 @@ descend AS (
 
 SELECT
     d.Level,
-    REPLICATE('   ', d.Level) + d.Node + '  ' + COALESCE(l.Label, '(no label)') AS Breakdown,
     d.Via,
-    CASE WHEN d.Node IN (SELECT e.Parent FROM edge AS e) THEN 1 ELSE 0 END AS SplitsFurther
+    CASE WHEN d.Node IN (SELECT e.Parent FROM edge AS e) THEN 1 ELSE 0 END AS SplitsFurther,
+    REPLICATE('   ', d.Level) + d.Node + '  ' + COALESCE(l.Label, '(no label)') AS Breakdown
 FROM descend AS d
 LEFT JOIN label AS l ON l.RowCode = d.Node
 ORDER BY d.Path;
