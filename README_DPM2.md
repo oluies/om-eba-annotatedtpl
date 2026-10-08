@@ -1,7 +1,7 @@
 # The DPM 2.0 database, locally
 
 Release **4.2.1** (2026-02-15) of the EBA DPM 2.0 database, loaded into DuckDB: 73 tables,
-5,728,777 rows, 139 MB. It is the model the pack is built from, which the annotated table
+5,728,777 rows, 138 MB. It is the model the pack is built from, which the annotated table
 layout only renders.
 
 ```bash
@@ -735,6 +735,208 @@ ORDER BY 2 DESC;
 
 COREP, PILLAR3, IF, MiCA and a few others. The eight under PAY belong to SEPA_IPR, not
 to the fraud-reporting module this pack describes.
+
+## The same questions in T-SQL
+
+Once `source/load_to_mssql.py` has put the dictionary next to the reported figures, the
+queries above need porting. The shape carries over; five constructs do not.
+
+| DuckDB | T-SQL |
+|---|---|
+| `WITH RECURSIVE` | `WITH`. The keyword does not exist, and recursion stops at 100 levels unless the statement ends `OPTION (MAXRECURSION 0)` |
+| `JOIN x USING (col)` | not supported at all - `INNER JOIN x ON x.col = y.col` |
+| `count(*) FILTER (WHERE p)` | `SUM(CASE WHEN p THEN 1 ELSE 0 END)` |
+| `list_sort(list(DISTINCT x))` | no list type. `STRING_AGG(x, ', ') WITHIN GROUP (ORDER BY x)`, and it takes no `DISTINCT`, so duplicates have to go in a derived table first |
+| `max_by(TableVID, [StartReleaseID, TableVID])` | `ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...)`, filtered to 1 |
+
+`regexp_extract` has no equivalent either.
+
+And one that bites on the first `SELECT`: the model's column names include `Table`, `Row`,
+`Column`, `Order` and `Level`, all reserved words. They are legal identifiers but need
+delimiting everywhere - `[Table]`, where DuckDB took `"Table"`. A CTAS creates them
+without complaint; it is every query afterwards that needs the brackets.
+
+### The sums, as a view
+
+Parameterised by column rather than by argument, because a view takes none: filter on
+`ModuleCode` and `ModuleVersion` when you select from it.
+
+```tsql
+CREATE OR ALTER VIEW dpm.RuleSum AS
+WITH scoped AS (
+    SELECT
+        mv.Code AS ModuleCode, mv.VersionNumber AS ModuleVersion,
+        op.Code AS RuleCode, os.Severity AS Severity, ov.OperationVID AS OperationVID
+    FROM dpm.Operation AS op
+    INNER JOIN dpm.OperationVersion AS ov ON ov.OperationID = op.OperationID
+    INNER JOIN dpm.OperationScope AS os ON os.OperationVID = ov.OperationVID
+    INNER JOIN dpm.OperationScopeComposition AS osc ON osc.OperationScopeID = os.OperationScopeID
+    INNER JOIN dpm.ModuleVersion AS mv ON mv.ModuleVID = osc.ModuleVID
+),
+
+node AS (
+    SELECT
+        s.ModuleCode, s.ModuleVersion, s.RuleCode, s.Severity,
+        n.NodeID, n.ParentNodeID, n.IsLeaf, o.Symbol
+    FROM scoped AS s
+    INNER JOIN dpm.OperationNode AS n ON n.OperationVID = s.OperationVID
+    LEFT JOIN dpm.Operator AS o ON o.OperatorID = n.OperatorID
+),
+
+child AS (
+    SELECT
+        r.ModuleCode, r.ModuleVersion, r.RuleCode, r.Severity,
+        r.NodeID AS Eq, c.NodeID AS NodeID, c.Symbol, c.IsLeaf
+    FROM node AS r
+    INNER JOIN node AS c ON c.ParentNodeID = r.NodeID
+    WHERE r.ParentNodeID IS NULL AND r.Symbol = '='
+),
+
+descend AS (
+    SELECT Eq, NodeID AS Node, IsLeaf FROM child WHERE Symbol = '+'
+    UNION ALL
+    SELECT d.Eq, n.NodeID AS Node, n.IsLeaf
+    FROM descend AS d
+    INNER JOIN dpm.OperationNode AS n ON n.ParentNodeID = d.Node
+),
+
+cells AS (
+    SELECT
+        r.NodeID,
+        l.[Table] AS TableCode,
+        COALESCE(l.[Row], '*') AS RowCode,
+        COALESCE(l.[Column], '*') AS ColumnCode,
+        COALESCE(l.Sheet, '') AS SheetCode
+    FROM dpm.OperandReference AS r
+    INNER JOIN dpm.OperandReferenceLocation AS l ON l.OperandReferenceID = r.OperandReferenceID
+),
+
+-- DISTINCT here, so the STRING_AGG below does not need one; it cannot take one.
+pair AS (
+    SELECT DISTINCT
+        eqs.ModuleCode, eqs.ModuleVersion, eqs.RuleCode, eqs.Severity,
+        tc.TableCode, tc.ColumnCode, tc.SheetCode,
+        tc.RowCode AS TotalRow, ac.RowCode AS AddendRow
+    FROM child AS eqs
+    INNER JOIN cells AS tc ON tc.NodeID = eqs.NodeID AND eqs.IsLeaf <> 0
+    INNER JOIN descend AS a ON a.Eq = eqs.Eq AND a.IsLeaf <> 0
+    INNER JOIN cells AS ac
+        ON ac.NodeID = a.Node
+            AND ac.TableCode = tc.TableCode
+            AND ac.ColumnCode = tc.ColumnCode
+            AND ac.SheetCode = tc.SheetCode
+)
+
+SELECT
+    ModuleCode, ModuleVersion, RuleCode, Severity,
+    TableCode, ColumnCode, SheetCode, TotalRow,
+    COUNT(*) AS AddendCount,
+    STRING_AGG(AddendRow, ', ') WITHIN GROUP (ORDER BY AddendRow) AS AddendRows
+FROM pair
+GROUP BY
+    ModuleCode, ModuleVersion, RuleCode, Severity,
+    TableCode, ColumnCode, SheetCode, TotalRow;
+```
+
+Which answers the F 12.01.a question as a filter rather than an edit:
+
+```tsql
+SELECT RuleCode, TotalRow, AddendRows, ColumnCode
+FROM dpm.RuleSum
+WHERE ModuleCode = 'FINREP9' AND ModuleVersion = '3.3.0' AND TableCode = 'F_12.01.a'
+ORDER BY TotalRow, RuleCode;
+```
+
+### The other queries, ported
+
+Templates in one module version - `USING` becomes `ON`:
+
+```tsql
+SELECT tv.TableVID, tv.Code, tv.[Name]
+FROM dpm.ModuleVersionComposition AS mvc
+INNER JOIN dpm.TableVersion AS tv ON tv.TableVID = mvc.TableVID
+INNER JOIN dpm.ModuleVersion AS mv ON mv.ModuleVID = mvc.ModuleVID
+WHERE mv.Code = 'PSD_FRP' AND mv.VersionNumber = '1.1.0'
+ORDER BY tv.Code;
+```
+
+Cells per template - `FILTER` becomes a `CASE`:
+
+```tsql
+SELECT
+    tv.Code,
+    COUNT(*) AS Cells,
+    SUM(CASE WHEN c.IsExcluded <> 0 THEN 1 ELSE 0 END) AS Excluded
+FROM dpm.ModuleVersionComposition AS mvc
+INNER JOIN dpm.TableVersion AS tv ON tv.TableVID = mvc.TableVID
+INNER JOIN dpm.TableVersionCell AS c ON c.TableVID = tv.TableVID
+INNER JOIN dpm.ModuleVersion AS mv ON mv.ModuleVID = mvc.ModuleVID
+WHERE mv.Code = 'PSD_FRP' AND mv.VersionNumber = '1.1.0'
+GROUP BY tv.Code
+ORDER BY tv.Code;
+```
+
+What one cell measures:
+
+```tsql
+SELECT DISTINCT dimension.[Name] AS Dimension, member.[Name] AS Member
+FROM dpm.ModuleVersionComposition AS mvc
+INNER JOIN dpm.ModuleVersion AS mv ON mv.ModuleVID = mvc.ModuleVID
+INNER JOIN dpm.TableVersionCell AS c ON c.TableVID = mvc.TableVID
+INNER JOIN dpm.VariableVersion AS vv ON vv.VariableVID = c.VariableVID
+INNER JOIN dpm.ContextComposition AS cc ON cc.ContextID = vv.ContextID
+INNER JOIN dpm.Item AS member ON member.ItemID = cc.ItemID
+INNER JOIN dpm.Item AS dimension ON dimension.ItemID = cc.PropertyID
+WHERE mv.Code = 'PSD_FRP' AND mv.VersionNumber = '1.1.0'
+    AND c.CellCode = '{Y_01.01, r0010, c0010, s0010}'
+ORDER BY dimension.[Name], member.[Name];
+```
+
+A reported fact back to its cell, which is the reason to do any of this - note the `+`
+for string concatenation where DuckDB uses `||`:
+
+```tsql
+SELECT DISTINCT c.CellCode, mv.Code + ' ' + mv.VersionNumber AS Module
+FROM dpm.VariableVersion AS vv
+INNER JOIN dpm.TableVersionCell AS c ON c.VariableVID = vv.VariableVID
+INNER JOIN dpm.ModuleVersionComposition AS mvc ON mvc.TableVID = c.TableVID
+INNER JOIN dpm.ModuleVersion AS mv ON mv.ModuleVID = mvc.ModuleVID
+WHERE vv.VariableID = 149866
+ORDER BY Module;
+```
+
+The newest version of each template - `max_by` becomes a window function:
+
+```tsql
+WITH ranked AS (
+    SELECT
+        tv.Code, tv.TableVID,
+        ROW_NUMBER() OVER (
+            PARTITION BY tv.Code ORDER BY tv.StartReleaseID DESC, tv.TableVID DESC
+        ) AS Newest
+    FROM dpm.TableVersion AS tv
+)
+
+SELECT r.Code, r.TableVID
+FROM ranked AS r
+WHERE r.Newest = 1
+ORDER BY r.Code;
+```
+
+### What these have and have not been checked against
+
+Every one of them parses under `sqlfluff --dialect tsql`, which is a syntax check and
+nothing more. **None has been run against SQL Server.** The DuckDB queries above are
+executed by the test suite on every run and their row counts asserted; these are not, and
+cannot be until there is a server to point at. Treat the row counts quoted for the DuckDB
+versions as the expected answers and check them after the first load.
+
+One behavioural difference to expect rather than discover. Reading the attached database
+*from* DuckDB, a pushed-down predicate is evaluated by SQL Server and so follows the
+column's collation, not DuckDB's byte comparison. Every code in this model is a string, so
+`GROUP BY`, `DISTINCT` and string joins can group differently on the two sides - most
+visibly where case is the only difference, as in `Property.PeriodType` holding both
+`Stock` and `stock`.
 
 ## Every table in the database
 

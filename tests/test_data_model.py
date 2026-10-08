@@ -119,6 +119,31 @@ def test_every_published_query_runs():
     assert matched == set(EXPECTED_ROWS), f"no query contains: {sorted(set(EXPECTED_ROWS) - matched)}"
 
 
+@pytest.mark.skipif(not README.exists(), reason="README_DPM2.md has not been generated")
+def test_every_published_t_sql_block_parses():
+    """The T-SQL variants cannot be run here - there is no SQL Server to point at - so
+    this is the only thing standing between them and a reader pasting broken SQL into a
+    server. sqlfluff.parse raises on an unparsable section, which is the whole check.
+    """
+    import sqlfluff
+
+    blocks = re.findall(r"```tsql\n(.*?)```", README.read_text(), re.S)
+    assert len(blocks) >= 7, "the T-SQL section is missing or shrank"
+    for n, sql in enumerate(blocks, 1):
+        sqlfluff.parse(sql, dialect="tsql")  # raises APIParsingError if it does not parse
+        # The one mistake already made here: writing `&#43;` out of habit, to dodge a build
+        # guard this document is exempt from. It renders literally inside a code block.
+        assert "&#" not in sql, f"block {n} contains an HTML entity"
+
+
+@pytest.mark.skipif(not README.exists(), reason="README_DPM2.md has not been generated")
+def test_the_t_sql_blocks_are_not_run_against_duckdb():
+    """They are tagged tsql precisely so the DuckDB runner leaves them alone."""
+    text = README.read_text()
+    duck = re.findall(r"```sql\n(.*?)```", text, re.S)
+    assert not any("STRING_AGG" in q or "CREATE OR ALTER VIEW" in q for q in duck)
+
+
 @needs_dpm2
 def test_every_relationship_still_holds_in_this_release():
     """What the generator asserts at build time, asserted again as a test."""

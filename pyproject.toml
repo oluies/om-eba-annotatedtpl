@@ -20,6 +20,7 @@ dependencies = [
 dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.9",
+    "sqlfluff>=4.4.0",
     "ty>=0.0.85",
 ]
 
@@ -62,6 +63,8 @@ addopts = "-q"
 # conftest.py puts the repository root on sys.path, which has to happen before the modules
 # that live there can be imported. The late imports are the point of the file.
 "tests/conftest.py" = ["E402"]
-# gen_pack.py embeds the generated Markdown as string literals. Wrapping those lines
-# would wrap the output, so the limit applies to the code around them, not to prose.
+# These two embed the generated Markdown as string literals. Wrapping those lines would
+# wrap the output, and a Markdown table row cannot be wrapped at all, so the limit
+# applies to the code around the prose rather than to the prose.
 "source/gen_pack.py" = ["E501"]
+"source/gen_dpm2_doc.py" = ["E501"]
