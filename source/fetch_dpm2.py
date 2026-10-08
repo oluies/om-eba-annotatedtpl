@@ -76,21 +76,61 @@ def unpack(archive: Path, target: Path) -> None:
             shutil.copyfileobj(src, dst, 1 << 20)
 
 
-def mdb(accdb: Path, *args: str) -> str:
+def mdb(*argv: str) -> bytes:
+    """Run one mdbtools command and return its stdout as the bytes it produced.
+
+    Bytes, not text: `text=True` turns on universal newlines, which rewrites a carriage
+    return inside a quoted field. One such field in `Category` made the export a byte
+    shorter than what mdbtools wrote, and silently rewriting a value in a regulatory
+    dictionary is not a trade worth making for the convenience of a str.
+
+    The whole argv rather than a path appended to it, because the two commands want the
+    file in different places: `mdb-tables -1 <file>` but `mdb-export <file> <table>`.
+    Appending it worked for the first and silently produced nothing for the second.
+
+    And the exit code is not the signal. `mdb-export` given arguments it cannot use
+    writes to stderr, leaves stdout empty and exits 0, so anything on stderr is a failure.
+    """
     try:
-        return subprocess.run([*args, str(accdb)], capture_output=True, text=True, check=True).stdout
+        done = subprocess.run(argv, capture_output=True, check=True)
     except FileNotFoundError:
-        raise SystemExit(f"{args[0]} is not on PATH - install mdbtools 1.0+ (brew install mdbtools)") from None
+        raise SystemExit(f"{argv[0]} is not on PATH - install mdbtools (brew install mdbtools)") from None
+    if done.stderr.strip():
+        raise SystemExit(f"{' '.join(argv)}\n  {done.stderr.decode(errors='replace').strip()}")
+    return done.stdout
 
 
 def table_names(accdb: Path) -> tuple[str, ...]:
-    return tuple(filter(None, (line.strip() for line in mdb(accdb, "mdb-tables", "-1").splitlines())))
+    listed = mdb("mdb-tables", "-1", str(accdb)).decode("utf-8")
+    return tuple(filter(None, (line.strip() for line in listed.splitlines())))
+
+
+def missing_csvs(names: Iterable[str], out: Path) -> list[str]:
+    """Which tables have no export yet. Pure, and the only thing that decides whether to
+    export: that the directory exists says nothing about whether the export finished."""
+    return [name for name in names if not (out / f"{name}.csv").exists()]
 
 
 def export(accdb: Path, names: Iterable[str], out: Path) -> None:
+    """One CSV per table, each written to a .part first and renamed when complete.
+
+    An interrupted run used to leave a truncated file that looked finished, and a run
+    interrupted before the first table left an empty directory that the old guard read as
+    "already exported" - which surfaced as DuckDB failing to find a CSV it was told to read.
+    """
     out.mkdir(parents=True, exist_ok=True)
-    for name in names:
-        (out / f"{name}.csv").write_text(mdb(accdb, "mdb-export", name))
+    wanted = list(names)
+    for n, name in enumerate(wanted, 1):
+        part = out / f"{name}.csv.part"
+        exported = mdb("mdb-export", str(accdb), name)
+        if not exported.strip():
+            raise SystemExit(f"mdb-export produced nothing for {name}")
+        part.write_bytes(exported)
+        part.replace(out / f"{name}.csv")
+        if n % 20 == 0 or n == len(wanted):
+            print(f"  exported {n}/{len(wanted)}", file=sys.stderr)
+    if left := missing_csvs(wanted, out):
+        raise SystemExit(f"export did not produce: {', '.join(left[:5])}")
 
 
 def load(csv_dir: Path, names: Iterable[str], db: Path) -> dict[str, int]:
@@ -100,6 +140,8 @@ def load(csv_dir: Path, names: Iterable[str], db: Path) -> dict[str, int]:
     like '01.01' and '0010' that a short sample can read as numbers. Over the full file
     every Code column in the 4.2.1 release comes out VARCHAR, which is what they are.
     """
+    if absent := missing_csvs(names, csv_dir):
+        raise SystemExit(f"no export for {', '.join(absent[:5])} in {csv_dir} - re-run, or pass --force")
     db.unlink(missing_ok=True)
     con = duckdb.connect(str(db))
     counts = {}
@@ -131,8 +173,11 @@ def main() -> None:
         unpack(ZIP, ACCDB)
 
     names = table_names(ACCDB)
-    if force or not CSV_DIR.exists():
-        print(f"exporting {len(names)} tables", file=sys.stderr)
+    if missing := missing_csvs(names, CSV_DIR):
+        print(f"exporting {len(missing)} of {len(names)} tables", file=sys.stderr)
+        export(ACCDB, missing if not force else names, CSV_DIR)
+    elif force:
+        print(f"re-exporting all {len(names)} tables", file=sys.stderr)
         export(ACCDB, names, CSV_DIR)
 
     counts = load(CSV_DIR, names, DB)

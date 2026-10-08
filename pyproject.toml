@@ -45,6 +45,7 @@ known-first-party = [
     "describe_table",
     "display_names",
     "dpm_lookup",
+    "fetch_dpm2",
     "gen_dpm2_doc",
     "import_to_openmetadata",
     "pay42_lookup",
