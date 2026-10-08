@@ -94,9 +94,32 @@ def redacted(connection: str) -> str:
     return ";".join("Password=***" if p.lower().startswith("password=") else p for p in connection.split(";"))
 
 
+# The dictionary is attached under this name rather than opened as the main database.
+SOURCE = "src"
+
+
+def open_source(path: Path) -> duckdb.DuckDBPyConnection:
+    """A writable in-memory connection with the dictionary attached read-only.
+
+    Not a read-only connection to the file, which was the first attempt: a read-only
+    DuckDB instance refuses to attach any writable catalog, so the SQL Server side came
+    back `cannot execute mssql_exec: catalog ms is attached in read only mode`. In memory,
+    the source being read-only is stated about the source rather than inherited from how
+    the connection happened to be opened - which is what it was meant to say all along.
+    """
+    con = duckdb.connect()
+    con.execute(f"ATTACH '{path}' AS {SOURCE} (READ_ONLY)")
+    return con
+
+
 def source_tables(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
     """Every table in the local copy, with its row count."""
-    return dict(con.execute("SELECT table_name, estimated_size FROM duckdb_tables() ORDER BY table_name").fetchall())
+    return dict(
+        con.execute(
+            "SELECT table_name, estimated_size FROM duckdb_tables() WHERE database_name = ? ORDER BY table_name",
+            [SOURCE],
+        ).fetchall()
+    )
 
 
 def main() -> None:
@@ -112,7 +135,7 @@ def main() -> None:
         raise SystemExit(f"{DPM2} does not exist - run source/fetch_dpm2.py first")
 
     connection = connection_string(SETTINGS)
-    con = duckdb.connect(str(DPM2), read_only=True)
+    con = open_source(DPM2)
     available = source_tables(con)
     wanted = args.tables or sorted(available)
     if unknown := [t for t in wanted if t not in available]:
@@ -157,7 +180,7 @@ def main() -> None:
             con.execute(f"DROP TABLE {qualified}")
         # CTAS streams through the extension's bulk path; an INSERT above 1000 rows goes
         # through BCP, so there is nothing to batch by hand.
-        con.execute(f'CREATE TABLE {qualified} AS SELECT * FROM main."{table}"')
+        con.execute(f'CREATE TABLE {qualified} AS SELECT * FROM {SOURCE}."{table}"')
         counted = con.execute(f"SELECT count(*) FROM {qualified}").fetchone()
         results.append(
             Loaded(

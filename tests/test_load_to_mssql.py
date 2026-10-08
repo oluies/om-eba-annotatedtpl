@@ -7,6 +7,7 @@ the difference between a readable run log and a credential in someone's terminal
 import pytest
 
 import load_to_mssql as L
+from conftest import DPM2_DB, needs_dpm2
 from load_to_mssql import Settings, connection_string, redacted
 
 
@@ -79,3 +80,46 @@ def test_both_names_for_the_schema_work(monkeypatch, name):
 
 def test_the_schema_defaults_to_dpm():
     assert settings().db_schema == "dpm"
+
+
+# --- the connection, which is where this went wrong -----------------------------------
+
+
+@needs_dpm2
+def test_the_source_is_attached_read_only_but_the_instance_is_not(tmp_path):
+    """The reported failure: `cannot execute mssql_exec: catalog ms is attached in read
+    only mode`. A read-only DuckDB instance refuses to attach any writable catalog, so
+    opening the dictionary read-only made the SQL Server side read-only too.
+
+    SQL Server is not needed to pin this down - the refusal came from DuckDB. Attaching a
+    writable catalog and writing to it is the capability that was missing.
+    """
+    con = L.open_source(DPM2_DB)
+    try:
+        con.execute(f"ATTACH '{tmp_path / 'target.duckdb'}' AS target")
+        con.execute("CREATE TABLE target.t AS SELECT 1 AS a")
+        assert con.execute("SELECT count(*) FROM target.t").fetchone() == (1,)
+    finally:
+        con.close()
+
+
+@needs_dpm2
+def test_the_source_itself_stays_read_only():
+    """The property the read-only connection was there for, kept deliberately."""
+    con = L.open_source(DPM2_DB)
+    try:
+        with pytest.raises(Exception, match="read.only|Cannot execute statement"):
+            con.execute(f"CREATE TABLE {L.SOURCE}.scribble AS SELECT 1 AS a")
+    finally:
+        con.close()
+
+
+@needs_dpm2
+def test_the_dictionary_is_visible_under_its_alias():
+    con = L.open_source(DPM2_DB)
+    try:
+        tables = L.source_tables(con)
+    finally:
+        con.close()
+    assert len(tables) == 73, "the DPM 2.0 release has 73 tables"
+    assert tables["Cell"] > 0
