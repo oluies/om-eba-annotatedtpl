@@ -2025,14 +2025,25 @@ print("README written")
 # again, so it shows up as a literal &amp;#43; on the page. Nothing generated here needs
 # one, and it has crept back in twice, so fail the build rather than ship it.
 _OFFENDERS = {"+": "renders as &amp;#43; in OpenMetadata"}
+
+# What the guard is for is text that reaches the OpenMetadata viewer, and the importer
+# names the files it publishes rather than globbing the repository. README_DPM2.md is not
+# among them: it documents the local DuckDB copy of the DPM database, for someone writing
+# SQL against it, and it is never imported anywhere.
+#
+# Scoping this was not cosmetic. A section on how validation rules add up cannot be
+# written without a plus sign - the operator is the subject - so an unscoped guard made a
+# correct document impossible to generate.
+_NOT_IMPORTED = {"README_DPM2.md"}
+
+_GUARDED = [p for p in sorted(OUT.rglob("*.md")) if "source" not in p.parts and p.name not in _NOT_IMPORTED]
 _problems = [
     f"{path.relative_to(OUT)}:{n}: {reason}\n    {line.strip()[:100]}"
-    for path in sorted(OUT.rglob("*.md"))
-    if "source" not in path.parts
+    for path in _GUARDED
     for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
     for char, reason in _OFFENDERS.items()
     if char in line
 ]
 if _problems:
     raise SystemExit("Characters that do not survive the OpenMetadata viewer:\n  " + "\n  ".join(_problems))
-print(f"guard: no offending characters in {len(list(OUT.rglob('*.md')))} markdown files")
+print(f"guard: no offending characters in {len(_GUARDED)} markdown files that reach OpenMetadata")
