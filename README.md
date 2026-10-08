@@ -164,6 +164,65 @@ change between them. `v09247_s` is a `warning` in PSD_FRP 1.1.0 and an `error` i
 `lookup_dpm_cell` is not, and returns one entry per version with the versions listed, so
 two entries with the same code there are a change, not a duplicate.
 
+## Environment
+
+Exactly one variable is required: `OM_JWT_TOKEN`. Everything else has a default that is
+right for a local checkout, so nothing has to be configured to run the generators, the
+tests or a lookup.
+
+### `OM_*` — OpenMetadata
+
+Read by `describe_table.py` and `import_to_openmetadata.py`.
+
+| Variable | What it is | Default |
+|---|---|---|
+| `OM_JWT_TOKEN` | Bearer token. **The one required variable.** | — |
+| `OM_HOST` | API root. The `/api` suffix is part of it | `http://localhost:8585/api` |
+| `OM_CA_BUNDLE` | Path to a CA bundle for TLS verification | the system store |
+| `OM_PAGE_URL` | Format string with `{name}` where a Context Center article's name goes. Unset means the article is named in prose rather than linked, because the Context Center route changed between versions and is not documented — copy it out of the browser once | unset |
+| `OM_GLOSSARY` | Which glossary root the importer writes to | `PAY_4_2` |
+
+### `BA_*` — the warehouse
+
+Read by `ba_form_cell.py`, the overlay that answers what a physical column actually carries.
+
+| Variable | What it is | Default |
+|---|---|---|
+| `BA_SERVER` | SQL Server host. **Unset is not an error**: the warehouse is simply not consulted, and the answer says so rather than going quiet | unset |
+| `BA_DATABASE` | Database | `FIDW_BI` |
+| `BA_TABLE`, `BA_AXIS_TABLE` | The cell table and the axis table, joined on `Cell_sk` | `dbo.BA_Form_Cell`, `dbo.BA_Form_Axis` |
+| `BA_TRUSTED_CONNECTION` | Kerberos. Set `false` to use the two below | `true` |
+| `BA_USERNAME`, `BA_PASSWORD` | SQL login, only when `BA_TRUSTED_CONNECTION=false` | unset |
+| `BA_DRIVER` | ODBC driver name | `ODBC Driver 18 for SQL Server` |
+| `BA_ENCRYPT`, `BA_TRUST_SERVER_CERTIFICATE` | TLS on, and whether to accept a self-signed certificate | `true`, `false` |
+| `BA_DEBUG` | Log the statement that ran with its parameters filled in, ready to paste into SSMS | `false` |
+
+### `PAY42_*` — this pack's DuckDB store
+
+| Variable | What it is | Default |
+|---|---|---|
+| `PAY42_DB` | The store | `pay42.duckdb` |
+| `PAY42_TEMP_DIR` | Where DuckDB spills. **The one that matters in anger**: left alone it writes scratch files next to the database, so a read-only mount holding the store has nowhere to go | beside the database |
+| `PAY42_EXTENSION_DIR` | Extension directory | DuckDB's own |
+| `PAY42_MEMORY_LIMIT` | e.g. `2GB` | unlimited |
+
+### `DPM2_*` — the DPM 2.0 database
+
+| Variable | What it is | Default |
+|---|---|---|
+| `DPM2_DIR` | The download directory: the zip, the Access file and the DuckDB database | `source/dpm2/` |
+| `DPM2_DB` | The database file alone | `dpm2.duckdb` inside `DPM2_DIR` |
+
+### A `.env` file does not cover all of them
+
+`OM_*`, `BA_*` and `PAY42_*` as the lookup reads them go through pydantic-settings, which
+reads `.env`. `DPM2_*` everywhere, and `PAY42_DB` and `PAY42_TEMP_DIR` as
+`source/build_duckdb.py` reads them, use `os.environ` and do not.
+
+So a `PAY42_DB` in `.env` steers where a lookup reads but not where the build writes: you
+can build one file and read another with nothing complaining. `DPM2_*` in `.env` does
+nothing at all. Export them in the shell instead.
+
 ## Importing into OpenMetadata
 
 ```bash
