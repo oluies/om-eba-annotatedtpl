@@ -201,6 +201,44 @@ def index_plan(unique_keys: set[tuple[str, str]], tables: Collection[str]) -> li
     return planned
 
 
+# An index key has to be a bounded type, and nvarchar is two bytes a character, so this
+# is well inside the 1700-byte limit for a non-clustered key and the 900 for a clustered.
+MAX_KEY_CHARS = 450
+
+
+def narrowing(schema: str, table: str, column: str, width: int) -> str:
+    """Give a text column a bounded width, so it can be an index key."""
+    return f"ALTER TABLE [{schema}].[{table}] ALTER COLUMN [{column}] nvarchar({width})"
+
+
+def string_widths(con: duckdb.DuckDBPyConnection, planned: Collection[Index]) -> dict[tuple[str, str], int]:
+    """Indexed columns that hold text, and how wide each needs to be.
+
+    CTAS maps a DuckDB VARCHAR to nvarchar(max), and a MAX type cannot be an index key -
+    SQL Server answers error 1919 and the load stops with the data already in place. This
+    is what found that: sqlfluff parses the CREATE INDEX happily, because the statement is
+    valid and only the column type is wrong.
+
+    Doubled with a floor, so a later release with somewhat longer codes still loads. One
+    that outgrows the width fails the ALTER rather than truncating a value quietly.
+    """
+    types = {
+        (table, column): kind
+        for table, column, kind in con.execute(
+            "SELECT table_name, column_name, data_type FROM duckdb_columns() WHERE database_name = ?",
+            [SOURCE],
+        ).fetchall()
+    }
+    widths = {}
+    for table, column in sorted({(i.table, c) for i in planned for c in i.columns}):
+        if types.get((table, column)) != "VARCHAR":
+            continue
+        longest = con.execute(f'SELECT max(length("{column}")) FROM {SOURCE}."{table}"').fetchone()
+        measured = (longest[0] or 0) if longest else 0
+        widths[(table, column)] = min(max(measured * 2, 64), MAX_KEY_CHARS)
+    return widths
+
+
 def unique_parent_keys(con: duckdb.DuckDBPyConnection, tables: Collection[str]) -> set[tuple[str, str]]:
     """Which identity columns are actually unique and never null, measured not assumed."""
     found = set()
@@ -253,7 +291,10 @@ def main() -> None:
         if not args.no_indexes:
             planned = index_plan(unique_parent_keys(con, wanted), wanted)
             clustered = sum(1 for i in planned if i.unique)
+            widths = string_widths(con, planned)
             print(f"\nand then {len(planned)} index(es): {clustered} clustered, {len(planned) - clustered} not")
+            if widths:
+                print(f"  first narrowing {len(widths)} text column(s) - nvarchar(max) cannot be an index key")
             for index in planned[:3]:
                 print(f"  {index.statement(SETTINGS.db_schema)[:150]}")
             if len(planned) > 3:
@@ -263,6 +304,10 @@ def main() -> None:
         print(f"\nNothing written. Re-run with --commit{also}.")
         return
 
+    # INSTALL before LOAD, and from the community repository: extensions are per DuckDB
+    # version, so one installed for the CLI is not there for the Python package. Idempotent
+    # - it is a no-op once the version in use has it.
+    con.execute("INSTALL mssql FROM community")
     con.execute("LOAD mssql")
     con.execute(f"ATTACH '{connection}' AS ms (TYPE mssql)")
     # The schema has to exist before a three-part CTAS can land in it, and the extension
@@ -320,6 +365,9 @@ def main() -> None:
     } & set(wanted)
     if not args.no_indexes and present:
         planned = index_plan(unique_parent_keys(con, wanted), present)
+        # Narrow the text columns first: nvarchar(max) cannot be an index key.
+        for (table, column), width in string_widths(con, planned).items():
+            con.execute("SELECT mssql_exec('ms', ?)", [narrowing(SETTINGS.db_schema, table, column, width)])
         for index in planned:
             con.execute("SELECT mssql_exec('ms', ?)", [index.statement(SETTINGS.db_schema)])
         clustered = sum(1 for i in planned if i.unique)

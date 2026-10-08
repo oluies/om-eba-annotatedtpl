@@ -206,3 +206,48 @@ def test_every_identity_column_measures_unique():
     finally:
         con.close()
     assert len(found) == 21
+
+
+# --- the two things only a real server found -------------------------------------------
+
+
+def test_a_text_column_is_narrowed_before_it_is_indexed():
+    """CTAS maps a DuckDB VARCHAR to nvarchar(max), and SQL Server answers error 1919:
+    a MAX type cannot be an index key. sqlfluff parses the CREATE INDEX happily, because
+    the statement is fine and only the column type is wrong, so only a server found it."""
+    assert L.narrowing("dpm", "TableVersion", "Code", 64) == (
+        "ALTER TABLE [dpm].[TableVersion] ALTER COLUMN [Code] nvarchar(64)"
+    )
+
+
+def test_a_reserved_word_column_is_bracketed_when_narrowed_too():
+    assert "[Table] nvarchar(" in L.narrowing("dpm", "OperandReferenceLocation", "Table", 64)
+
+
+@needs_dpm2
+def test_only_the_indexed_text_columns_are_narrowed(monkeypatch):
+    con = L.open_source(DPM2_DB)
+    try:
+        tables = list(L.source_tables(con))
+        plan = L.index_plan(L.unique_parent_keys(con, tables), tables)
+        widths = L.string_widths(con, plan)
+    finally:
+        con.close()
+    # Seven of the sixty-three indexed columns hold text; the rest are bigint or date.
+    assert len(widths) == 7
+    assert widths[("TableVersionCell", "CellCode")] >= 32, "the longest cell code is 32 characters"
+    assert all(64 <= w <= L.MAX_KEY_CHARS for w in widths.values())
+
+
+@needs_dpm2
+def test_a_width_leaves_room_but_stays_inside_the_index_key_limit():
+    """Doubled with a floor, so a later release with longer codes still loads; capped, so
+    the key stays inside SQL Server's limit at two bytes a character."""
+    con = L.open_source(DPM2_DB)
+    try:
+        plan = [L.Index("TableVersionCell", ("CellCode",), unique=False)]
+        width = L.string_widths(con, plan)[("TableVersionCell", "CellCode")]
+    finally:
+        con.close()
+    assert width == 64, "32 characters doubled"
+    assert width * 2 < 1700, "two bytes a character, inside the non-clustered key limit"

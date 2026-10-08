@@ -930,13 +930,48 @@ WHERE r.Newest = 1
 ORDER BY r.Code;
 ```
 
-### What these have and have not been checked against
+### What these have been checked against
 
-Every one of them parses under `sqlfluff --dialect tsql`, which is a syntax check and
-nothing more. **None has been run against SQL Server.** The DuckDB queries above are
-executed by the test suite on every run and their row counts asserted; these are not, and
-cannot be until there is a server to point at. Treat the row counts quoted for the DuckDB
-versions as the expected answers and check them after the first load.
+Every one parses under `sqlfluff --dialect tsql` on every test run, which is a syntax
+check and nothing more. Beyond that they have been **run against SQL Server 2022 in
+Docker**, loaded by `source/load_to_mssql.py`, and they answer what the DuckDB versions
+answer:
+
+| Query | DuckDB | SQL Server |
+|---|---:|---:|
+| templates in one module version | 14 | 14 |
+| cells per template | 14 | 14 |
+| what one cell measures | 3 | 3 |
+| a reported fact back to its cell | 5 | 5 |
+| newest version of each template | 1052 | 1052 |
+| `F_12.01.a` sums, at column level | 59 | 59 |
+
+Grouped, the view reproduces the table above exactly, `v09604_m` on its single column
+included. The whole load - 73 tables, 5 728 777 rows, 62 indexes - took 31 seconds
+against an emulated amd64 container on arm64, so the bulk path is doing its job.
+
+Two things only the server found, both now fixed in the loader. A DuckDB `VARCHAR` becomes
+`nvarchar(max)` through CTAS, and a MAX type cannot be an index key - SQL Server answers
+error 1919 and stops with the data already in place. sqlfluff parses that `CREATE INDEX`
+happily, because the statement is valid and only the column type is wrong. And the
+extension has to be installed for the DuckDB version in use: one installed for the CLI is
+not there for the Python package.
+
+### The collation is not a footnote
+
+A case-insensitive collation is the default, and it changes answers rather than just
+performance. `Property.PeriodType` holds both spellings, and the same query gives:
+
+```
+DuckDB         Stock   196      stock  1770
+SQL Server     stock  1966
+```
+
+Measured, on a database created with `SQL_Latin1_General_CP1_CI_AS`. Every key in this
+model is a string, so `GROUP BY`, `DISTINCT` and string joins can group differently on the
+two sides. Check with `SELECT DATABASEPROPERTYEX('DPM2', 'Collation')` before loading, and
+decide deliberately: a case-sensitive database matches DuckDB, a case-insensitive one
+matches whatever else already lives in your warehouse.
 
 One behavioural difference to expect rather than discover. Reading the attached database
 *from* DuckDB, a pushed-down predicate is evaluated by SQL Server and so follows the
