@@ -501,6 +501,84 @@ ORDER BY 1, 2, 3, 4;
 Turn it around - every rule that reaches one cell - and you have what
 `09-validation-rules.csv` holds.
 
+### Which rows add up to which
+
+The expression is stored as a tree, so the arithmetic is readable without parsing the
+DPM-XL string at all. An equality's two sides are its children; the side that is a single
+leaf is the total, and the leaves under the addition are its terms. Additions nest to the
+left, so `a + b + c` is two `+` nodes and the descent has to be recursive.
+
+```sql
+WITH RECURSIVE scoped AS (                 -- the rules in force for one module version
+    SELECT op.Code AS rule_code, ov.OperationVID
+    FROM   Operation op
+    JOIN   OperationVersion ov           ON ov.OperationID = op.OperationID
+    JOIN   OperationScope os             ON os.OperationVID = ov.OperationVID
+    JOIN   OperationScopeComposition osc ON osc.OperationScopeID = os.OperationScopeID
+    JOIN   ModuleVersion mv              ON mv.ModuleVID = osc.ModuleVID
+    WHERE  mv.Code = 'FINREP9' AND mv.VersionNumber = '3.3.0'
+), node AS (                               -- every node of those rules, with its operator
+    SELECT s.rule_code, n.NodeID, n.ParentNodeID, n.IsLeaf, o.Symbol
+    FROM   scoped s
+    JOIN   OperationNode n ON n.OperationVID = s.OperationVID
+    LEFT JOIN Operator o   ON o.OperatorID = n.OperatorID
+), child AS (                              -- the two sides of an equality at the root
+    SELECT r.NodeID AS eq, c.NodeID, c.Symbol, c.IsLeaf
+    FROM   node r
+    JOIN   node c ON c.ParentNodeID = r.NodeID
+    WHERE  r.ParentNodeID IS NULL AND r.Symbol = '='
+), descend AS (                            -- everything under the addition side
+    SELECT eq, NodeID AS node, IsLeaf FROM child WHERE Symbol = '+'
+    UNION ALL
+    SELECT d.eq, n.NodeID, n.IsLeaf
+    FROM   descend d JOIN node n ON n.ParentNodeID = d.node
+), cells AS (                              -- a node, resolved to the cells it names
+    SELECT r.NodeID, l."Table" AS tbl, coalesce(l."Row", '*') AS row_code,
+           coalesce(l."Column", '*') AS col, coalesce(l.Sheet, '') AS sheet
+    FROM   OperandReference r
+    JOIN   OperandReferenceLocation l USING (OperandReferenceID)
+)
+SELECT   t.rule_code, tc.row_code AS total_row,
+         list_sort(list(DISTINCT ac.row_code))              AS addend_rows,
+         string_agg(DISTINCT tc.col, ', ' ORDER BY tc.col)  AS applies_to_columns
+FROM     child eqs
+JOIN     node t    ON t.NodeID = eqs.NodeID AND eqs.IsLeaf <> 0
+JOIN     cells tc  ON tc.NodeID = t.NodeID
+JOIN     descend a ON a.eq = eqs.eq AND a.IsLeaf <> 0
+JOIN     cells ac  ON ac.NodeID = a.node
+                  AND ac.tbl = tc.tbl AND ac.col = tc.col AND ac.sheet = tc.sheet
+WHERE    tc.tbl = 'F_12.01.a'
+GROUP BY t.rule_code, tc.row_code
+ORDER BY tc.row_code, t.rule_code;
+```
+
+For `F_12.01.a`, Movements in allowances and provisions for credit losses (I):
+
+| rule_code | total_row | addend_rows | applies_to_columns |
+|---|---|---|---|
+| v23845_h | 0010 | 0020, 0080 | all 12 |
+| v23846_h | 0180 | 0190, 0250 | all 12 |
+| v23847_h | 0360 | 0370, 0430 | all 12 |
+| v09604_m | 0520 | 0010, 0180, 0360 | 0020 only |
+| v5051_m | 0520 | 0010, 0180, 0360, 0600 | the other 11 |
+| v23848_h | 0600 | 0610, 0670 | the other 11 |
+
+Each stage splits into debt securities and loans, and the stages add to the total. Note
+the two rules for row 0520: in column 0020, Increases due to origination and acquisition,
+the POCI row 0600 is not part of the total. The model records that it is so; why is a
+question for the ITS instructions, not for the dictionary.
+
+Three things the query has to get right. The descent is recursive because additions nest.
+The total is identified by being a leaf rather than by being on the right, so both
+`{r0040} = {r0050} + {r0230}` and `{r0170} ... = {r0110}` come out correctly. And the join
+between a total and its terms binds table, column and sheet - without that, a total pairs
+with terms in other columns and the count explodes, and the two rules for row 0520 look
+like one contradictory rule.
+
+Across PSD_FRP 1.1.0 this answers 596 sums from 93 of its 114 rules, over 408 distinct
+total cells. DORA answers none: its 71 rules are presence and comparison checks, not
+arithmetic.
+
 ### Checking the pack against the model
 
 ```sql

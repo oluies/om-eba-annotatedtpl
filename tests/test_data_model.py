@@ -68,30 +68,53 @@ def test_the_document_draws_the_two_one_to_one_relationships():
     assert 'OperandReference ||--o| OperandReferenceLocation : "OperandReferenceID"' in text
 
 
+# What each published query must answer, keyed by a phrase only that query contains.
+# Not by position: inserting a query in the middle used to renumber every expectation
+# after it, so a correct edit broke assertions that had nothing to do with it.
+EXPECTED_ROWS = {
+    "f.Code = 'PAY'": 5,  # module versions of one framework
+    "mv.VersionNumber = '1.1.0'\nORDER BY tv.Code": 14,  # templates in the module version
+    "count(*) FILTER (WHERE c.IsExcluded <> 0)": 14,  # cells per template
+    "h.Direction = 'Y'": 39,  # rows of Y_01.01, pinned to one module version
+    "dimension.Name AS dimension": 3,  # what one cell measures
+    "lower(p.PeriodType)": 1,  # its data type
+    "o.Code, os.Severity, ov.Expression": 114,  # rules in scope
+    "o.Code = 'v09123_m'": 36,  # the cells one rule reaches
+    "FULL OUTER JOIN pack.datapoints": 0,  # the pack against the model
+    "tc.tbl = 'F_12.01.a'": 6,  # how F 12.01.a adds up
+}
+
+
 @needs_dpm2
 @needs_store  # query 9 joins pack.datapoints, so this needs both stores, not just the model
 @pytest.mark.skipif(not README.exists(), reason="README_DPM2.md has not been generated")
 def test_every_published_query_runs():
-    """Ten worked queries, and the counts the prose quotes for nine of them."""
+    """Every worked query in the document, and the counts its prose quotes."""
     import duckdb
 
-    expected = {1: 5, 2: 14, 3: 14, 4: 39, 5: 3, 6: 1, 7: 114, 8: 36, 9: 0}
     blocks = re.findall(r"```sql\n(.*?)```", README.read_text(), re.S)
-    assert len(blocks) >= 10
+    assert len(blocks) >= len(EXPECTED_ROWS)
 
     con = duckdb.connect(str(DPM2_DB), read_only=True)
     try:
         # Inside the try: an ATTACH of a store that is not there must close the connection
         # it was opened on, not leak it.
         con.execute(f"ATTACH '{PAY42_DB}' AS pack (READ_ONLY)")
-        for n, sql in enumerate(blocks, 1):
+        matched = set()
+        for sql in blocks:
             # The ATTACH is shown in the prose for the reader; it is already done here.
             body = "\n".join(line for line in sql.splitlines() if not line.startswith("ATTACH"))
             rows = con.execute(body).fetchall()
-            if n in expected:
-                assert len(rows) == expected[n], f"query {n} answered {len(rows)}, not {expected[n]}"
+            for phrase, count in EXPECTED_ROWS.items():
+                if phrase in body:
+                    assert len(rows) == count, f"the query containing {phrase!r} answered {len(rows)}, not {count}"
+                    matched.add(phrase)
     finally:
         con.close()
+
+    # A phrase that matches nothing means the document moved and the expectation is stale,
+    # which would otherwise pass silently as "nothing to check".
+    assert matched == set(EXPECTED_ROWS), f"no query contains: {sorted(set(EXPECTED_ROWS) - matched)}"
 
 
 @needs_dpm2
