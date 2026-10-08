@@ -91,9 +91,6 @@ EXPECTED_ROWS = {
 }
 
 
-@needs_dpm2
-@needs_store  # query 9 joins pack.datapoints, so this needs both stores, not just the model
-@pytest.mark.skipif(not README.exists(), reason="README_DPM2.md has not been generated")
 def phrase_hits(blocks: list[str], expected: dict[str, int]) -> dict[str, int]:
     """How many of the published queries each expectation's phrase matches.
 
@@ -121,6 +118,9 @@ def test_a_phrase_matching_exactly_one_query_is_what_is_wanted():
     assert phrase_hits(["SELECT a FROM t", "SELECT b FROM u"], {"FROM u": 1}) == {"FROM u": 1}
 
 
+@needs_dpm2
+@needs_store  # query 9 joins pack.datapoints, so this needs both stores, not just the model
+@pytest.mark.skipif(not README.exists(), reason="README_DPM2.md has not been generated")
 def test_every_published_query_runs():
     """Every worked query in the document, and the counts its prose quotes."""
     import duckdb
