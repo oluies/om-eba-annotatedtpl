@@ -654,7 +654,7 @@ rule_code = v09604_m
 
 A total's terms are often totals themselves, so the sums form a tree. Descending it
 needs a second recursion on top of the first - one over the expression tree, one over
-the totals - and both fit in a single statement.
+the totals - and both fit in a single statement, labels and all.
 
 ```sql
 WITH RECURSIVE scoped AS (
@@ -691,6 +691,17 @@ WITH RECURSIVE scoped AS (
     JOIN     cells ac  ON ac.NodeID = a.node
                       AND ac.tbl = tc.tbl AND ac.col = tc.col AND ac.sheet = tc.sheet
     WHERE    tc.tbl = 'F_12.01.a' AND tc.col = '0010' AND tc.sheet = ''
+-- The row labels of this template, as the current module version has them.
+), label AS (
+    SELECT hv.Code AS row_code, hv.Label
+    FROM   ModuleVersionComposition mvc
+    JOIN   TableVersion tv USING (TableVID)
+    JOIN   ModuleVersion mv USING (ModuleVID)
+    JOIN   TableVersionHeader tvh ON tvh.TableVID = tv.TableVID
+    JOIN   HeaderVersion hv ON hv.HeaderVID = tvh.HeaderVID
+    JOIN   Header h ON h.HeaderID = tvh.HeaderID
+    WHERE  tv.Code = 'F_12.01.a' AND h.Direction = 'Y'
+      AND  mv.Code = 'FINREP9' AND mv.VersionNumber = '3.3.0'
 ), root AS (
     SELECT DISTINCT parent FROM edge WHERE parent NOT IN (SELECT child FROM edge)
 ), tree AS (
@@ -703,49 +714,55 @@ WITH RECURSIVE scoped AS (
     FROM   tree d JOIN edge e ON e.parent = d.node
     WHERE  d.level < 10            -- the data has no cycle; a query should not assume it
 )
-SELECT   level, repeat('   ', level) || node AS breakdown, via,
-         node IN (SELECT parent FROM edge) AS splits_further
-FROM     tree
-ORDER BY path;
+SELECT   t.level,
+         repeat('   ', t.level) || t.node || '  ' || coalesce(l.Label, '(no label)') AS breakdown,
+         t.via,
+         t.node IN (SELECT parent FROM edge) AS splits_further
+FROM     tree t LEFT JOIN label l ON l.row_code = t.node
+ORDER BY t.path;
 ```
 
 For `F_12.01.a`, column 0010:
 
 ```
-level  breakdown      via         splits_further
-0      0520           NULL        true
-1         0010        v5051_m     true
-2            0020     v23845_h    false
-2            0080     v23845_h    false
-1         0180        v5051_m     true
-2            0190     v23846_h    false
-2            0250     v23846_h    false
-1         0360        v5051_m     true
-2            0370     v23847_h    false
-2            0430     v23847_h    false
-1         0600        v5051_m     true
-2            0610     v23848_h    false
-2            0670     v23848_h    false
+0  0520  Total allowance for debt instruments
+1     0010  Allowances for financial assets without increase in credit risk ... (Stage 1)
+2        0020  Debt securities
+2        0080  Loans and advances
+1     0180  Allowances for debt instruments with significant increase ... (Stage 2)
+2        0190  Debt securities
+2        0250  Loans and advances
+1     0360  Allowances for credit-impaired debt instruments (Stage 3)
+2        0370  Debt securities
+2        0430  Loans and advances
+1     0600  Allowances for purchased or originated credit-impaired financial assets
+2        0610  Debt securities
+2        0670  Loans and advances
 ```
 
 Three stages and POCI, each splitting into debt securities and loans. Change `tc.col`
 to `0020` and the answer is ten rows rather than thirteen: **the entire POCI branch is
 gone**, both row 0600 and the two beneath it, and the rule on level 1 is `v09604_m`
 instead of `v5051_m`. That is the same fact the table further up reports as two rows
-with one `TotalRow` and different `AddendRows`, which is easy to read past. As a tree it
-is a branch that eleven columns have and the twelfth does not.
+with one `TotalRow` and different `AddendRows`, which is easy to read straight past. As
+a tree it is a branch that eleven columns have and the twelfth does not.
 
-**The rule belongs in the path.** `Y_01.01` row 0040 has three decompositions - 0050 and
-0230, or 0050 and 0240 and 0290, or 0060 and 0110 and 0230 - alternative roll-ups at
-different granularity rather than a contradiction. Without the rule in the path those
+Drop the `label` CTE and its join and you get the codes alone, which is shorter and
+says less. Note though that a label is only meaningful with its parent: `Debt
+securities` and `Loans and advances` appear under all four stages, and in a flat list
+they would be eight rows with two names. That is the same collision `display_names.py`
+exists to resolve for the pack's own display names.
+
+**The rule belongs in the path.** `Y_01.01` row 0040 has three decompositions - 0050
+and 0230, or 0050 and 0240 and 0290, or 0060 and 0110 and 0230 - alternative roll-ups
+at different granularity rather than a contradiction. Without the rule in the path those
 branches collapse into rows that look like duplicates of one another: the first version
 of this query answered 0050 twice at level 2, with everything under it doubled and no
-way to see why. `F_12.01.a` has one rule per total per column, so there the path does
-not need it - but `via` is what shows level 1 changing rule between columns.
+way to see why. `F_12.01.a` has one rule per total per column and so would never have
+shown it, which is an argument for trying a query against the awkward table rather than
+the tidy one.
 
-The same in T-SQL. `STRING_SPLIT` takes a single-character separator, so the view's
-`'0020, 0080'` splits on the comma and is then trimmed, and both arms of the recursion
-need the same explicit `CAST` or the CTE is rejected for a type mismatch:
+The same in T-SQL:
 
 ```tsql
 WITH edge AS (
@@ -760,6 +777,20 @@ WITH edge AS (
         AND s.TableCode = 'F_12.01.a'
         AND s.ColumnCode = '0010'
         AND s.SheetCode = ''
+),
+
+label AS (
+    SELECT hv.Code AS RowCode, hv.Label
+    FROM dpm.ModuleVersionComposition AS mvc
+    INNER JOIN dpm.TableVersion AS tv ON tv.TableVID = mvc.TableVID
+    INNER JOIN dpm.ModuleVersion AS mv ON mv.ModuleVID = mvc.ModuleVID
+    INNER JOIN dpm.TableVersionHeader AS tvh ON tvh.TableVID = tv.TableVID
+    INNER JOIN dpm.HeaderVersion AS hv ON hv.HeaderVID = tvh.HeaderVID
+    INNER JOIN dpm.Header AS h ON h.HeaderID = tvh.HeaderID
+    WHERE tv.Code = 'F_12.01.a'
+        AND h.Direction = 'Y'
+        AND mv.Code = 'FINREP9'
+        AND mv.VersionNumber = '3.3.0'
 ),
 
 root AS (
@@ -788,16 +819,20 @@ descend AS (
 
 SELECT
     d.Level,
-    REPLICATE('   ', d.Level) + d.Node AS Breakdown,
+    REPLICATE('   ', d.Level) + d.Node + '  ' + COALESCE(l.Label, '(no label)') AS Breakdown,
     d.Via,
     CASE WHEN d.Node IN (SELECT e.Parent FROM edge AS e) THEN 1 ELSE 0 END AS SplitsFurther
 FROM descend AS d
+LEFT JOIN label AS l ON l.RowCode = d.Node
 ORDER BY d.Path;
 ```
 
-52 rows for `Y_01.01` column 0010 and 13 for `F_12.01.a`, the same on both sides. Depth
-is 4 and 2, so the default limit of 100 recursion levels is not reached; a deeper
-template would need `OPTION (MAXRECURSION 0)`.
+52 rows for `Y_01.01` column 0010 and 13 for `F_12.01.a`, the same on both sides. Three
+things differ beyond the usual. `STRING_SPLIT` takes a single-character separator, so
+the view's `'0020, 0080'` splits on the comma and is then trimmed. Both arms of the
+recursion need the same explicit `CAST`, or the CTE is rejected for a type mismatch.
+And depth here is 4 and 2, inside the default limit of 100 recursion levels that a
+deeper template would exceed - `OPTION (MAXRECURSION 0)` lifts it.
 
 ## Reading a reported instance
 

@@ -75,7 +75,10 @@ EXPECTED_ROWS = {
     "f.Code = 'PAY'": 5,  # module versions of one framework
     "mv.VersionNumber = '1.1.0'\nORDER BY tv.Code": 14,  # templates in the module version
     "count(*) FILTER (WHERE c.IsExcluded <> 0)": 14,  # cells per template
-    "h.Direction = 'Y'": 39,  # rows of Y_01.01, pinned to one module version
+    # Keyed on the self-join to the parent header, not on `h.Direction = 'Y'`: the labelled
+    # breakdown query contains that too, and a substring key that matches two queries
+    # asserts one of their row counts against the other.
+    "parent.Code AS parent_code": 39,  # rows of Y_01.01, pinned to one module version
     "dimension.Name AS dimension": 3,  # what one cell measures
     "lower(p.PeriodType)": 1,  # its data type
     "o.Code, os.Severity, ov.Expression": 114,  # rules in scope
@@ -91,6 +94,33 @@ EXPECTED_ROWS = {
 @needs_dpm2
 @needs_store  # query 9 joins pack.datapoints, so this needs both stores, not just the model
 @pytest.mark.skipif(not README.exists(), reason="README_DPM2.md has not been generated")
+def phrase_hits(blocks: list[str], expected: dict[str, int]) -> dict[str, int]:
+    """How many of the published queries each expectation's phrase matches.
+
+    Pure, and separate from the run so the ambiguity rule can be tested on its own: in the
+    real document the row-count assertion fires first whenever two matching queries differ,
+    so the one case this guards - two queries, the same count, one phrase - cannot be
+    reached from the real data without bending it.
+    """
+    return {phrase: sum(1 for b in blocks if phrase in b) for phrase in expected}
+
+
+def test_a_phrase_matching_nothing_is_a_stale_expectation():
+    assert phrase_hits(["SELECT 1"], {"nowhere": 1}) == {"nowhere": 0}
+
+
+def test_a_phrase_matching_two_queries_is_caught():
+    """The dangerous case: both answer the same number, so every count assertion passes and
+    only the count of matches shows that one expectation is covering two queries."""
+    hits = phrase_hits(["SELECT a FROM t", "SELECT b FROM t"], {"FROM t": 2})
+    assert hits["FROM t"] == 2
+    assert [p for p, n in hits.items() if n > 1] == ["FROM t"]
+
+
+def test_a_phrase_matching_exactly_one_query_is_what_is_wanted():
+    assert phrase_hits(["SELECT a FROM t", "SELECT b FROM u"], {"FROM u": 1}) == {"FROM u": 1}
+
+
 def test_every_published_query_runs():
     """Every worked query in the document, and the counts its prose quotes."""
     import duckdb
@@ -103,7 +133,7 @@ def test_every_published_query_runs():
         # Inside the try: an ATTACH of a store that is not there must close the connection
         # it was opened on, not leak it.
         con.execute(f"ATTACH '{PAY42_DB}' AS pack (READ_ONLY)")
-        matched = set()
+        hits = phrase_hits(blocks, EXPECTED_ROWS)
         for sql in blocks:
             # The ATTACH is shown in the prose for the reader; it is already done here.
             body = "\n".join(line for line in sql.splitlines() if not line.startswith("ATTACH"))
@@ -111,13 +141,15 @@ def test_every_published_query_runs():
             for phrase, count in EXPECTED_ROWS.items():
                 if phrase in body:
                     assert len(rows) == count, f"the query containing {phrase!r} answered {len(rows)}, not {count}"
-                    matched.add(phrase)
     finally:
         con.close()
 
-    # A phrase that matches nothing means the document moved and the expectation is stale,
-    # which would otherwise pass silently as "nothing to check".
-    assert matched == set(EXPECTED_ROWS), f"no query contains: {sorted(set(EXPECTED_ROWS) - matched)}"
+    # A phrase matching nothing means the document moved and the expectation is stale, which
+    # would otherwise pass silently as "nothing to check". A phrase matching two queries is
+    # worse: it asserts one of their row counts against the other, and that is exactly how
+    # adding labels to the breakdown query broke the count for the rows query.
+    assert not [p for p, n in hits.items() if n == 0], f"matched nothing: {[p for p, n in hits.items() if not n]}"
+    assert not [p for p, n in hits.items() if n > 1], f"matched several: {[p for p, n in hits.items() if n > 1]}"
 
 
 @pytest.mark.skipif(not README.exists(), reason="README_DPM2.md has not been generated")
