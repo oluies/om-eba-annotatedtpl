@@ -138,10 +138,22 @@ def test_dispatch_takes_a_dict_as_readily_as_a_string(monkeypatch):
         assert agent_tools.dispatch("lookup_dpm_table", arguments)["found"] is False
 
 
+def registered_names() -> set[str]:
+    """The names TOOLS actually offers the model.
+
+    The definitions are plain literal dicts, so ty infers one wide union for their
+    values: `"type": "function"` sits beside the `function` object, and inside that,
+    `name` sits beside `strict` and the parameter schema. Hence the isinstance to reach
+    the function object and the str() to read its name - a second subscript, or an
+    unguarded one, is what ty rejects.
+    """
+    functions = [tool["function"] for tool in agent_tools.TOOLS]
+    return {str(f["name"]) for f in functions if isinstance(f, dict)}
+
+
 def test_every_registered_tool_is_dispatchable():
     """A definition registered but not dispatched is a turn the model cannot recover from."""
-    functions = [tool["function"] for tool in agent_tools.TOOLS]
-    names = {f["name"] for f in functions if isinstance(f, dict)}
+    names = registered_names()
     assert len(names) == len(agent_tools.TOOLS), "every definition must carry a distinct name"
     assert names <= {name.value for name in agent_tools.ToolName}
 
@@ -299,6 +311,6 @@ def test_the_three_new_tools_are_dispatchable_whether_or_not_they_are_registered
 
 @needs_dpm2
 def test_the_three_new_tools_are_registered_when_the_database_is_there():
-    names = {tool["function"]["name"] for tool in agent_tools.TOOLS}
+    names = registered_names()
     assert names >= NEW_DPM_TOOLS
     assert names <= {name.value for name in agent_tools.ToolName}
