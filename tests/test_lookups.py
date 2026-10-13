@@ -275,7 +275,30 @@ def test_a_module_whose_rules_are_not_arithmetic_answers_nothing_rather_than_gue
     assert "not arithmetic" in answer["message"] or "No sum rule" in answer["message"]
 
 
-def test_the_three_new_tools_are_registered_and_dispatchable():
+NEW_DPM_TOOLS = {"lookup_dpm_dimensions", "lookup_dpm_cells", "lookup_dpm_sums"}
+
+
+def test_the_three_new_tools_are_dispatchable_whether_or_not_they_are_registered():
+    """TOOLS carries the DPM tools only when the database is there, so asserting they are
+    in it needs the guard below. dispatch knows them either way, which is the property that
+    matters: a host that registered them before the file moved gets an explanation."""
+    assert {name.value for name in agent_tools.ToolName} >= NEW_DPM_TOOLS
+    for name in sorted(NEW_DPM_TOOLS):
+        answer = agent_tools.dispatch(
+            name,
+            {
+                "table": "F1201A",
+                "module": "FINREP9",
+                "version": "3.3.0",
+                "dimension": "Counterparty sector",
+                "member": "Credit institutions",
+            },
+        )
+        assert "no such tool" not in str(answer)
+
+
+@needs_dpm2
+def test_the_three_new_tools_are_registered_when_the_database_is_there():
     names = {tool["function"]["name"] for tool in agent_tools.TOOLS}
-    assert {"lookup_dpm_dimensions", "lookup_dpm_cells", "lookup_dpm_sums"} <= names
+    assert names >= NEW_DPM_TOOLS
     assert names <= {name.value for name in agent_tools.ToolName}
