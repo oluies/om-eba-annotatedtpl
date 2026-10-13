@@ -44,9 +44,15 @@ BUILD_IT = (
     "are answerable, through lookup_datapoint."
 )
 
-# A template code is written four ways between the warehouse, the annotated layout and the
-# model - Y_01_01, Y 01.01, Y_01.01, Y0101 - and they all mean the same template.
-TEMPLATE = re.compile(r"^(?P<prefix>[A-Za-z]+)[ _]?(?P<major>[0-9]{2})[._]?(?P<minor>[0-9]{2})$")
+# A template code is written several ways between the warehouse, the annotated layout, the
+# model and whatever a notebook happens to use - Y_01_01, Y 01.01, Y_01.01, Y0101, and for
+# FINREP F_12.01.a, F1201A, F_04.04.1, F04041. Stripping everything that is not a letter or
+# a digit and upper-casing maps all of them onto one key, and across the 1052 template codes
+# in release 4.2.1 that key collides for none of them - measured, not assumed.
+#
+# A regex over the punctuation was the first attempt and could not read F_12.01.a at all:
+# it expected exactly two pairs of digits and nothing after them.
+CODE_KEY = re.compile(r"[^A-Za-z0-9]")
 
 
 class DpmError(Exception):
@@ -61,10 +67,9 @@ def available() -> bool:
     return DB.exists()
 
 
-def normalise(table: str) -> str | None:
-    """Any of the four spellings to the model's own: Y_01.01. None if it is not one."""
-    match = TEMPLATE.match(table.strip())
-    return f"{match['prefix'].upper()}_{match['major']}.{match['minor']}" if match else None
+def code_key(table: str) -> str:
+    """Any spelling of a template code reduced to one comparable key. Pure."""
+    return CODE_KEY.sub("", table).upper()
 
 
 def _connect() -> duckdb.DuckDBPyConnection:
@@ -82,13 +87,27 @@ def _rows(con: duckdb.DuckDBPyConnection, sql: str, *params: Any) -> list[dict[s
 # The newest version of a template, with the open-axis flags that say what its rows,
 # columns and sheets mean. Newest by start release: a template that has not changed since
 # 3.4 has one version, one that changed in 4.2 has several and only the last is current.
-TABLE_SQL = """
+TABLE_BY_KEY_SQL = """
 SELECT   tv.TableVID, tv.TableID, tv.Code, tv.Name,
          t.HasOpenRows <> 0 AS open_rows, t.HasOpenColumns <> 0 AS open_columns,
          t.HasOpenSheets <> 0 AS open_sheets
 FROM     TableVersion tv
 JOIN     "Table" t ON t.TableID = tv.TableID
-WHERE    tv.Code = ?
+WHERE    upper(regexp_replace(tv.Code, '[^A-Za-z0-9]', '', 'g')) = ?
+ORDER BY tv.StartReleaseID DESC, tv.TableVID DESC
+LIMIT    1
+"""
+
+TABLE_IN_MODULE_SQL = """
+SELECT   tv.TableVID, tv.TableID, tv.Code, tv.Name,
+         t.HasOpenRows <> 0 AS open_rows, t.HasOpenColumns <> 0 AS open_columns,
+         t.HasOpenSheets <> 0 AS open_sheets
+FROM     ModuleVersionComposition mvc
+JOIN     TableVersion tv ON tv.TableVID = mvc.TableVID
+JOIN     ModuleVersion mv ON mv.ModuleVID = mvc.ModuleVID
+JOIN     "Table" t ON t.TableID = tv.TableID
+WHERE    upper(regexp_replace(tv.Code, '[^A-Za-z0-9]', '', 'g')) = ?
+     AND mv.Code = ? AND (? IS NULL OR mv.VersionNumber = ?)
 ORDER BY tv.StartReleaseID DESC, tv.TableVID DESC
 LIMIT    1
 """
@@ -182,19 +201,118 @@ def fold_rules(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+# Names are trimmed on both sides of every comparison and on the way out: item names in
+# the model carry trailing spaces inconsistently. The member on F_04.04.1's cells is
+# "Credit institutions " while a separate, clean item of that name also exists, and two
+# items are called "Central banks", differing only by a trailing space. Matching exactly
+# found nothing for a name copied out of this tool's own listing.
+#
+# Every dimension a template breaks down by, with its members. The discovery step: a
+# template can have 800 cells and 17 dimensions, so handing an agent every cell with
+# every member is both unusable and unnecessary. 17 rows with 7 members at most is not.
+DIMENSIONS_SQL = """
+SELECT   trim(dim.Name) AS dimension, trim(i.Name) AS member, count(DISTINCT c.CellID) AS cells
+FROM     TableVersionCell c
+JOIN     VariableVersion vv ON vv.VariableVID = c.VariableVID
+JOIN     ContextComposition x ON x.ContextID = vv.ContextID
+JOIN     Item i ON i.ItemID = x.ItemID
+JOIN     Item dim ON dim.ItemID = x.PropertyID
+WHERE    c.TableVID = ? AND c.IsExcluded = 0
+GROUP BY trim(dim.Name), trim(i.Name)
+ORDER BY trim(dim.Name), trim(i.Name)
+"""
+
+# The cells one member covers, with the datapoint id that an xBRL-CSV report keys on.
+CELLS_BY_MEMBER_SQL = """
+SELECT DISTINCT
+         vv.VariableID AS datapoint,
+         c.CellCode,
+         hr.Code AS row_code, left(hr.Label, 90) AS row_label,
+         hc.Code AS column_code, left(hc.Label, 90) AS column_label,
+         coalesce(hs.Code, '') AS sheet_code
+FROM     TableVersionCell c
+JOIN     VariableVersion vv ON vv.VariableVID = c.VariableVID
+JOIN     ContextComposition x ON x.ContextID = vv.ContextID
+JOIN     Item i ON i.ItemID = x.ItemID
+JOIN     Item dim ON dim.ItemID = x.PropertyID
+JOIN     Cell cc ON cc.CellID = c.CellID
+LEFT JOIN TableVersionHeader tr ON tr.TableVID = c.TableVID AND tr.HeaderID = cc.RowID
+LEFT JOIN HeaderVersion hr ON hr.HeaderVID = tr.HeaderVID
+LEFT JOIN TableVersionHeader tc ON tc.TableVID = c.TableVID AND tc.HeaderID = cc.ColumnID
+LEFT JOIN HeaderVersion hc ON hc.HeaderVID = tc.HeaderVID
+LEFT JOIN TableVersionHeader ts ON ts.TableVID = c.TableVID AND ts.HeaderID = cc.SheetID
+LEFT JOIN HeaderVersion hs ON hs.HeaderVID = ts.HeaderVID
+WHERE    c.TableVID = ? AND c.IsExcluded = 0
+     AND trim(lower(dim.Name)) = trim(lower(?)) AND trim(lower(i.Name)) = trim(lower(?))
+ORDER BY row_code, column_code, sheet_code
+"""
+
+# Which rows add up to which, grouped. The edges of the tree rather than the tree, which
+# is smaller and loses nothing: a caller that wants the nesting walks them.
+SUMS_SQL = """
+WITH RECURSIVE scoped AS (
+    SELECT op.Code AS rule_code, os.Severity, ov.OperationVID
+    FROM   Operation op
+    JOIN   OperationVersion ov ON ov.OperationID = op.OperationID
+    JOIN   OperationScope os ON os.OperationVID = ov.OperationVID
+    JOIN   OperationScopeComposition osc ON osc.OperationScopeID = os.OperationScopeID
+    JOIN   ModuleVersion mv ON mv.ModuleVID = osc.ModuleVID
+    WHERE  mv.Code = ? AND (? IS NULL OR mv.VersionNumber = ?)
+), node AS (
+    SELECT s.rule_code, s.Severity, n.NodeID, n.ParentNodeID, n.IsLeaf, o.Symbol
+    FROM   scoped s JOIN OperationNode n ON n.OperationVID = s.OperationVID
+    LEFT JOIN Operator o ON o.OperatorID = n.OperatorID
+), child AS (
+    SELECT r.NodeID AS eq, c.NodeID, c.Symbol, c.IsLeaf
+    FROM   node r JOIN node c ON c.ParentNodeID = r.NodeID
+    WHERE  r.ParentNodeID IS NULL AND r.Symbol = '='
+), addends AS (
+    SELECT eq, NodeID AS node, IsLeaf FROM child WHERE Symbol = '+'
+    UNION ALL
+    SELECT a.eq, n.NodeID, n.IsLeaf FROM addends a JOIN node n ON n.ParentNodeID = a.node
+), cells AS (
+    SELECT r.NodeID, l."Table" AS tbl, coalesce(l."Row", '*') AS row_code,
+           coalesce(l."Column", '*') AS col, coalesce(l.Sheet, '') AS sheet
+    FROM   OperandReference r JOIN OperandReferenceLocation l USING (OperandReferenceID)
+)
+SELECT   t.rule_code, t.Severity AS severity, tc.row_code AS total_row,
+         list_sort(list(DISTINCT ac.row_code))  AS addend_rows,
+         list_sort(list(DISTINCT tc.col))       AS columns,
+         list_sort(list(DISTINCT tc.sheet))     AS sheets
+FROM     child eqs
+JOIN     node t    ON t.NodeID = eqs.NodeID AND eqs.IsLeaf <> 0
+JOIN     cells tc  ON tc.NodeID = t.NodeID
+JOIN     addends a ON a.eq = eqs.eq AND a.IsLeaf <> 0
+JOIN     cells ac  ON ac.NodeID = a.node
+                  AND ac.tbl = tc.tbl AND ac.col = tc.col AND ac.sheet = tc.sheet
+WHERE    tc.tbl = ?
+GROUP BY t.rule_code, t.Severity, tc.row_code
+ORDER BY tc.row_code, t.rule_code
+"""
+
+
 def cell_code(table: str, row: str, column: str, sheet: str = "") -> str:
     """The model's own spelling of a coordinate: {Y_01.01, r0010, c0010, s0010}."""
     parts = [table, f"r{row}", f"c{column}"] + ([f"s{sheet}"] if sheet else [])
     return "{" + ", ".join(parts) + "}"
 
 
-def _table_version(con: duckdb.DuckDBPyConnection, table: str) -> dict[str, Any]:
-    code = normalise(table)
-    if code is None:
-        raise DpmError(f"{table!r} is not a template code. They look like Y_01_01, C_01.00 or F_32.04.")
-    found = _rows(con, TABLE_SQL, code)
+def _table_version(
+    con: duckdb.DuckDBPyConnection, table: str, module: str | None = None, version: str | None = None
+) -> dict[str, Any]:
+    """The template, newest first, or as one module version has it when that is given."""
+    key = code_key(table)
+    if not key:
+        raise DpmError(f"{table!r} is not a template code. They look like Y_01_01, C_01.00 or F_12.01.a.")
+    if module:
+        # version twice: the predicate is `(? IS NULL OR mv.VersionNumber = ?)`, so that a
+        # null version means the newest of that module rather than no match at all.
+        found = _rows(con, TABLE_IN_MODULE_SQL, key, module, version, version)
+    else:
+        found = _rows(con, TABLE_BY_KEY_SQL, key)
     if not found:
-        raise DpmError(f"No template {code} in the DPM 2.0 database.")
+        scope = f" in {module} {version}" if module else ""
+        raise DpmError(f"No template matching {table!r}{scope} in the DPM 2.0 database.")
     return found[0]
 
 
@@ -287,6 +405,247 @@ def lookup_dpm_cell(table: str, row: str, column: str, sheet: str | None = None)
     }
 
 
+def warehouse_name(table: str, row: str, column: str) -> str:
+    """The column name a warehouse gives a cell: F04041_r0040_c0015. Pure.
+
+    The shape the gist's aggregations are built in, and the same convention the pack uses
+    for PAY and DORA - the template code with its punctuation stripped, then the row and
+    column codes.
+    """
+    return f"{code_key(table)}_r{row}_c{column}"
+
+
+def lookup_dpm_dimensions(table: str, module: str | None = None, version: str | None = None) -> dict[str, Any]:
+    """What a template breaks down by: its dimensions, their members, and how many cells each.
+
+    The step to take before asking for cells. A template can carry 800 cells across 17
+    dimensions, and the answer to "which rows make up this aggregate" starts with knowing
+    that `Counterparty sector` is a dimension of it at all.
+    """
+    if not available():
+        return {"found": False, "table": table, "message": BUILD_IT}
+    try:
+        with _connect() as con:
+            tv = _table_version(con, table, module, version)
+            rows = _rows(con, DIMENSIONS_SQL, tv["TableVID"])
+    except DpmError as exc:
+        return {"found": False, "table": table, "message": str(exc)}
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(row["dimension"], []).append({"member": row["member"], "cells": row["cells"]})
+    return {
+        "found": True,
+        "table": tv["Code"],
+        "name": tv["Name"],
+        "dimensions": [{"dimension": name, "members": members} for name, members in grouped.items()],
+        "message": (
+            "A member's cell count is how many reportable cells carry it, so the counts do not "
+            "sum to the template's total - a cell carries one member of each dimension it has. "
+            "Ask lookup_dpm_cells for the cells of one member."
+        ),
+    }
+
+
+def lookup_dpm_cells(
+    table: str, dimension: str, member: str, module: str | None = None, version: str | None = None
+) -> dict[str, Any]:
+    """The cells where one dimension takes one member: the codes that make up an aggregate.
+
+    This is the question a hand-maintained spreadsheet of row codes exists to answer, and
+    the model answers it directly. Each cell comes with its datapoint id, which is what an
+    xBRL-CSV report keys its facts by, and the warehouse column name.
+    """
+    if not available():
+        return {"found": False, "table": table, "message": BUILD_IT}
+    try:
+        with _connect() as con:
+            tv = _table_version(con, table, module, version)
+            rows = _rows(con, CELLS_BY_MEMBER_SQL, tv["TableVID"], dimension, member)
+    except DpmError as exc:
+        return {"found": False, "table": table, "message": str(exc)}
+
+    if not rows:
+        return {
+            "found": False,
+            "table": tv["Code"],
+            "message": (
+                f"No reportable cell of {tv['Code']} has {dimension!r} = {member!r}. "
+                "Names are matched without regard to case or surrounding spaces - the model carries "
+                "trailing spaces on item names inconsistently - so a near miss is a real miss. "
+                "lookup_dpm_dimensions lists what there is."
+            ),
+        }
+    return {
+        "found": True,
+        "table": tv["Code"],
+        "dimension": dimension,
+        "member": member,
+        "cells": [
+            row | {"warehouse_column": warehouse_name(tv["Code"], row["row_code"] or "", row["column_code"] or "")}
+            for row in rows
+        ],
+        "datapoints": [row["datapoint"] for row in rows],
+        "message": (
+            "datapoints is the list to sum: dp<N> in an xBRL-CSV report is this VariableID. "
+            "Two things to narrow by before summing. A member usually spans several columns, "
+            "so an aggregate meant to be one column's is not the whole list. And one member "
+            "can appear in several blocks of a template with the same row label in each - "
+            "F_04.04.1 has Credit institutions at r0040 under Debt securities and again at "
+            "r0100 under Loans and advances - so the row labels will not tell them apart and "
+            "lookup_dpm_table gives each row a parent_code that does."
+        ),
+    }
+
+
+def lookup_dpm_sums(table: str, module: str, version: str | None = None) -> dict[str, Any]:
+    """Which rows add up to which, from the validation rules rather than from reading a grid.
+
+    Scoped to a module version because a rule belongs to one: the same code is reissued
+    per version and both its expression and its severity change between them.
+
+    These are the edges of a tree, not one level of it - a total's addends are often
+    totals themselves. Two entries with the same total_row are not a contradiction but
+    alternative roll-ups at different granularity, and which columns each covers is part
+    of the answer: in F_12.01.a row 0520 excludes the POCI row in one column of twelve.
+    """
+    if not available():
+        return {"found": False, "table": table, "message": BUILD_IT}
+    try:
+        with _connect() as con:
+            tv = _table_version(con, table, module, version)
+            rows = _rows(con, SUMS_SQL, module, version, version, tv["Code"])
+    except DpmError as exc:
+        return {"found": False, "table": table, "message": str(exc)}
+
+    totals = {row["total_row"] for row in rows}
+    addends = {r for row in rows for r in row["addend_rows"]}
+    return {
+        "found": True,
+        "table": tv["Code"],
+        "module": f"{module} {version}" if version else module,
+        "sums": rows,
+        "roots": sorted(totals - addends),
+        "message": (
+            "roots are the totals nothing else breaks down into - where to start walking. "
+            "A row in both totals and addends is an intermediate level. An empty answer means "
+            "the module's rules are not arithmetic: DORA's are presence and comparison checks."
+            if rows
+            else "No sum rule of this module reaches this template."
+        ),
+    }
+
+
+LOOKUP_DPM_DIMENSIONS_TOOL_NAME = "lookup_dpm_dimensions"
+LOOKUP_DPM_CELLS_TOOL_NAME = "lookup_dpm_cells"
+LOOKUP_DPM_SUMS_TOOL_NAME = "lookup_dpm_sums"
+
+_TABLE_ARG = {
+    "type": "string",
+    "description": (
+        "Template code in any spelling - F_12.01.a, F1201A, F 12.01.a, Y_01_01, C_01.00 - "
+        "matched by stripping the punctuation, which collides for none of the model's 1052 codes."
+    ),
+}
+_MODULE_ARG = {
+    "type": ["string", "null"],
+    "description": (
+        "Module code such as PSD_FRP, FINREP9 or COREP_OF, with version, to pin the answer to "
+        "one module version. Null takes the newest version of the template, which is right for "
+        "a question about the current framework and wrong for a question about a past one."
+    ),
+}
+_VERSION_ARG = {
+    "type": ["string", "null"],
+    "description": "Module version such as 1.1.0 or 3.3.0. Null means the newest.",
+}
+
+LOOKUP_DPM_DIMENSIONS_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": LOOKUP_DPM_DIMENSIONS_TOOL_NAME,
+        "description": (
+            "What a reporting template breaks down by: every dimension of it, that dimension's "
+            "members, and how many reportable cells carry each member. Call this before "
+            "lookup_dpm_cells - it is what tells you that 'Counterparty sector' or 'Type of "
+            "financial instruments' is a dimension of the template at all, and under which exact "
+            "wording. Use it to answer which rows or columns make up a business aggregate without "
+            "maintaining a spreadsheet of row codes by hand. Answers that it is unavailable when "
+            "the DPM database has not been downloaded."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {"table": _TABLE_ARG, "module": _MODULE_ARG, "version": _VERSION_ARG},
+            "required": ["table", "module", "version"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+LOOKUP_DPM_CELLS_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": LOOKUP_DPM_CELLS_TOOL_NAME,
+        "description": (
+            "The cells of a template where one dimension takes one member - the codes that make "
+            "up an aggregate. Returns each cell's datapoint id, which is what an xBRL-CSV report "
+            "keys its facts by, its row and column codes with their labels, and the warehouse "
+            "column name such as F04041_r0040_c0015. Take the dimension and member wording from "
+            "lookup_dpm_dimensions; a near miss matches nothing. Answers that it is unavailable "
+            "when the DPM database has not been downloaded."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "table": _TABLE_ARG,
+                "dimension": {
+                    "type": "string",
+                    "description": "As lookup_dpm_dimensions spells it, e.g. 'Counterparty sector'.",
+                },
+                "member": {
+                    "type": "string",
+                    "description": "As lookup_dpm_dimensions spells it, e.g. 'Credit institutions'.",
+                },
+                "module": _MODULE_ARG,
+                "version": _VERSION_ARG,
+            },
+            "required": ["table", "dimension", "member", "module", "version"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+LOOKUP_DPM_SUMS_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": LOOKUP_DPM_SUMS_TOOL_NAME,
+        "description": (
+            "Which rows of a template add up to which, taken from the module's validation rules "
+            "rather than from reading a grid. Returns one entry per rule and total: the total "
+            "row, its addend rows, and which columns and sheets the rule covers. These are the "
+            "edges of a tree, not one level - an addend is often a total itself, and `roots` "
+            "names the totals nothing else breaks down into. Two entries with the same total row "
+            "are alternative roll-ups at different granularity, not a contradiction, and a rule "
+            "can cover eleven columns of twelve. Needs the module code because a rule belongs to "
+            "one module version and changes between them. Answers nothing for a module whose "
+            "rules are not arithmetic, such as DORA's presence checks."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "table": _TABLE_ARG,
+                "module": {"type": "string", "description": "Module code, e.g. FINREP9 or PSD_FRP. Required here."},
+                "version": _VERSION_ARG,
+            },
+            "required": ["table", "module", "version"],
+            "additionalProperties": False,
+        },
+    },
+}
+
 LOOKUP_DPM_TABLE_TOOL_NAME = "lookup_dpm_table"
 LOOKUP_DPM_CELL_TOOL_NAME = "lookup_dpm_cell"
 
@@ -351,7 +710,13 @@ LOOKUP_DPM_CELL_TOOL_DEFINITION = {
     },
 }
 
-DPM_TOOL_DEFINITIONS = (LOOKUP_DPM_TABLE_TOOL_DEFINITION, LOOKUP_DPM_CELL_TOOL_DEFINITION)
+DPM_TOOL_DEFINITIONS = (
+    LOOKUP_DPM_TABLE_TOOL_DEFINITION,
+    LOOKUP_DPM_CELL_TOOL_DEFINITION,
+    LOOKUP_DPM_DIMENSIONS_TOOL_DEFINITION,
+    LOOKUP_DPM_CELLS_TOOL_DEFINITION,
+    LOOKUP_DPM_SUMS_TOOL_DEFINITION,
+)
 
 
 if __name__ == "__main__":

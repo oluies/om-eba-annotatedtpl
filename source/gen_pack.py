@@ -1682,7 +1682,7 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `describe_table.py` | Writes descriptions and glossary terms onto a table's columns, by name | You are describing a real table |
 | `pay42_lookup.py` | Deterministic datapoint lookup over DuckDB, and its tool definition | You are giving an agent a lookup tool |
 | `agent_tools.py` | All six tool definitions and one dispatcher | You are wiring the tools into an agent |
-| `dpm_lookup.py` | Lookup over the whole DPM 2.0 database, for frameworks this pack does not cover | A warehouse table is COREP, FINREP or anything but PAY and DORA |
+| `dpm_lookup.py` | Five lookups over the whole DPM 2.0 database: a template, a cell, what a template breaks down by, the cells one dimension member covers, and which rows add up to which | A warehouse table is COREP, FINREP or anything but PAY and DORA, or you need the codes behind a business aggregate |
 | `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file | You want to know whether a report adds up before you send it |
 | `source/load_to_mssql.py` | Loads the DPM database into SQL Server over TDS, authenticating with your Kerberos ticket | You want the dictionary in the same database as the reported figures |
 | `display_names.py` | The rule for what a table and its columns are called | You are setting display names |

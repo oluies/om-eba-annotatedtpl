@@ -77,14 +77,14 @@ def test_fold_rules_stays_quiet_when_a_rule_covers_them_all():
 # --- the DPM lookups -------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("spelling", ["Y_01_01", "Y 01.01", "Y_01.01", "Y0101", "y_01_01", "  Y_01_01  "])
-def test_every_spelling_of_a_template_code_normalises_to_the_models_own(spelling):
-    assert dpm_lookup.normalise(spelling) == "Y_01.01"
-
-
+@needs_dpm2
 @pytest.mark.parametrize("name", ["Period_SK", "Y_01", "Y_01_01_01", "", "Taxonomy_Name"])
-def test_normalise_refuses_what_is_not_a_template_code(name):
-    assert dpm_lookup.normalise(name) is None
+def test_a_name_that_is_not_a_template_is_refused_at_the_lookup(name):
+    """Where the refusal moved to. The old parser decided this itself and got F_12.01.a
+    wrong; the key now reduces anything and the database says whether it is a template."""
+    answer = dpm_lookup.lookup_dpm_table(name)
+    assert not answer["found"]
+    assert "No template matching" in answer["message"] or "not a template code" in answer["message"]
 
 
 def test_cell_code_is_written_as_the_model_writes_it():
@@ -178,3 +178,104 @@ def test_a_cell_with_a_sheet_axis_needs_its_sheet():
     assert missing["found"] is False
     assert "sheet axis" in missing["message"]
     assert dpm_lookup.lookup_dpm_cell("Y_01_01", "0010", "0010", "0010")["found"] is True
+
+
+# --- the three tools for querying a template's structure --------------------------------
+
+
+@pytest.mark.parametrize(
+    ("spelling", "resolved"),
+    [
+        ("F_12.01.a", "F1201A"),
+        ("F1201A", "F1201A"),
+        ("F 12.01.a", "F1201A"),
+        ("f_12_01_a", "F1201A"),
+        ("F_04.04.1", "F04041"),
+        ("F04041", "F04041"),
+        ("Y_01_01", "Y0101"),
+        ("C_01.00", "C0100"),
+    ],
+)
+def test_every_spelling_of_a_code_reduces_to_one_key(spelling, resolved):
+    """The regex this replaced could not read F_12.01.a at all: it wanted exactly two pairs
+    of digits and nothing after them, so a FINREP variant suffix was 'not a template code'."""
+    assert dpm_lookup.code_key(spelling) == resolved
+
+
+def test_a_context_column_reduces_to_something_no_template_matches():
+    assert dpm_lookup.code_key("Period_SK") == "PERIODSK"
+
+
+def test_the_warehouse_column_name_is_the_shape_a_warehouse_uses():
+    assert dpm_lookup.warehouse_name("F_04.04.1", "0040", "0015") == "F04041_r0040_c0015"
+    assert dpm_lookup.warehouse_name("Y_01.01", "0010", "0010") == "Y0101_r0010_c0010"
+
+
+@needs_dpm2
+def test_a_template_breaks_down_by_the_dimensions_a_hand_written_hierarchy_encodes():
+    """F_04.04.1 is the template the gist maintains a structure.yaml for. The counterparty
+    breakdown it maps by hand is a dimension of the model."""
+    answer = dpm_lookup.lookup_dpm_dimensions("F04041")
+    assert answer["found"] and answer["table"] == "F_04.04.1"
+    by_name = {d["dimension"]: {m["member"] for m in d["members"]} for d in answer["dimensions"]}
+    assert "Counterparty sector" in by_name
+    assert {"Credit institutions", "Households", "General governments"} <= by_name["Counterparty sector"]
+    assert "Type of financial instruments" in by_name
+
+
+@needs_dpm2
+def test_a_member_resolves_to_the_cells_that_make_up_the_aggregate():
+    answer = dpm_lookup.lookup_dpm_cells("F04041", "Counterparty sector", "Credit institutions")
+    assert answer["found"]
+    assert len(answer["cells"]) == len(answer["datapoints"]) == 24
+    assert "F04041_r0040_c0015" in {c["warehouse_column"] for c in answer["cells"]}
+    # The same member in two blocks of the template, with the same row label in each.
+    assert sorted({c["row_code"] for c in answer["cells"]}) == ["0040", "0100"]
+
+
+@needs_dpm2
+def test_a_member_is_matched_without_regard_to_case_or_trailing_space():
+    """The model's item names carry trailing spaces inconsistently - the member on these
+    cells is "Credit institutions " - so an exact match found nothing for a name copied
+    straight out of lookup_dpm_dimensions."""
+    loose = dpm_lookup.lookup_dpm_cells("f04041", "counterparty sector", "  credit institutions  ")
+    assert loose["found"]
+    assert len(loose["cells"]) == 24
+
+
+@needs_dpm2
+def test_a_member_that_does_not_exist_says_so_and_says_where_to_look():
+    answer = dpm_lookup.lookup_dpm_cells("F04041", "Counterparty sector", "Martians")
+    assert not answer["found"]
+    assert "lookup_dpm_dimensions" in answer["message"]
+
+
+@needs_dpm2
+def test_the_sums_of_f_12_01_a_including_the_column_that_differs():
+    answer = dpm_lookup.lookup_dpm_sums("F1201A", "FINREP9", "3.3.0")
+    assert answer["roots"] == ["0520"], "0520 is the total nothing else breaks down into"
+    by_rule = {s["rule_code"]: s for s in answer["sums"]}
+    # The same total, two rules: one column of twelve leaves the POCI row out.
+    assert by_rule["v5051_m"]["addend_rows"] == ["0010", "0180", "0360", "0600"]
+    assert by_rule["v09604_m"]["addend_rows"] == ["0010", "0180", "0360"]
+    assert by_rule["v09604_m"]["columns"] == ["0020"]
+    assert len(by_rule["v5051_m"]["columns"]) == 11
+
+
+@needs_dpm2
+def test_the_sums_are_scoped_to_a_module_version():
+    """A rule code is reissued per module version, so an unscoped answer would mix them."""
+    assert len(dpm_lookup.lookup_dpm_sums("Y_01_01", "PSD_FRP", "1.1.0")["sums"]) == 18
+
+
+@needs_dpm2
+def test_a_module_whose_rules_are_not_arithmetic_answers_nothing_rather_than_guessing():
+    answer = dpm_lookup.lookup_dpm_sums("B_99_01", "DORA", "1.1.0")
+    assert answer["sums"] == []
+    assert "not arithmetic" in answer["message"] or "No sum rule" in answer["message"]
+
+
+def test_the_three_new_tools_are_registered_and_dispatchable():
+    names = {tool["function"]["name"] for tool in agent_tools.TOOLS}
+    assert {"lookup_dpm_dimensions", "lookup_dpm_cells", "lookup_dpm_sums"} <= names
+    assert names <= {name.value for name in agent_tools.ToolName}

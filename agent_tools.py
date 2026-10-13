@@ -1,7 +1,7 @@
 """The tool definitions an agent registers, and the one dispatcher that runs them.
 
-Six tools, from three modules, assembled here so a host application imports one name
-instead of six and cannot end up with a definition registered but not dispatched:
+Nine tools, from three modules, assembled here so a host application imports one name
+instead of nine and cannot end up with a definition registered but not dispatched:
 
     lookup_datapoint        resolve a column name to its datapoint, and to the display
                             name to use for it                      (pay42_lookup.py)
@@ -10,6 +10,9 @@ instead of six and cannot end up with a definition registered but not dispatched
     write_table_metadata    the same for the table itself            (describe_table.py)
     lookup_dpm_table        a template from any framework in the DPM, with its axes
     lookup_dpm_cell         one cell of any template: dimensions, type, rules
+    lookup_dpm_dimensions   what a template breaks down by, and under which wording
+    lookup_dpm_cells        the cells one dimension member covers - an aggregate's codes
+    lookup_dpm_sums         which rows add up to which, from the validation rules
                                                                     (dpm_lookup.py)
 
 Registration, with the OpenAI-shaped tools parameter:
@@ -55,6 +58,9 @@ class ToolName(enum.StrEnum):
     WRITE_TABLE_METADATA = describe_table.WRITE_TABLE_METADATA_TOOL_NAME
     LOOKUP_DPM_TABLE = dpm_lookup.LOOKUP_DPM_TABLE_TOOL_NAME
     LOOKUP_DPM_CELL = dpm_lookup.LOOKUP_DPM_CELL_TOOL_NAME
+    LOOKUP_DPM_DIMENSIONS = dpm_lookup.LOOKUP_DPM_DIMENSIONS_TOOL_NAME
+    LOOKUP_DPM_CELLS = dpm_lookup.LOOKUP_DPM_CELLS_TOOL_NAME
+    LOOKUP_DPM_SUMS = dpm_lookup.LOOKUP_DPM_SUMS_TOOL_NAME
 
 
 TOOLS = (
@@ -115,6 +121,14 @@ def _run(name: str, args: dict[str, Any]) -> dict[str, Any]:
             return dpm_lookup.lookup_dpm_table(args["table"])
         case ToolName.LOOKUP_DPM_CELL:
             return dpm_lookup.lookup_dpm_cell(args["table"], args["row"], args["column"], args.get("sheet"))
+        case ToolName.LOOKUP_DPM_DIMENSIONS:
+            return dpm_lookup.lookup_dpm_dimensions(args["table"], args.get("module"), args.get("version"))
+        case ToolName.LOOKUP_DPM_CELLS:
+            return dpm_lookup.lookup_dpm_cells(
+                args["table"], args["dimension"], args["member"], args.get("module"), args.get("version")
+            )
+        case ToolName.LOOKUP_DPM_SUMS:
+            return dpm_lookup.lookup_dpm_sums(args["table"], args["module"], args.get("version"))
         case _:
             return {
                 "error": f"no such tool: {name}",
