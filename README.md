@@ -18,7 +18,7 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `07-agent-prompt.md` | The stanza to paste into an agent's system prompt, covering every framework | You are configuring an agent |
 | `describe_table.py` | Writes descriptions and glossary terms onto a table's columns, by name | You are describing a real table |
 | `pay42_lookup.py` | Deterministic datapoint lookup over DuckDB, and its tool definition | You are giving an agent a lookup tool |
-| `agent_tools.py` | All six tool definitions and one dispatcher | You are wiring the tools into an agent |
+| `agent_tools.py` | All nine tool definitions, one dispatcher, and a shell front end for trying one | You are wiring the tools into an agent |
 | `dpm_lookup.py` | Five lookups over the whole DPM 2.0 database: a template, a cell, what a template breaks down by, the cells one dimension member covers, and which rows add up to which | A warehouse table is COREP, FINREP or anything but PAY and DORA, or you need the codes behind a business aggregate |
 | `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file | You want to know whether a report adds up before you send it |
 | `source/load_to_mssql.py` | Loads the DPM database into SQL Server over TDS, authenticating with your Kerberos ticket | You want the dictionary in the same database as the reported figures |
@@ -114,6 +114,25 @@ Two details it has to absorb. The DPM writes a table code `Y_01.01` where the la
 the warehouse write `Y 01.01`. And a cell with `IsExcluded` set is a greyed-out box in
 the template — in the model, not reportable — which the pack leaves out, so the
 comparison does too. `Y_01.01` has 396 cells, 72 of them excluded, and the pack has 324.
+
+### Trying a lookup before wiring it into anything
+
+`agent_tools.py` runs any one tool from a shell, through the same dispatcher an agent
+calls, and prints the answer with a plain `json.dumps` — the host's own serialisation, so
+an answer it could not hand back fails here rather than mid-turn.
+
+```bash
+uv run agent_tools.py                    # the definitions the model will be shown
+uv run agent_tools.py lookup_dpm_sums table='F 12.01.a' module=FINREP9 version=null
+uv run agent_tools.py lookup_dpm_dimensions table=F_04.04.1 module=FINREP9 version=null
+uv run agent_tools.py lookup_dpm_cells table=F_04.04.1 dimension='Counterparty sector' \
+    member='Credit institutions' module=FINREP9 version=null
+```
+
+Arguments are `key=value`, and `null` is spelled out, because that is what the schemas
+offer for an unpinned module version. Take the dimension and member wording from
+`lookup_dpm_dimensions`: a near miss matches nothing, and that is as true from the shell
+as from the model.
 
 ### What the model has that the layout does not
 

@@ -34,7 +34,12 @@ Reading needs `PAY42_DB` to point at the built store; the catalogue tools need `
 and `OM_JWT_TOKEN`; the warehouse enrichment needs `BA_SERVER`. Each tool reports what it
 is missing rather than failing the turn.
 
-The two DPM tools are the exception: they need a 139 MB database that a checkout does not
+Trying one from a shell, before any of that:
+
+    uv run agent_tools.py                       # the definitions the model will be shown
+    uv run agent_tools.py lookup_dpm_sums table='F 12.01.a' module=FINREP9 version=null
+
+The five DPM tools are the exception: they need a 139 MB database that a checkout does not
 have, so they are registered only when it is there. A tool whose every answer is "not
 downloaded" costs a turn and teaches the model to stop calling it. `dispatch` still knows
 them either way, so a host that registered them before the file moved does not break.
@@ -44,6 +49,7 @@ import datetime
 import decimal
 import enum
 import json
+import sys
 from typing import Any
 
 import describe_table
@@ -165,6 +171,26 @@ def _run(name: str, args: dict[str, Any]) -> dict[str, Any]:
             }
 
 
+def parse_arguments(pairs: list[str]) -> dict[str, Any]:
+    """`key=value` pairs into the arguments object a tool call carries.
+
+    `null` is spelled out, because that is what the schemas offer for an unpinned module
+    version and an empty string would be matched on literally. Everything else stays a
+    string: every property in these schemas is one.
+    """
+    for pair in pairs:
+        if "=" not in pair:
+            raise SystemExit(f"arguments are key=value pairs; got {pair!r}")
+    return {key: None if value == "null" else value for key, value in (pair.split("=", 1) for pair in pairs)}
+
+
 if __name__ == "__main__":
-    # Prints the definitions, so what the model will be shown can be read before it is.
-    print(json.dumps({"tools": list(TOOLS)}, ensure_ascii=False, indent=2))
+    argv = sys.argv[1:]
+    if not argv:
+        # The definitions, so what the model will be shown can be read before it is.
+        print(json.dumps({"tools": list(TOOLS)}, ensure_ascii=False, indent=2))
+    else:
+        # Through dispatch rather than the function behind it, so this is the path a tool
+        # call takes - and json.dumps with no `default=` is the host's own serialisation,
+        # which an answer carrying a date would fail.
+        print(json.dumps(dispatch(argv[0], parse_arguments(argv[1:])), ensure_ascii=False, indent=2))

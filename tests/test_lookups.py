@@ -446,3 +446,25 @@ def test_a_template_in_a_module_carries_the_module_version_it_was_found_in():
     with dpm_lookup._connect() as con:
         found = dpm_lookup._table_version(con, "F 12.01.a", "FINREP9")
     assert found["module_version"]
+
+
+# --- trying a tool from a shell --------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("pairs", "expected"),
+    [
+        (["table=F 12.01.a", "module=FINREP9"], {"table": "F 12.01.a", "module": "FINREP9"}),
+        (["version=null"], {"version": None}),  # what the schemas offer for "newest"
+        (["member=Credit institutions"], {"member": "Credit institutions"}),
+        (["expression=a=b"], {"expression": "a=b"}),  # split once: a value may carry one
+        ([], {}),
+    ],
+)
+def test_key_value_arguments_become_a_tool_call(pairs, expected):
+    assert agent_tools.parse_arguments(pairs) == expected
+
+
+def test_an_argument_without_a_value_is_refused_rather_than_guessed():
+    with pytest.raises(SystemExit, match="key=value"):
+        agent_tools.parse_arguments(["table"])
