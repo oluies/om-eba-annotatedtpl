@@ -1872,7 +1872,15 @@ release has means the report was built against a newer one, which the answer say
 than leaving an empty result to interpret. That is not hypothetical: those three ids
 resolve to nothing in release 4.2.1, to nothing in 4.3, and in the 4.4 draft to columns
 `0040`, `0050` and `0060` of V_04.01, *Freedom to provide services*, in the
-`AML_ELIGIBILITY` module - customers, incoming transactions, outgoing transactions. A header that resolves to nothing usually
+`AML_ELIGIBILITY` module - customers, incoming transactions, outgoing transactions.
+
+An open table's key dimensions are the headers the model marks `IsKey`, and a report of
+it carries exactly their property codes. V_04.01 is keyed on `qCDF` (Name of entity),
+`qBBE` (Location of activity) and `ei1452` (Country where a service/activity is
+provided), which `lookup_dpm_table` now reports per header, and `explain_report` checks
+the report's columns against. That check earns its place: `qCDF` is *Name of entity* and
+`qGDF` is *Name of Holding entity*, both real properties, so a header resolving to
+something proves nothing about whether it belongs to this template. A header that resolves to nothing usually
 means the same thing: a property code is scoped to a release, and the same property is
 `x21` through release 4.2 and `qx2013` after it. And where the file has more rows than
 distinct datapoints, it has one row per record of an open table, told apart by those

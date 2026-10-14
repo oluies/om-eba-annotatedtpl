@@ -135,14 +135,22 @@ ORDER  BY mv.Code, mv.VersionNumber
 # Direction X is the column axis, Y the row axis and Z the sheet axis. ParentHeaderID is
 # what makes an "Of which" row a child of the row it qualifies - the nesting the annotated
 # layout only shows by indentation.
+#
+# Header.IsKey marks the key dimensions of an open table: the headers that identify a
+# record rather than hold a figure. They are what a report writes as its own columns, and
+# property_code is the heading it writes - V_04.01 is keyed on qCDF, qBBE and ei1452, and
+# a file of it carries exactly those three beside datapoint and factValue.
 HEADERS_SQL = """
 SELECT   h.Direction AS direction, hv.Code AS code, hv.Label AS label,
-         parent.Code AS parent_code, tvh.IsAbstract <> 0 AS is_abstract
+         parent.Code AS parent_code, tvh.IsAbstract <> 0 AS is_abstract,
+         h.IsKey <> 0 AS is_key, ic.Code AS property_code, i.Name AS property
 FROM     TableVersionHeader tvh
 JOIN     HeaderVersion hv ON hv.HeaderVID = tvh.HeaderVID
 JOIN     Header h ON h.HeaderID = tvh.HeaderID
 LEFT JOIN TableVersionHeader ptvh ON ptvh.TableVID = tvh.TableVID AND ptvh.HeaderID = tvh.ParentHeaderID
 LEFT JOIN HeaderVersion parent ON parent.HeaderVID = ptvh.HeaderVID
+LEFT JOIN Item i ON i.ItemID = hv.PropertyID
+LEFT JOIN ItemCategory ic ON ic.ItemID = i.ItemID
 WHERE    tvh.TableVID = ?
 ORDER BY h.Direction, tvh."Order"
 """

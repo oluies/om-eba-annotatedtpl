@@ -374,6 +374,25 @@ def open_dimension_columns(header: list[str]) -> list[str]:
     return [column for column in header if column not in {"datapoint", "factValue"}]
 
 
+def key_columns(header: list[str], expected: Iterable[str]) -> dict[str, list[str]]:
+    """The report's dimension columns against the template's key dimensions. Pure.
+
+    An open table is keyed on the headers the model marks IsKey, and a report of it
+    carries exactly those codes beside datapoint and factValue. Comparing the two is the
+    only check on a column that catches a near miss: qCDF is "Name of entity" and qGDF is
+    "Name of Holding entity", both real, so a header resolving to a property proves
+    nothing about whether it belongs to this template.
+    """
+    present = open_dimension_columns(header)
+    wanted = [code for code in expected if code]
+    return {
+        "expected": sorted(wanted),
+        "in_report": sorted(present),
+        "unexpected": sorted(set(present) - set(wanted)),
+        "missing": sorted(set(wanted) - set(present)),
+    }
+
+
 def explain_report(instance: str | None = None, limit: int = 5, text: str | None = None) -> dict[str, Any]:
     """What a report is, before checking whether it holds. A path, or the text itself.
 
@@ -420,6 +439,21 @@ def explain_report(instance: str | None = None, limit: int = 5, text: str | None
         {f"{m['module']} {m['version']}" for answer in datapoints if answer["found"] for m in answer["modules"]}
     )
     resolved = sum(1 for answer in datapoints if answer["found"])
+    # Only with one template is the comparison meaningful: a sample spanning two would
+    # have each one's keys count as the other's unexpected columns.
+    keys = (
+        key_columns(
+            header,
+            (
+                column["property_code"]
+                for column in dpm_lookup.lookup_dpm_table(tables[0]).get("columns", [])
+                + dpm_lookup.lookup_dpm_table(tables[0]).get("rows", [])
+                if column["is_key"]
+            ),
+        )
+        if len(tables) == 1
+        else None
+    )
     return {
         "found": True,
         "file": name,
@@ -429,6 +463,7 @@ def explain_report(instance: str | None = None, limit: int = 5, text: str | None
         "datapoints": datapoints,
         "tables": tables,
         "modules": modules,
+        "key_dimensions": keys,
         "message": (
             (
                 f"None of the {len(datapoints)} datapoints sampled are in this copy of the DPM; "
@@ -440,9 +475,17 @@ def explain_report(instance: str | None = None, limit: int = 5, text: str | None
                 "datapoint outlives a version."
             )
             + (
-                f" records ({records}) exceeds facts ({len(facts)}), so the file has one row per "
+                f" records ({records}) exceeds facts ({len(facts)}), so the report has one row per "
                 "record of an open table, told apart by the dimension columns."
                 if records > len(facts)
+                else ""
+            )
+            + (
+                " key_dimensions does not line up: the template is keyed on "
+                f"{', '.join(keys['expected'])} and the report carries {', '.join(keys['in_report'])}. "
+                "A column code that resolves to a property proves nothing on its own - qCDF is "
+                "Name of entity and qGDF is Name of Holding entity, and both exist."
+                if keys and (keys["unexpected"] or keys["missing"])
                 else ""
             )
         ),

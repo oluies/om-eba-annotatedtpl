@@ -374,3 +374,35 @@ def test_pasted_text_is_read_like_a_file(tmp_path):
     assert pasted["file"] == "pasted text" and on_disk["file"] == "one.csv"
     assert pasted["datapoints"] == on_disk["datapoints"]
     assert pasted["tables"] == on_disk["tables"] == ["F_04.04.1"]
+
+
+# --- the report's columns against the template's keys ----------------------------------
+
+
+@pytest.mark.parametrize(
+    ("header", "expected", "unexpected", "missing"),
+    [
+        (["datapoint", "factValue", "qCDF"], ["qCDF"], [], []),
+        (["datapoint", "factValue", "qGDF"], ["qCDF"], ["qGDF"], ["qCDF"]),
+        (["datapoint", "factValue"], ["qCDF"], [], ["qCDF"]),
+        (["datapoint", "factValue", "qCDF"], [], ["qCDF"], []),
+        (["datapoint", "factValue", "qCDF"], [None, "qCDF"], [], []),  # a header with no property
+    ],
+)
+def test_a_near_miss_in_a_column_code_is_the_only_thing_that_catches_it(header, expected, unexpected, missing):
+    """qCDF is Name of entity and qGDF is Name of Holding entity. Both resolve, so a
+    header resolving to a property proves nothing about which template it belongs to."""
+    answer = check_instance.key_columns(header, expected)
+    assert answer["unexpected"] == unexpected
+    assert answer["missing"] == missing
+
+
+@needs_dpm2
+def test_a_report_of_a_closed_template_expects_no_dimension_columns():
+    from check_instance import load
+
+    grid, _ = load("Y_01.01", "PSD_FRP", "1.1.0")
+    rows = "\n".join(f"dp{dp},1.0" for dp in sorted(grid)[:3])
+    answer = check_instance.explain_report(text=f"datapoint,factValue\n{rows}\n", limit=3)
+    assert answer["tables"] == ["Y_01.01"]
+    assert answer["key_dimensions"] == {"expected": [], "in_report": [], "unexpected": [], "missing": []}
