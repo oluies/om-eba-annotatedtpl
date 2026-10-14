@@ -35,6 +35,8 @@ from typing import Any, NamedTuple
 
 import duckdb
 
+import dpm_lookup
+
 PACK = Path(__file__).parent
 DIR = Path(os.environ.get("DPM2_DIR") or PACK / "source" / "dpm2")
 DB = Path(os.environ.get("DPM2_DB") or DIR / "dpm2.duckdb")
@@ -353,6 +355,109 @@ def check_report(table: str, module: str, version: str, instance: str) -> dict[s
             )
         ),
     }
+
+
+def report_header(path: Path) -> list[str]:
+    """The file's column names. Pure enough: one line, no model, no rules."""
+    with path.open(encoding="utf-8") as fh:
+        return next(csv.reader(fh), [])
+
+
+def open_dimension_columns(header: list[str]) -> list[str]:
+    """The columns that are open dimensions: everything but the two fixed ones. Pure."""
+    return [column for column in header if column not in {"datapoint", "factValue"}]
+
+
+def explain_report(instance: str, limit: int = 5) -> dict[str, Any]:
+    """What a reported file is, before checking whether it holds.
+
+    A fact in an xBRL-CSV report is a datapoint id, a value, and one column per open
+    dimension. None of it is readable as it stands: `dp1010005012,58994,pipwgiwl,
+    eba_GA:AL` says nothing until the id is resolved to a cell and the headers to
+    properties. This resolves both, over the first `limit` distinct datapoints.
+
+    The point of doing it before check_report is that an unrecognised file fails there as
+    "nothing mapped", which reads like a bad report rather than the wrong release.
+    """
+    path = Path(instance)
+    if not path.is_file():
+        return {"found": False, "message": f"No such report file: {path.name}"}
+    try:
+        header = report_header(path)
+        facts, records = read_facts(path)
+    except (OSError, UnicodeDecodeError, csv.Error, KeyError, ValueError) as exc:
+        return {
+            "found": False,
+            "message": (
+                f"{path.name} is not an xBRL-CSV report this can read ({type(exc).__name__}). "
+                "It wants a datapoint column of dp<N> ids and a factValue column."
+            ),
+        }
+
+    columns = [dpm_lookup.lookup_dpm_property(code) for code in open_dimension_columns(header)]
+    datapoints = [dpm_lookup.lookup_dpm_datapoint(dp) for dp in sorted(facts)[:limit]]
+    tables = sorted({cell["table_code"] for answer in datapoints if answer["found"] for cell in answer["cells"]})
+    modules = sorted(
+        {f"{m['module']} {m['version']}" for answer in datapoints if answer["found"] for m in answer["modules"]}
+    )
+    resolved = sum(1 for answer in datapoints if answer["found"])
+    return {
+        "found": True,
+        "file": path.name,
+        "records": records,
+        "facts": len(facts),
+        "columns": columns,
+        "datapoints": datapoints,
+        "tables": tables,
+        "modules": modules,
+        "message": (
+            (
+                f"None of the {len(datapoints)} datapoints sampled are in this copy of the DPM; "
+                "read their messages before reading anything else, and check the release before "
+                "the file."
+                if resolved == 0
+                else f"{resolved} of {len(datapoints)} sampled datapoints resolved. tables and "
+                "modules are what they agree on - more than one module version is normal, since a "
+                "datapoint outlives a version."
+            )
+            + (
+                f" records ({records}) exceeds facts ({len(facts)}), so the file has one row per "
+                "record of an open table, told apart by the dimension columns."
+                if records > len(facts)
+                else ""
+            )
+        ),
+    }
+
+
+EXPLAIN_REPORT_TOOL_NAME = "explain_report"
+
+EXPLAIN_REPORT_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": EXPLAIN_REPORT_TOOL_NAME,
+        "description": (
+            "Read an xBRL-CSV report file and say what it is: which template and module versions "
+            "its datapoints belong to, and what each column header means. Call it before "
+            "check_report on any file whose provenance is not certain - a file from another "
+            "release checks as 'nothing mapped', which reads like a bad report rather than the "
+            "wrong release. Needs the DPM database and a file on this machine."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "instance": {"type": "string", "description": "Path to the xBRL-CSV report file."},
+                "limit": {
+                    "type": ["integer", "null"],
+                    "description": "How many distinct datapoints to resolve. Null means five.",
+                },
+            },
+            "required": ["instance", "limit"],
+            "additionalProperties": False,
+        },
+    },
+}
 
 
 CHECK_REPORT_TOOL_NAME = "check_report"

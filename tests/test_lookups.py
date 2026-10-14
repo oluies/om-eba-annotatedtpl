@@ -292,7 +292,15 @@ def test_a_module_whose_rules_are_not_arithmetic_answers_nothing_rather_than_gue
     assert "not arithmetic" in answer["message"] or "No sum rule" in answer["message"]
 
 
-NEW_DPM_TOOLS = {"lookup_dpm_dimensions", "lookup_dpm_cells", "lookup_dpm_sums", "check_report"}
+NEW_DPM_TOOLS = {
+    "lookup_dpm_dimensions",
+    "lookup_dpm_cells",
+    "lookup_dpm_sums",
+    "check_report",
+    "lookup_dpm_datapoint",
+    "lookup_dpm_property",
+    "explain_report",
+}
 
 
 def test_the_three_new_tools_are_dispatchable_whether_or_not_they_are_registered():
@@ -522,3 +530,78 @@ def test_a_lookup_reached_past_dispatch_is_serialisable_too(call, args):
     Reported as `TypeError: Object of type date is not JSON serializable` from inside a
     chainlit handler's json.dumps."""
     json.dumps(call(*args), ensure_ascii=False)
+
+
+# --- reading a report back to the model ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        ("dp1010005012", 1010005012),
+        ("DP152217", 152217),
+        ("152217", 152217),
+        (152217, 152217),
+        ("  dp152217 ", 152217),
+        ("d152217", 152217),  # the prefix the taxonomy writes is optional either way
+        ("dp", None),
+        ("F_04.04.1", None),
+        ("", None),
+    ],
+)
+def test_a_reported_datapoint_id_is_read_with_or_without_its_prefix(given, expected):
+    assert dpm_lookup.datapoint_id(given) == expected
+
+
+@needs_dpm2
+def test_a_datapoint_resolves_to_the_cell_it_is():
+    answer = dpm_lookup.lookup_dpm_datapoint("dp152217")
+    assert answer["found"] is True
+    cell = answer["cells"][0]
+    assert cell["table_code"] == "F_04.04.1"
+    assert (cell["row_code"], cell["column_code"]) == ("0040", "0010")
+    assert cell["row_label"] == "Credit institutions"
+    assert {m["module"] for m in answer["modules"]} == {"FINREP9", "FINREP9DP"}
+
+
+@needs_dpm2
+def test_an_id_above_the_release_says_newer_release_rather_than_nothing():
+    """An empty answer cannot tell a caller whether the id is wrong or the file is newer,
+    and that is the whole question when a report will not resolve."""
+    answer = dpm_lookup.lookup_dpm_datapoint("dp1010005012")
+    assert answer["found"] is False
+    assert answer["max_datapoint"] < 1010005012
+    assert "newer release" in answer["message"]
+
+
+@needs_dpm2
+def test_an_id_within_range_is_not_blamed_on_the_release():
+    answer = dpm_lookup.lookup_dpm_datapoint("dp999999999")
+    assert answer["found"] is False
+    assert "newer release" not in answer["message"]
+
+
+@needs_dpm2
+@pytest.mark.parametrize(
+    ("code", "property_name"),
+    [
+        ("qGDF", "Name of Holding entity"),
+        ("qBBE", "Location of activity"),
+        ("ei1452", "Country where a service/activity is provided"),
+    ],
+)
+def test_a_report_column_header_resolves_to_its_property(code, property_name):
+    """The headers of the EBA's own sample file. They are property codes, and they live
+    in the model rather than only in the taxonomy files."""
+    answer = dpm_lookup.lookup_dpm_property(code)
+    assert answer["found"] is True
+    assert answer["properties"][0]["property"] == property_name
+
+
+@needs_dpm2
+def test_a_property_code_carries_the_releases_it_was_current_in():
+    """A code is release-scoped: x21 through release 4.2, qx2013 after it. A header that
+    resolves to nothing is more often the wrong release than the wrong file."""
+    answer = dpm_lookup.lookup_dpm_property("qGDF")
+    assert answer["properties"][0]["from_release"] == "4.0"
+    assert answer["properties"][0]["until_release"] is None

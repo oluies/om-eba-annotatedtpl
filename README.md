@@ -18,7 +18,7 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `07-agent-prompt.md` | The stanza to paste into an agent's system prompt, covering every framework | You are configuring an agent |
 | `describe_table.py` | Writes descriptions and glossary terms onto a table's columns, by name | You are describing a real table |
 | `pay42_lookup.py` | Deterministic datapoint lookup over DuckDB, and its tool definition | You are giving an agent a lookup tool |
-| `agent_tools.py` | All ten tool definitions, one dispatcher, and a shell front end for trying one | You are wiring the tools into an agent |
+| `agent_tools.py` | All thirteen tool definitions, one dispatcher, and a shell front end for trying one | You are wiring the tools into an agent |
 | `dpm_lookup.py` | Five lookups over the whole DPM 2.0 database: a template, a cell, what a template breaks down by, the cells one dimension member covers, and which rows add up to which | A warehouse table is COREP, FINREP or anything but PAY and DORA, or you need the codes behind a business aggregate |
 | `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file, as a CLI and as the `check_report` tool | You want to know whether a report adds up before you send it, or want an agent to check its own arithmetic |
 | `source/load_to_mssql.py` | Loads the DPM database into SQL Server over TDS, authenticating with your Kerberos ticket | You want the dictionary in the same database as the reported figures |
@@ -128,6 +128,8 @@ uv run agent_tools.py lookup_dpm_dimensions table=F_04.04.1 module=FINREP9 versi
 uv run agent_tools.py lookup_dpm_cells table=F_04.04.1 dimension='Counterparty sector' \
     member='Credit institutions' module=FINREP9 version=null
 uv run agent_tools.py check_report table=Y_01.01 module=PSD_FRP version=1.1.0 instance=report.csv
+uv run agent_tools.py explain_report instance=report.csv limit=null
+uv run agent_tools.py lookup_dpm_datapoint datapoint=dp152217
 ```
 
 Arguments are `key=value`, and `null` is spelled out, because that is what the schemas
@@ -185,6 +187,31 @@ institutions` up into one `Financial corporations` figure is not in the DPM. The
 holds the leaves; a roll-up across them is a decision, and it should read as one in the
 code rather than arrive as though the EBA had said it. (The EBA does publish member
 hierarchies, in `ATTT2Hierarchies` — no tool exposes them yet.)
+
+**Reading a report file.**
+
+> What is `report.csv`? Then check it.
+
+`explain_report` answers what a file is before anything asks whether it holds: it
+resolves a sample of its datapoint ids to cells and every column header to a property.
+The two fixed columns are `datapoint` and `factValue`; the rest are the open dimensions,
+headed by a property code. For the EBA's own sample file:
+
+| Column | Property |
+|---|---|
+| `qGDF` | Name of Holding entity, a typed dimension — hence a free-text value |
+| `qBBE` | Location of activity |
+| `ei1452` | Country where a service/activity is provided |
+
+Both halves fail in ways worth telling apart. A datapoint id above the highest this
+release has means the file was built against a newer one, which the answer says rather
+than leaving an empty result to interpret. A header that resolves to nothing usually
+means the same thing: a property code is scoped to a release, and the same property is
+`x21` through release 4.2 and `qx2013` after it. And where the file has more rows than
+distinct datapoints, it has one row per record of an open table, told apart by those
+dimension columns. Run `explain_report` before `check_report` on any file whose
+provenance is not certain: a file from another release checks as "nothing mapped", which
+reads like a bad report rather than a newer file.
 
 **The check, rather than an instruction not to guess.**
 

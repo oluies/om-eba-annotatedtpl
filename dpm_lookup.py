@@ -301,6 +301,59 @@ ORDER BY tc.row_code, t.rule_code
 """
 
 
+# A reported fact names a datapoint and nothing else, so this is the way back from a file
+# to the model. One id can be a cell of several module versions, which is why the answer
+# lists them rather than picking one.
+DATAPOINT_SQL = """
+SELECT DISTINCT
+         tv.Code AS table_code, tv.Name AS table_name, c.CellCode,
+         coalesce(hr.Code, '*') AS row_code, left(hr.Label, 90) AS row_label,
+         coalesce(hc.Code, '*') AS column_code, left(hc.Label, 90) AS column_label,
+         coalesce(hs.Code, '') AS sheet_code,
+         c.IsExcluded <> 0 AS is_excluded
+FROM     VariableVersion vv
+JOIN     TableVersionCell c ON c.VariableVID = vv.VariableVID
+JOIN     TableVersion tv ON tv.TableVID = c.TableVID
+JOIN     Cell cc ON cc.CellID = c.CellID
+LEFT JOIN TableVersionHeader tr ON tr.TableVID = c.TableVID AND tr.HeaderID = cc.RowID
+LEFT JOIN HeaderVersion hr ON hr.HeaderVID = tr.HeaderVID
+LEFT JOIN TableVersionHeader tc ON tc.TableVID = c.TableVID AND tc.HeaderID = cc.ColumnID
+LEFT JOIN HeaderVersion hc ON hc.HeaderVID = tc.HeaderVID
+LEFT JOIN TableVersionHeader ts ON ts.TableVID = c.TableVID AND ts.HeaderID = cc.SheetID
+LEFT JOIN HeaderVersion hs ON hs.HeaderVID = ts.HeaderVID
+WHERE    vv.VariableID = ?
+"""
+
+DATAPOINT_MODULES_SQL = """
+SELECT DISTINCT mv.Code AS module, mv.VersionNumber AS version
+FROM     VariableVersion vv
+JOIN     TableVersionCell c ON c.VariableVID = vv.VariableVID
+JOIN     ModuleVersionComposition mvc ON mvc.TableVID = c.TableVID
+JOIN     ModuleVersion mv ON mv.ModuleVID = mvc.ModuleVID
+WHERE    vv.VariableID = ?
+ORDER BY 1, 2
+"""
+
+# The highest id this release knows. An unknown id above it is a newer release rather than
+# a typo, and that is the one thing a caller cannot work out from an empty answer.
+MAX_DATAPOINT_SQL = "SELECT max(VariableID) AS max_datapoint FROM VariableVersion"
+
+RELEASES_SQL = "SELECT ReleaseID, Code FROM Release ORDER BY ReleaseID"
+
+# A report's column headers are property codes, and they live here rather than in the
+# taxonomy files. The code is scoped to a release: the same property is `x21` up to
+# release 4.2 and `qx2013` after it, so a header that resolves to nothing is more often
+# the wrong release than the wrong file.
+PROPERTY_CODE_SQL = """
+SELECT   ic.Code, i.Name AS property, ic.StartReleaseID, ic.EndReleaseID,
+         nullif(i.Description, '') AS definition
+FROM     ItemCategory ic
+JOIN     Item i ON i.ItemID = ic.ItemID
+WHERE    ic.Code = ?
+ORDER BY ic.StartReleaseID DESC
+"""
+
+
 def cell_code(table: str, row: str, column: str, sheet: str = "") -> str:
     """The model's own spelling of a coordinate: {Y_01.01, r0010, c0010, s0010}."""
     parts = [table, f"r{row}", f"c{column}"] + ([f"s{sheet}"] if sheet else [])
@@ -549,6 +602,165 @@ def lookup_dpm_sums(table: str, module: str, version: str | None = None) -> dict
     }
 
 
+DP = re.compile(r"^\s*(?:dp?)?(\d+)\s*$", re.IGNORECASE)
+
+
+def datapoint_id(datapoint: str | int) -> int | None:
+    """`dp1010005012`, `1010005012` or the integer, as the integer. Pure.
+
+    A reported fact writes the id with the `dp` prefix the taxonomy gives it; the model
+    stores the number. Anything else is a caller error worth naming rather than a zero.
+    """
+    if isinstance(datapoint, int):
+        return datapoint
+    found = DP.match(str(datapoint))
+    return int(found.group(1)) if found else None
+
+
+def lookup_dpm_datapoint(datapoint: str | int) -> dict[str, Any]:
+    """What a reported datapoint id is: the cell, its labels, and the modules it is in.
+
+    This is the way back from a file to the model. A fact in an xBRL-CSV report names a
+    datapoint and nothing else, so without this an id is unreadable.
+
+    An id the release does not have is reported with the highest it does have, because
+    that is the difference between a typo and a file built against a newer release - and
+    an empty answer alone cannot tell a caller which.
+    """
+    if not available():
+        return {"found": False, "datapoint": datapoint, "message": BUILD_IT}
+    number = datapoint_id(datapoint)
+    if number is None:
+        return {
+            "found": False,
+            "datapoint": datapoint,
+            "message": f"{datapoint!r} is not a datapoint id. They look like dp1010005012 or 152217.",
+        }
+    with _connect() as con:
+        cells = _rows(con, DATAPOINT_SQL, number)
+        if not cells:
+            highest = _rows(con, MAX_DATAPOINT_SQL)[0]["max_datapoint"]
+            return {
+                "found": False,
+                "datapoint": number,
+                "max_datapoint": highest,
+                "message": (
+                    f"No datapoint {number} in this copy of the DPM, whose highest is {highest}. "
+                    + (
+                        "The id is above that, so the file is built against a newer release than "
+                        "the one downloaded here, not against another module of it."
+                        if number > highest
+                        else "The id is within range, so it is either a typo or a datapoint of a "
+                        "release older than this one."
+                    )
+                ),
+            }
+        modules = _rows(con, DATAPOINT_MODULES_SQL, number)
+    return {
+        "found": True,
+        "datapoint": number,
+        "cells": cells,
+        "modules": modules,
+        "message": (
+            "One id can be a cell of several module versions - the datapoint is what they share. "
+            "An excluded cell is in the model but not reportable."
+        ),
+    }
+
+
+def lookup_dpm_property(code: str) -> dict[str, Any]:
+    """What a report's column header means: `qGDF`, `qBBE`, `ei1452`, `CPS`.
+
+    The columns after `datapoint` and `factValue` in an xBRL-CSV report are the open
+    dimensions, headed by the property's code. The code is scoped to a release - the same
+    property is `x21` through release 4.2 and `qx2013` after it - so a header that
+    resolves to nothing is more often the wrong release than the wrong file.
+    """
+    if not available():
+        return {"found": False, "code": code, "message": BUILD_IT}
+    with _connect() as con:
+        found = _rows(con, PROPERTY_CODE_SQL, code.strip())
+        releases = {row["ReleaseID"]: row["Code"] for row in _rows(con, RELEASES_SQL)}
+    if not found:
+        return {
+            "found": False,
+            "code": code,
+            "message": (
+                f"No property coded {code!r} in this copy of the DPM. A code is release-scoped, so "
+                "a header from a newer release will not be here."
+            ),
+        }
+    return {
+        "found": True,
+        "code": code,
+        "properties": [
+            {
+                "property": row["property"],
+                "definition": row["definition"],
+                "from_release": releases.get(row["StartReleaseID"]),
+                "until_release": releases.get(row["EndReleaseID"]),
+            }
+            for row in found
+        ],
+        "message": (
+            "until_release is null where the code is the current one. More than one entry means "
+            "the code was reused or renamed between releases."
+        ),
+    }
+
+
+LOOKUP_DPM_DATAPOINT_TOOL_NAME = "lookup_dpm_datapoint"
+LOOKUP_DPM_PROPERTY_TOOL_NAME = "lookup_dpm_property"
+
+LOOKUP_DPM_DATAPOINT_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": LOOKUP_DPM_DATAPOINT_TOOL_NAME,
+        "description": (
+            "What a reported datapoint id is: the template, the cell, its row and column labels, "
+            "and the module versions it belongs to. Use it to read an xBRL-CSV report, whose facts "
+            "name a datapoint and nothing else - `dp1010005012` in a file means nothing until it "
+            "is resolved here. An id the downloaded release does not have is answered with the "
+            "highest it does, which says whether the file is from a newer release or the id is "
+            "wrong."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "datapoint": {
+                    "type": "string",
+                    "description": "A datapoint id, with or without the prefix: dp1010005012 or 152217.",
+                }
+            },
+            "required": ["datapoint"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+LOOKUP_DPM_PROPERTY_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": LOOKUP_DPM_PROPERTY_TOOL_NAME,
+        "description": (
+            "What a column header of an xBRL-CSV report means. The columns after datapoint and "
+            "factValue are the open dimensions, headed by a property code such as qGDF, qBBE, "
+            "ei1452 or CPS, and this gives the property's name and the releases the code was "
+            "current in. A code is release-scoped, so one that resolves to nothing usually means "
+            "the file belongs to another release."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {"code": {"type": "string", "description": "The column header, e.g. qGDF or CPS."}},
+            "required": ["code"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
 LOOKUP_DPM_DIMENSIONS_TOOL_NAME = "lookup_dpm_dimensions"
 LOOKUP_DPM_CELLS_TOOL_NAME = "lookup_dpm_cells"
 LOOKUP_DPM_SUMS_TOOL_NAME = "lookup_dpm_sums"
@@ -726,6 +938,8 @@ LOOKUP_DPM_CELL_TOOL_DEFINITION = {
 DPM_TOOL_DEFINITIONS = (
     LOOKUP_DPM_TABLE_TOOL_DEFINITION,
     LOOKUP_DPM_CELL_TOOL_DEFINITION,
+    LOOKUP_DPM_DATAPOINT_TOOL_DEFINITION,
+    LOOKUP_DPM_PROPERTY_TOOL_DEFINITION,
     LOOKUP_DPM_DIMENSIONS_TOOL_DEFINITION,
     LOOKUP_DPM_CELLS_TOOL_DEFINITION,
     LOOKUP_DPM_SUMS_TOOL_DEFINITION,

@@ -279,3 +279,59 @@ def test_an_open_template_has_cells_and_every_rule_refuses(tmp_path):
     assert "open axis" in answer["message"]
     assert answer["hold"] == [] and answer["fail"] == [], "DORA's rules are not arithmetic"
     assert {skipped["needs"] for skipped in answer["not_evaluated"]} >= {"if-then-else"}
+
+
+# --- what a file is, before whether it holds -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        (["datapoint", "factValue"], []),
+        (["datapoint", "factValue", "qGDF", "qBBE", "ei1452"], ["qGDF", "qBBE", "ei1452"]),
+        (["factValue", "datapoint", "CPS"], ["CPS"]),
+        ([], []),
+    ],
+)
+def test_the_columns_after_the_fixed_two_are_the_open_dimensions(header, expected):
+    assert check_instance.open_dimension_columns(header) == expected
+
+
+@needs_dpm2
+def test_a_file_from_another_release_says_so_rather_than_mapping_nothing(tmp_path):
+    """The EBA's own sample, whose datapoints are above this release. check_report would
+    call this 'nothing mapped', which reads like a bad report rather than a newer file."""
+    report = tmp_path / "sample.csv"
+    report.write_text(
+        "datapoint,factValue,qGDF,qBBE,ei1452\n"
+        "dp1010005012,58994,pipwgiwl,eba_GA:AL,eba_GA:AL\n"
+        "dp1010005011,76396,pipwgiwl,eba_GA:AL,eba_GA:AL\n"
+        "dp1010005012,58994,hhpgygtl,eba_GA:AT,eba_GA:AT\n"
+        "dp1010005011,76396,hhpgygtl,eba_GA:AT,eba_GA:AT\n",
+        encoding="utf-8",
+    )
+    answer = check_instance.explain_report(str(report))
+    assert answer["found"] is True
+    assert answer["records"] == 4 and answer["facts"] == 2
+    assert answer["tables"] == [] and answer["modules"] == []
+    assert "None of the" in answer["message"]
+    assert "one row per record" in answer["message"]
+    headers = {column["code"]: column for column in answer["columns"]}
+    assert headers["qGDF"]["properties"][0]["property"] == "Name of Holding entity"
+    assert headers["ei1452"]["properties"][0]["property"] == "Country where a service/activity is provided"
+
+
+@needs_dpm2
+def test_a_file_of_this_release_names_its_template_and_modules(tmp_path):
+    from check_instance import load
+
+    grid, _ = load("Y_01.01", "PSD_FRP", "1.1.0")
+    report = tmp_path / "y0101.csv"
+    rows = "\n".join(f"dp{dp},1.0" for dp in sorted(grid))
+    report.write_text(f"datapoint,factValue\n{rows}\n", encoding="utf-8")
+
+    answer = check_instance.explain_report(str(report), limit=3)
+    assert answer["tables"] == ["Y_01.01"]
+    assert any(module.startswith("PSD_FRP") for module in answer["modules"])
+    assert answer["columns"] == [], "this template has no open dimension"
+    assert len(answer["datapoints"]) == 3, "limit is a sample, not the whole file"

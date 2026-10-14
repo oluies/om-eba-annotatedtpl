@@ -1,6 +1,6 @@
 """The tool definitions an agent registers, and the one dispatcher that runs them.
 
-Ten tools, from four modules, assembled here so a host application imports one name
+Thirteen tools, from four modules, assembled here so a host application imports one name
 instead of nine and cannot end up with a definition registered but not dispatched:
 
     lookup_datapoint        resolve a column name to its datapoint, and to the display
@@ -10,10 +10,14 @@ instead of nine and cannot end up with a definition registered but not dispatche
     write_table_metadata    the same for the table itself            (describe_table.py)
     lookup_dpm_table        a template from any framework in the DPM, with its axes
     lookup_dpm_cell         one cell of any template: dimensions, type, rules
+    lookup_dpm_datapoint    a reported dp<N> id back to the cell it is
+    lookup_dpm_property     a report's column header, e.g. qGDF, to the property it names
     lookup_dpm_dimensions   what a template breaks down by, and under which wording
     lookup_dpm_cells        the cells one dimension member covers - an aggregate's codes
     lookup_dpm_sums         which rows add up to which, from the validation rules
                                                                     (dpm_lookup.py)
+    explain_report          what a reported file is: its template, its module versions
+                            and what each column header means
     check_report            run a module's rules against a reported xBRL-CSV file, and
                             say which it could not evaluate       (check_instance.py)
 
@@ -76,10 +80,13 @@ class ToolName(enum.StrEnum):
     WRITE_TABLE_METADATA = describe_table.WRITE_TABLE_METADATA_TOOL_NAME
     LOOKUP_DPM_TABLE = dpm_lookup.LOOKUP_DPM_TABLE_TOOL_NAME
     LOOKUP_DPM_CELL = dpm_lookup.LOOKUP_DPM_CELL_TOOL_NAME
+    LOOKUP_DPM_DATAPOINT = dpm_lookup.LOOKUP_DPM_DATAPOINT_TOOL_NAME
+    LOOKUP_DPM_PROPERTY = dpm_lookup.LOOKUP_DPM_PROPERTY_TOOL_NAME
     LOOKUP_DPM_DIMENSIONS = dpm_lookup.LOOKUP_DPM_DIMENSIONS_TOOL_NAME
     LOOKUP_DPM_CELLS = dpm_lookup.LOOKUP_DPM_CELLS_TOOL_NAME
     LOOKUP_DPM_SUMS = dpm_lookup.LOOKUP_DPM_SUMS_TOOL_NAME
     CHECK_REPORT = check_instance.CHECK_REPORT_TOOL_NAME
+    EXPLAIN_REPORT = check_instance.EXPLAIN_REPORT_TOOL_NAME
 
 
 TOOLS = (
@@ -87,7 +94,11 @@ TOOLS = (
     *describe_table.CATALOGUE_TOOL_DEFINITIONS,
     *(dpm_lookup.DPM_TOOL_DEFINITIONS if dpm_lookup.available() else ()),
     # Same database, same guard: the checker reads the rules out of it.
-    *((check_instance.CHECK_REPORT_TOOL_DEFINITION,) if dpm_lookup.available() else ()),
+    *(
+        (check_instance.CHECK_REPORT_TOOL_DEFINITION, check_instance.EXPLAIN_REPORT_TOOL_DEFINITION)
+        if dpm_lookup.available()
+        else ()
+    ),
 )
 
 
@@ -177,6 +188,12 @@ def _run(name: str, args: dict[str, Any]) -> dict[str, Any]:
             )
         case ToolName.LOOKUP_DPM_SUMS:
             return dpm_lookup.lookup_dpm_sums(args["table"], args["module"], args.get("version"))
+        case ToolName.LOOKUP_DPM_DATAPOINT:
+            return dpm_lookup.lookup_dpm_datapoint(args["datapoint"])
+        case ToolName.LOOKUP_DPM_PROPERTY:
+            return dpm_lookup.lookup_dpm_property(args["code"])
+        case ToolName.EXPLAIN_REPORT:
+            return check_instance.explain_report(args["instance"], args.get("limit") or 5)
         case ToolName.CHECK_REPORT:
             return check_instance.check_report(args["table"], args["module"], args["version"], args["instance"])
         case _:
