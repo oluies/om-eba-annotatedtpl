@@ -335,3 +335,42 @@ def test_a_file_of_this_release_names_its_template_and_modules(tmp_path):
     assert any(module.startswith("PSD_FRP") for module in answer["modules"])
     assert answer["columns"] == [], "this template has no open dimension"
     assert len(answer["datapoints"]) == 3, "limit is a sample, not the whole file"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({}, "not both and not neither"),
+        ({"instance": "a.csv", "text": "datapoint,factValue\n"}, "not both and not neither"),
+    ],
+)
+def test_a_report_comes_from_a_path_or_from_text_but_not_both(kwargs, expected):
+    """Guessing which of two sources was meant is how the wrong report gets explained."""
+    assert expected in check_instance.explain_report(**kwargs)["message"]
+
+
+def test_the_header_and_the_facts_are_read_in_one_pass():
+    lines = [
+        "datapoint,factValue,qGDF",
+        "dp1,10,pipwgiwl",
+        "dp2,20,pipwgiwl",
+        "dp1,30,hhpgygtl",
+    ]
+    header, facts, records = check_instance.header_and_facts(lines)
+    assert header == ["datapoint", "factValue", "qGDF"]
+    assert facts == {1: 30.0, 2: 20.0}
+    assert records == 3
+
+
+@needs_dpm2
+def test_pasted_text_is_read_like_a_file(tmp_path):
+    """A report arrives in a conversation as often as on disk."""
+    report = "datapoint,factValue\ndp152217,1.0\n"
+    path = tmp_path / "one.csv"
+    path.write_text(report, encoding="utf-8")
+
+    pasted = check_instance.explain_report(text=report)
+    on_disk = check_instance.explain_report(str(path))
+    assert pasted["file"] == "pasted text" and on_disk["file"] == "one.csv"
+    assert pasted["datapoints"] == on_disk["datapoints"]
+    assert pasted["tables"] == on_disk["tables"] == ["F_04.04.1"]

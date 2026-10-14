@@ -1791,7 +1791,7 @@ uv run agent_tools.py lookup_dpm_dimensions table=F_04.04.1 module=FINREP9 versi
 uv run agent_tools.py lookup_dpm_cells table=F_04.04.1 dimension='Counterparty sector' \\
     member='Credit institutions' module=FINREP9 version=null
 uv run agent_tools.py check_report table=Y_01.01 module=PSD_FRP version=1.1.0 instance=report.csv
-uv run agent_tools.py explain_report instance=report.csv limit=null
+uv run agent_tools.py explain_report instance=report.csv text=null limit=null
 uv run agent_tools.py lookup_dpm_datapoint datapoint=dp152217
 ```
 
@@ -1855,8 +1855,9 @@ hierarchies, in `ATTT2Hierarchies` — no tool exposes them yet.)
 
 > What is `report.csv`? Then check it.
 
-`explain_report` answers what a file is before anything asks whether it holds: it
-resolves a sample of its datapoint ids to cells and every column header to a property.
+`explain_report` answers what a report is before anything asks whether it holds: it
+resolves a sample of its datapoint ids to cells and every column header to a property. It
+takes a path or the report's text, so a few rows pasted into the conversation are enough.
 The two fixed columns are `datapoint` and `factValue`; the rest are the open dimensions,
 headed by a property code. For the EBA's own sample file:
 
@@ -1867,8 +1868,11 @@ headed by a property code. For the EBA's own sample file:
 | `ei1452` | Country where a service/activity is provided |
 
 Both halves fail in ways worth telling apart. A datapoint id above the highest this
-release has means the file was built against a newer one, which the answer says rather
-than leaving an empty result to interpret. A header that resolves to nothing usually
+release has means the report was built against a newer one, which the answer says rather
+than leaving an empty result to interpret. That is not hypothetical: those three ids
+resolve to nothing in release 4.2.1, to nothing in 4.3, and in the 4.4 draft to columns
+`0040`, `0050` and `0060` of V_04.01, *Freedom to provide services*, in the
+`AML_ELIGIBILITY` module - customers, incoming transactions, outgoing transactions. A header that resolves to nothing usually
 means the same thing: a property code is scoped to a release, and the same property is
 `x21` through release 4.2 and `qx2013` after it. And where the file has more rows than
 distinct datapoints, it has one row per record of an open table, told apart by those
@@ -1903,6 +1907,29 @@ Two phrases worth reusing in any of these: **"do not write any column name yours
 and **"say which module version the answer is for"** — a rule changes both its expression
 and its severity between versions, so a generated query should carry the version in a
 comment.
+
+### More than one release
+
+`source/fetch_dpm2.py --release 4.3` fetches another release beside the first. Each lands
+in its own files and its own database, because releases are separate downloads of
+overlapping content and merging them would make "which release says this" unanswerable.
+Point `DPM2_DB` at the one a lookup should read.
+
+The default stays the release the pack is built from, so `check_against_dpm2.py` keeps
+comparing like with like. What the others are for is a report that will not resolve:
+
+| | 4.2.1 | 4.3 | 4.4 draft |
+|---|---|---|---|
+| Templates | 1052 | 1120 | — |
+| Modules | 61 | 65 | — |
+| Highest datapoint id | 1010000004 | 1010001382 | resolves the file above |
+
+**An older module version is not restated.** Of the 145 module versions present in both
+4.2.1 and 4.3, every one has exactly the same cell count, and of the 142 carrying rules,
+every one has the same rule count. 4.3 adds releases and modules - `AML_RA`, `TCB_CORE`,
+`TCB_HU`, `TCB_LIQUIDITY` - rather than revising what was there. So a description written
+against a module version stays true as releases go by, and a figure that will not resolve
+is a newer framework rather than a changed one.
 
 ### What the model has that the layout does not
 
@@ -2022,7 +2049,7 @@ rename.
 | Variable | What it is | Default |
 |---|---|---|
 | `DPM2_DIR` | The download directory: the zip, the Access file and the DuckDB database | `source/dpm2/` |
-| `DPM2_DB` | The database file alone | `dpm2.duckdb` inside `DPM2_DIR` |
+| `DPM2_DB` | The database file alone. It wins over the release being fetched, so a second release wants it unset on the way in and set on the way out | `dpm2.duckdb` inside `DPM2_DIR`, and `dpm2_4_3.duckdb` for a release that is not the default |
 
 ### A `.env` file does not cover all of them
 

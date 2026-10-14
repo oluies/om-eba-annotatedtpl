@@ -5,8 +5,14 @@ This is the model itself: the same cells, plus the validation rules, the hierarc
 every other framework. A local copy is what lets the pack be checked against its source
 rather than against itself - see `source/check_against_dpm2.py`.
 
-    uv run source/fetch_dpm2.py          # download, convert, load; each step skipped if done
-    uv run source/fetch_dpm2.py --force  # redo every step
+    uv run source/fetch_dpm2.py                 # download, convert, load; steps skipped if done
+    uv run source/fetch_dpm2.py --force         # redo every step
+    uv run source/fetch_dpm2.py --release 4.3   # a second release, beside the first
+
+The default release is the one the pack is built from, so `check_against_dpm2.py` compares
+like with like. Another release lands in its own files and its own database - releases are
+separate downloads of overlapping content, and merging them would make "which release says
+this" unanswerable. Point `DPM2_DB` at whichever one a lookup should read.
 
 Reading the Access file needs mdb-export from mdbtools (`brew install mdbtools`); version
 1.0 or newer, because the file is ACE12 and older releases only read Jet .mdb.
@@ -15,6 +21,7 @@ Everything lands in source/dpm2/, which is gitignored: 167 MB of zip, 539 MB of 
 and 139 MB of DuckDB are not things to put in a repository.
 """
 
+import argparse
 import os
 import shutil
 import subprocess
@@ -23,25 +30,82 @@ import zipfile
 from collections.abc import Iterable
 from hashlib import sha256
 from pathlib import Path
+from typing import NamedTuple
 
 import duckdb
 import httpx
 
-# Reporting framework 4.2.1, linked from the DPM data dictionary page as "DPM 2.0 database".
-# The annotated table layout the pack is built from comes from the same release, which is
-# what makes the two comparable at all.
-RELEASE = "4.2.1"
-URL = "https://www.eba.europa.eu/sites/default/files/2026-02/ad0d2577-a1eb-4826-a249-a1f7701c6796/DPM2%20Database_v_4_2_1.zip"
-# Checked on download. The EBA republishes under the same URL when it hotfixes a release,
-# so a mismatch means the upstream file moved on, not that the download broke.
-ZIP_SHA256 = "0d1c0e608c98f01dc338a98e8e5f700c0fa2a2437cbef724fb8fc52618b4b74d"
+
+class Source(NamedTuple):
+    """Where one release of the database comes from, and what it must hash to.
+
+    The sha256 is checked on download. The EBA republishes under the same URL when it
+    hotfixes a release, so a mismatch means the upstream file moved on, not that the
+    download broke. A release added here starts with an empty hash: the first download
+    prints what it got, and that goes in.
+    """
+
+    url: str
+    sha256: str
+
+
+# 4.2.1 is the release the pack is built from - the annotated table layout comes from the
+# same one, which is what makes the two comparable at all - so it stays the default.
+# 4.3 is published on the reporting framework 4.3 page rather than the data dictionary
+# page, and from the EBA's blob storage rather than the main site.
+DEFAULT_RELEASE = "4.2.1"
+SOURCES = {
+    "4.2.1": Source(
+        url="https://www.eba.europa.eu/sites/default/files/2026-02/ad0d2577-a1eb-4826-a249-a1f7701c6796/DPM2%20Database_v_4_2_1.zip",
+        sha256="0d1c0e608c98f01dc338a98e8e5f700c0fa2a2437cbef724fb8fc52618b4b74d",
+    ),
+    "4.3": Source(
+        url="https://ebprstaewspublic01.blob.core.windows.net/public/tools-prod/documents/Big_Files/files/Reporting%20framework%204.3/DPM2%20Database_v%204_3.zip",
+        sha256="f2d802f1430879cf085d21e2279630d7a10e1207e2a100ab01188136cf0b2cac",
+    ),
+    # The 4.4 draft technical package. A draft is republished as it is revised, so this
+    # hash will go stale; when it does, the file has moved on and the recorded one is the
+    # thing to update, deliberately, rather than to drop.
+    "4.4": Source(
+        url="https://ebprstaewspublic01.blob.core.windows.net/public/tools-prod/assets/Reporting%20Framework/DPM2%20Database_v%204_4.zip",
+        sha256="477dc96f4ff1324b537a526268f084b35b4e980d8cb47e464084475a9213b5b9",
+    ),
+}
 
 REPO = Path(__file__).resolve().parent.parent
 DIR = Path(os.environ.get("DPM2_DIR") or REPO / "source" / "dpm2")
-ZIP = DIR / f"DPM2_Database_v_{RELEASE.replace('.', '_')}.zip"
-ACCDB = DIR / f"dpm2_{RELEASE.replace('.', '_')}.accdb"
-CSV_DIR = DIR / "csv"
-DB = Path(os.environ.get("DPM2_DB") or DIR / "dpm2.duckdb")
+
+
+class Paths(NamedTuple):
+    """Where one release lands. Pure function of the release and the directory.
+
+    The default release keeps the unsuffixed names it has always had, so a copy already
+    downloaded is not orphaned by this becoming configurable; every other release is
+    suffixed and cannot collide with it. DPM2_DB still wins, because a caller pointing at
+    one file means it.
+    """
+
+    zip: Path
+    accdb: Path
+    csv_dir: Path
+    db: Path
+
+
+def paths_for(release: str, directory: Path = DIR) -> Paths:
+    tag = release.replace(".", "_")
+    default = release == DEFAULT_RELEASE
+    return Paths(
+        zip=directory / f"DPM2_Database_v_{tag}.zip",
+        accdb=directory / f"dpm2_{tag}.accdb",
+        csv_dir=directory / ("csv" if default else f"csv_{tag}"),
+        db=Path(os.environ["DPM2_DB"])
+        if os.environ.get("DPM2_DB")
+        else directory / ("dpm2.duckdb" if default else f"dpm2_{tag}.duckdb"),
+    )
+
+
+# What the rest of the pack imports: the default release's database.
+DB = paths_for(DEFAULT_RELEASE).db
 
 
 def digest(path: Path, chunk: int = 1 << 20) -> str:
@@ -158,31 +222,42 @@ def load(csv_dir: Path, names: Iterable[str], db: Path) -> dict[str, int]:
 
 
 def main() -> None:
-    force = "--force" in sys.argv[1:]
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--release", default=DEFAULT_RELEASE, choices=sorted(SOURCES), help="which release to fetch")
+    parser.add_argument("--force", action="store_true", help="redo every step")
+    args = parser.parse_args()
+
+    release = args.release
+    source = SOURCES[release]
+    here = paths_for(release)
     DIR.mkdir(parents=True, exist_ok=True)
 
-    if force or not ZIP.exists():
-        print(f"downloading DPM 2.0 database {RELEASE}", file=sys.stderr)
-        download(URL, ZIP)
-    found = digest(ZIP)
-    if found != ZIP_SHA256:
-        raise SystemExit(f"{ZIP.name}: sha256 {found}, expected {ZIP_SHA256} - upstream file has changed")
+    if args.force or not here.zip.exists():
+        print(f"downloading DPM 2.0 database {release}", file=sys.stderr)
+        download(source.url, here.zip)
+    found = digest(here.zip)
+    if not source.sha256:
+        # A release whose hash is not recorded yet: print it rather than accept anything
+        # silently, so the next run of the same release is checked like every other.
+        print(f"{here.zip.name}: sha256 {found} - record it in SOURCES[{release!r}]", file=sys.stderr)
+    elif found != source.sha256:
+        raise SystemExit(f"{here.zip.name}: sha256 {found}, expected {source.sha256} - upstream file has changed")
 
-    if force or not ACCDB.exists():
+    if args.force or not here.accdb.exists():
         print("unpacking", file=sys.stderr)
-        unpack(ZIP, ACCDB)
+        unpack(here.zip, here.accdb)
 
-    names = table_names(ACCDB)
-    if missing := missing_csvs(names, CSV_DIR):
+    names = table_names(here.accdb)
+    if missing := missing_csvs(names, here.csv_dir):
         print(f"exporting {len(missing)} of {len(names)} tables", file=sys.stderr)
-        export(ACCDB, missing if not force else names, CSV_DIR)
-    elif force:
+        export(here.accdb, missing if not args.force else names, here.csv_dir)
+    elif args.force:
         print(f"re-exporting all {len(names)} tables", file=sys.stderr)
-        export(ACCDB, names, CSV_DIR)
+        export(here.accdb, names, here.csv_dir)
 
-    counts = load(CSV_DIR, names, DB)
-    size = DB.stat().st_size / 1e6
-    print(f"{DB}: {len(counts)} tables, {sum(counts.values())} rows ({size:.0f} MB)")
+    counts = load(here.csv_dir, names, here.db)
+    size = here.db.stat().st_size / 1e6
+    print(f"{here.db}: {len(counts)} tables, {sum(counts.values())} rows ({size:.0f} MB)")
 
 
 if __name__ == "__main__":

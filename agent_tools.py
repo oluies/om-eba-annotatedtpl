@@ -193,7 +193,7 @@ def _run(name: str, args: dict[str, Any]) -> dict[str, Any]:
         case ToolName.LOOKUP_DPM_PROPERTY:
             return dpm_lookup.lookup_dpm_property(args["code"])
         case ToolName.EXPLAIN_REPORT:
-            return check_instance.explain_report(args["instance"], args.get("limit") or 5)
+            return check_instance.explain_report(args.get("instance"), args.get("limit") or 5, args.get("text"))
         case ToolName.CHECK_REPORT:
             return check_instance.check_report(args["table"], args["module"], args["version"], args["instance"])
         case _:

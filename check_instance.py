@@ -357,10 +357,16 @@ def check_report(table: str, module: str, version: str, instance: str) -> dict[s
     }
 
 
-def report_header(path: Path) -> list[str]:
-    """The file's column names. Pure enough: one line, no model, no rules."""
-    with path.open(encoding="utf-8") as fh:
-        return next(csv.reader(fh), [])
+def header_and_facts(lines: Iterable[str]) -> tuple[list[str], dict[int, float], int]:
+    """Column names, the facts by datapoint, and how many rows there were. One pass.
+
+    Takes lines rather than a path so pasted text is read by the same code as a file -
+    a report arrives in a chat as often as on disk, and parsing it twice would be two
+    things to keep in agreement.
+    """
+    reader = csv.DictReader(lines)
+    facts, records = facts_by_datapoint(reader)
+    return list(reader.fieldnames or []), facts, records
 
 
 def open_dimension_columns(header: list[str]) -> list[str]:
@@ -368,28 +374,41 @@ def open_dimension_columns(header: list[str]) -> list[str]:
     return [column for column in header if column not in {"datapoint", "factValue"}]
 
 
-def explain_report(instance: str, limit: int = 5) -> dict[str, Any]:
-    """What a reported file is, before checking whether it holds.
+def explain_report(instance: str | None = None, limit: int = 5, text: str | None = None) -> dict[str, Any]:
+    """What a report is, before checking whether it holds. A path, or the text itself.
 
     A fact in an xBRL-CSV report is a datapoint id, a value, and one column per open
     dimension. None of it is readable as it stands: `dp1010005012,58994,pipwgiwl,
     eba_GA:AL` says nothing until the id is resolved to a cell and the headers to
     properties. This resolves both, over the first `limit` distinct datapoints.
 
-    The point of doing it before check_report is that an unrecognised file fails there as
-    "nothing mapped", which reads like a bad report rather than the wrong release.
+    `text` is for a report that arrives pasted rather than on disk, which is the common
+    case in a conversation. Exactly one of the two, because a call carrying both says two
+    different things and guessing which is meant is how the wrong file gets explained.
+
+    The point of doing this before check_report is that an unrecognised report fails
+    there as "nothing mapped", which reads like a bad report rather than the wrong release.
     """
-    path = Path(instance)
-    if not path.is_file():
-        return {"found": False, "message": f"No such report file: {path.name}"}
+    if (instance is None) == (text is None):
+        return {
+            "found": False,
+            "message": "Pass either instance (a path) or text (the report itself), not both and not neither.",
+        }
+    name = Path(instance).name if instance else "pasted text"
+    path = Path(instance) if instance else None
+    if path is not None and not path.is_file():
+        return {"found": False, "message": f"No such report file: {name}"}
     try:
-        header = report_header(path)
-        facts, records = read_facts(path)
+        if path is not None:
+            with path.open(encoding="utf-8") as fh:
+                header, facts, records = header_and_facts(fh)
+        else:
+            header, facts, records = header_and_facts((text or "").splitlines())
     except (OSError, UnicodeDecodeError, csv.Error, KeyError, ValueError) as exc:
         return {
             "found": False,
             "message": (
-                f"{path.name} is not an xBRL-CSV report this can read ({type(exc).__name__}). "
+                f"{name} is not an xBRL-CSV report this can read ({type(exc).__name__}). "
                 "It wants a datapoint column of dp<N> ids and a factValue column."
             ),
         }
@@ -403,7 +422,7 @@ def explain_report(instance: str, limit: int = 5) -> dict[str, Any]:
     resolved = sum(1 for answer in datapoints if answer["found"])
     return {
         "found": True,
-        "file": path.name,
+        "file": name,
         "records": records,
         "facts": len(facts),
         "columns": columns,
@@ -439,21 +458,32 @@ EXPLAIN_REPORT_TOOL_DEFINITION = {
         "description": (
             "Read an xBRL-CSV report file and say what it is: which template and module versions "
             "its datapoints belong to, and what each column header means. Call it before "
-            "check_report on any file whose provenance is not certain - a file from another "
+            "check_report on any report whose provenance is not certain - one from another "
             "release checks as 'nothing mapped', which reads like a bad report rather than the "
-            "wrong release. Needs the DPM database and a file on this machine."
+            "wrong release. Takes a path or the report's text, so a few rows pasted into the "
+            "conversation are enough. Needs the DPM database."
         ),
         "strict": True,
         "parameters": {
             "type": "object",
             "properties": {
-                "instance": {"type": "string", "description": "Path to the xBRL-CSV report file."},
+                "instance": {
+                    "type": ["string", "null"],
+                    "description": "Path to the xBRL-CSV report file. Null when passing the text instead.",
+                },
+                "text": {
+                    "type": ["string", "null"],
+                    "description": (
+                        "The report itself, header row included, for one pasted into the conversation "
+                        "rather than saved. Null when passing a path. Exactly one of the two."
+                    ),
+                },
                 "limit": {
                     "type": ["integer", "null"],
                     "description": "How many distinct datapoints to resolve. Null means five.",
                 },
             },
-            "required": ["instance", "limit"],
+            "required": ["instance", "text", "limit"],
             "additionalProperties": False,
         },
     },
