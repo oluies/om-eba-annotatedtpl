@@ -504,3 +504,21 @@ def test_dropping_a_member_but_not_its_arm_is_what_the_test_above_catches():
                     return 1
     """)
     assert tool_names_named_in(source) == {"B"}
+
+
+@needs_dpm2
+@pytest.mark.parametrize(
+    ("call", "args"),
+    [
+        (dpm_lookup.lookup_dpm_table, ("F 12.01.a",)),
+        (dpm_lookup.lookup_dpm_cell, ("F 12.01.a", "0015", "0010")),
+        (dpm_lookup.lookup_dpm_dimensions, ("F 12.01.a", "FINREP9")),
+        (dpm_lookup.lookup_dpm_sums, ("F 12.01.a", "FINREP9")),
+    ],
+)
+def test_a_lookup_reached_past_dispatch_is_serialisable_too(call, args):
+    """A host that imports the lookups rather than the dispatcher gets no conversion from
+    jsonable(), so the module's validity window is cast to a string in the query itself.
+    Reported as `TypeError: Object of type date is not JSON serializable` from inside a
+    chainlit handler's json.dumps."""
+    json.dumps(call(*args), ensure_ascii=False)

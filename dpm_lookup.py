@@ -118,8 +118,12 @@ LIMIT    1
 
 MODULES_SQL = """
 SELECT DISTINCT f.Code AS framework, f.Name AS framework_name, mv.Code AS module,
-       mv.VersionNumber AS version, mv.FromReferenceDate AS from_reference_date,
-       mv.ToReferenceDate AS to_reference_date
+       mv.VersionNumber AS version,
+       -- ISO strings, not DATEs: these answers are serialised with json.dumps by whoever
+       -- holds them, and a date raises there. Cast at the source so a caller that reaches
+       -- past dispatch into the lookup is safe too.
+       CAST(mv.FromReferenceDate AS VARCHAR) AS from_reference_date,
+       CAST(mv.ToReferenceDate AS VARCHAR) AS to_reference_date
 FROM   ModuleVersionComposition mvc
 JOIN   ModuleVersion mv ON mv.ModuleVID = mvc.ModuleVID
 JOIN   Module m ON m.ModuleID = mv.ModuleID
