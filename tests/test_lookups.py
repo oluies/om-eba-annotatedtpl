@@ -423,3 +423,26 @@ def test_every_dpm_answer_survives_a_plain_json_dumps():
         answer = agent_tools.dispatch(name, args)
         assert answer["found"] is True, name
         json.dumps(answer)
+
+
+# --- a null version must still scope the recursive query -------------------------------
+
+
+@needs_dpm2
+def test_sums_without_a_version_resolve_to_one_and_say_which():
+    """A null version left the recursive query scoped to every version of the module at
+    once: over two minutes for FINREP9, against 0.05s for one. It also left the caller
+    unable to tell which framework it had been answered about."""
+    newest = dpm_lookup.lookup_dpm_sums("F 12.01.a", "FINREP9")
+    assert newest["found"] is True
+    module, _, version = newest["module"].partition(" ")
+    assert module == "FINREP9"
+    assert version, "the answer must name the version it resolved to"
+    assert newest["sums"] == dpm_lookup.lookup_dpm_sums("F 12.01.a", "FINREP9", version)["sums"]
+
+
+@needs_dpm2
+def test_a_template_in_a_module_carries_the_module_version_it_was_found_in():
+    with dpm_lookup._connect() as con:
+        found = dpm_lookup._table_version(con, "F 12.01.a", "FINREP9")
+    assert found["module_version"]

@@ -98,8 +98,12 @@ ORDER BY tv.StartReleaseID DESC, tv.TableVID DESC
 LIMIT    1
 """
 
+# module_version is part of the answer, not a detail: with no version asked for, this is
+# which one "the newest" resolved to, and a caller that scopes a second query by module
+# needs that rather than a null. SUMS_SQL with a null version scopes to every version of
+# the module at once, which took over two minutes for FINREP9 against 0.1s for one.
 TABLE_IN_MODULE_SQL = """
-SELECT   tv.TableVID, tv.TableID, tv.Code, tv.Name,
+SELECT   tv.TableVID, tv.TableID, tv.Code, tv.Name, mv.VersionNumber AS module_version,
          t.HasOpenRows <> 0 AS open_rows, t.HasOpenColumns <> 0 AS open_columns,
          t.HasOpenSheets <> 0 AS open_sheets
 FROM     ModuleVersionComposition mvc
@@ -108,7 +112,7 @@ JOIN     ModuleVersion mv ON mv.ModuleVID = mvc.ModuleVID
 JOIN     "Table" t ON t.TableID = tv.TableID
 WHERE    upper(regexp_replace(tv.Code, '[^A-Za-z0-9]', '', 'g')) = ?
      AND mv.Code = ? AND (? IS NULL OR mv.VersionNumber = ?)
-ORDER BY tv.StartReleaseID DESC, tv.TableVID DESC
+ORDER BY tv.StartReleaseID DESC, mv.FromReferenceDate DESC, tv.TableVID DESC
 LIMIT    1
 """
 
@@ -516,7 +520,10 @@ def lookup_dpm_sums(table: str, module: str, version: str | None = None) -> dict
     try:
         with _connect() as con:
             tv = _table_version(con, table, module, version)
-            rows = _rows(con, SUMS_SQL, module, version, version, tv["Code"])
+            # Never the caller's null: see TABLE_IN_MODULE_SQL. Scoping the recursive
+            # query to one module version is the difference between 0.1s and minutes.
+            scoped = version or tv["module_version"]
+            rows = _rows(con, SUMS_SQL, module, scoped, scoped, tv["Code"])
     except DpmError as exc:
         return {"found": False, "table": table, "message": str(exc)}
 
@@ -525,7 +532,7 @@ def lookup_dpm_sums(table: str, module: str, version: str | None = None) -> dict
     return {
         "found": True,
         "table": tv["Code"],
-        "module": f"{module} {version}" if version else module,
+        "module": f"{module} {scoped}",
         "sums": rows,
         "roots": sorted(totals - addends),
         "message": (
