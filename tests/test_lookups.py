@@ -292,7 +292,7 @@ def test_a_module_whose_rules_are_not_arithmetic_answers_nothing_rather_than_gue
     assert "not arithmetic" in answer["message"] or "No sum rule" in answer["message"]
 
 
-NEW_DPM_TOOLS = {"lookup_dpm_dimensions", "lookup_dpm_cells", "lookup_dpm_sums"}
+NEW_DPM_TOOLS = {"lookup_dpm_dimensions", "lookup_dpm_cells", "lookup_dpm_sums", "check_report"}
 
 
 def test_the_three_new_tools_are_dispatchable_whether_or_not_they_are_registered():

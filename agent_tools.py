@@ -1,6 +1,6 @@
 """The tool definitions an agent registers, and the one dispatcher that runs them.
 
-Nine tools, from three modules, assembled here so a host application imports one name
+Ten tools, from four modules, assembled here so a host application imports one name
 instead of nine and cannot end up with a definition registered but not dispatched:
 
     lookup_datapoint        resolve a column name to its datapoint, and to the display
@@ -14,6 +14,8 @@ instead of nine and cannot end up with a definition registered but not dispatche
     lookup_dpm_cells        the cells one dimension member covers - an aggregate's codes
     lookup_dpm_sums         which rows add up to which, from the validation rules
                                                                     (dpm_lookup.py)
+    check_report            run a module's rules against a reported xBRL-CSV file, and
+                            say which it could not evaluate       (check_instance.py)
 
 A tool lives in three places - the `ToolName` member, the `case` arm in `_run` and the
 definition in `TOOLS` - and dropping one means dropping all three. Removing only the
@@ -59,6 +61,7 @@ import json
 import sys
 from typing import Any
 
+import check_instance
 import describe_table
 import dpm_lookup
 import pay42_lookup
@@ -76,12 +79,15 @@ class ToolName(enum.StrEnum):
     LOOKUP_DPM_DIMENSIONS = dpm_lookup.LOOKUP_DPM_DIMENSIONS_TOOL_NAME
     LOOKUP_DPM_CELLS = dpm_lookup.LOOKUP_DPM_CELLS_TOOL_NAME
     LOOKUP_DPM_SUMS = dpm_lookup.LOOKUP_DPM_SUMS_TOOL_NAME
+    CHECK_REPORT = check_instance.CHECK_REPORT_TOOL_NAME
 
 
 TOOLS = (
     pay42_lookup.LOOKUP_DATAPOINT_TOOL_DEFINITION,
     *describe_table.CATALOGUE_TOOL_DEFINITIONS,
     *(dpm_lookup.DPM_TOOL_DEFINITIONS if dpm_lookup.available() else ()),
+    # Same database, same guard: the checker reads the rules out of it.
+    *((check_instance.CHECK_REPORT_TOOL_DEFINITION,) if dpm_lookup.available() else ()),
 )
 
 
@@ -171,6 +177,8 @@ def _run(name: str, args: dict[str, Any]) -> dict[str, Any]:
             )
         case ToolName.LOOKUP_DPM_SUMS:
             return dpm_lookup.lookup_dpm_sums(args["table"], args["module"], args.get("version"))
+        case ToolName.CHECK_REPORT:
+            return check_instance.check_report(args["table"], args["module"], args["version"], args["instance"])
         case _:
             return {
                 "error": f"no such tool: {name}",

@@ -30,7 +30,7 @@ import os
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import duckdb
 
@@ -213,23 +213,17 @@ def load(table: str, module: str, version: str) -> tuple[dict[int, Cell], list[R
     return grid, rules
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("table", help="template code as the model writes it, e.g. Y_01.01")
-    parser.add_argument("module", help="module code, e.g. PSD_FRP")
-    parser.add_argument("version", help="module version, e.g. 1.1.0")
-    parser.add_argument("instance", type=Path, help="an xBRL-CSV report file, e.g. y_01.01.csv")
-    args = parser.parse_args()
+def verdicts(rules: list[Rule], values: dict[Cell, float]) -> tuple[dict[str, Any], dict[str, Any], dict[str, str]]:
+    """Each rule evaluated over every column/sheet the report carries: held, failed, skipped.
 
-    grid, rules = load(args.table, args.module, args.version)
-    facts = read_facts(args.instance)
-    values = {grid[dp]: v for dp, v in facts.items() if dp in grid}
-    print(f"{len(facts)} fact(s) in the instance, {len(values)} of them cells of {args.table}")
-    if unmapped := len(facts) - len(values):
-        print(f"  {unmapped} did not map; is the instance for {args.module} {args.version}?")
-
-    axes = sorted({(c, s) for _, c, s in values})
-    passed, failed, skipped = {}, {}, {}
+    Pure over what was loaded, so it is testable without a database or a file. A rule the
+    checker cannot evaluate lands in `skipped` and never in `passed`: a validator that
+    quietly skips what it cannot do reads as a clean report, which is worse than refusing.
+    """
+    axes = sorted({(col, sheet) for _, col, sheet in values})
+    passed: dict[str, Any] = {}
+    failed: dict[str, Any] = {}
+    skipped: dict[str, str] = {}
     for rule in rules:
         outcome = [0, 0]
         try:
@@ -243,15 +237,137 @@ def main() -> None:
         if sum(outcome) == 0:
             continue
         (failed if outcome[1] else passed)[rule.code] = (rule.severity, outcome)
+    return passed, failed, skipped
 
-    print(f"\n{len(passed) + len(failed)} rule(s) evaluated: {len(passed)} hold, {len(failed)} do not")
-    for code, (severity, (ok, bad)) in sorted(failed.items()):
-        print(f"  {code:12} {severity:8} fails {bad} of {ok + bad} column/sheet combination(s)")
-    if skipped:
-        print(f"\n{len(skipped)} rule(s) NOT evaluated - this checker implements four operators:")
-        for code, symbol in sorted(skipped.items()):
-            print(f"  {code:12} needs {symbol!r}")
-    sys.exit(1 if failed else 0)
+
+def check_report(table: str, module: str, version: str, instance: str) -> dict[str, Any]:
+    """Every rule of one module version, run against one reported file.
+
+    The answer separates three things a caller must not confuse: rules that hold, rules
+    that fail, and rules this checker cannot evaluate - four of the model's thirty-eight
+    operators. An unevaluated rule is named with the operator it needs, never counted as
+    passing.
+
+    `unmapped` is the count of facts whose datapoint id is not a cell of this template:
+    a large one usually means the file is for another module version, not that the report
+    is wrong.
+    """
+    path = Path(instance)
+    if not DB.exists():
+        return {"found": False, "message": f"{DB} does not exist - run source/fetch_dpm2.py first"}
+    if not path.is_file():
+        # The name only, never the content: a wrong path is a typo to correct, and echoing
+        # a file a model named is how a tool becomes a way to read one.
+        return {"found": False, "message": f"No such report file: {path.name}"}
+    # The report first: it is the cheap check, and a bad path or a wrong file should not
+    # cost a database load to find out about.
+    try:
+        facts = read_facts(path)
+    except (OSError, UnicodeDecodeError, csv.Error, KeyError, ValueError) as exc:
+        return {
+            "found": False,
+            "message": (
+                f"{path.name} is not an xBRL-CSV report this can read ({type(exc).__name__}). "
+                "It wants a datapoint column of dp<N> ids and a factValue column."
+            ),
+        }
+    try:
+        grid, rules = load(table, module, version)
+    except duckdb.Error as exc:
+        # An unreadable or half-downloaded database, which a traceback out of a tool call
+        # turns into a lost turn rather than something the caller can act on.
+        return {"found": False, "message": f"{DB} could not be read ({type(exc).__name__}): {exc}"}
+
+    values = {grid[dp]: value for dp, value in facts.items() if dp in grid}
+    passed, failed, skipped = verdicts(rules, values)
+    return {
+        "found": True,
+        "table": table,
+        "module": f"{module} {version}",
+        "facts": len(facts),
+        "mapped": len(values),
+        "unmapped": len(facts) - len(values),
+        "hold": sorted(passed),
+        "fail": [
+            {"rule_code": code, "severity": severity, "fails": bad, "of": ok + bad}
+            for code, (severity, (ok, bad)) in sorted(failed.items())
+        ],
+        "not_evaluated": [{"rule_code": code, "needs": needs} for code, needs in sorted(skipped.items())],
+        "message": (
+            "fail lists rules that do not hold, with how many column/sheet combinations of how "
+            "many. not_evaluated is this checker's limit, not a pass: it implements four of the "
+            "model's thirty-eight operators and names the one each skipped rule needs. A large "
+            "unmapped count means the file is probably for another module version."
+        ),
+    }
+
+
+CHECK_REPORT_TOOL_NAME = "check_report"
+
+CHECK_REPORT_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": CHECK_REPORT_TOOL_NAME,
+        "description": (
+            "Run a module version's validation rules against a reported xBRL-CSV file and say "
+            "which hold, which fail and which could not be evaluated. Use it to check a figure "
+            "or an aggregate against the EBA's own rules rather than against arithmetic you "
+            "wrote. Covers four of the model's thirty-eight operators - addition and three "
+            "comparisons - and names the operator a rule it skipped would need. A skipped rule "
+            "is never a passing rule. Needs the DPM database and a file on this machine."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "table": {
+                    "type": "string",
+                    "description": "Template code as the model writes it, e.g. Y_01.01 or F_04.04.1.",
+                },
+                "module": {"type": "string", "description": "Module code, e.g. PSD_FRP or FINREP9."},
+                "version": {
+                    "type": "string",
+                    "description": "Module version, e.g. 1.1.0. Required: a rule belongs to one version.",
+                },
+                "instance": {"type": "string", "description": "Path to the xBRL-CSV report file."},
+            },
+            "required": ["table", "module", "version", "instance"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("table", help="template code as the model writes it, e.g. Y_01.01")
+    parser.add_argument("module", help="module code, e.g. PSD_FRP")
+    parser.add_argument("version", help="module version, e.g. 1.1.0")
+    parser.add_argument("instance", type=Path, help="an xBRL-CSV report file, e.g. y_01.01.csv")
+    args = parser.parse_args()
+
+    # The same answer the tool returns, printed: one implementation, so the CLI cannot
+    # drift from what an agent is told.
+    answer = check_report(args.table, args.module, args.version, str(args.instance))
+    if not answer["found"]:
+        raise SystemExit(answer["message"])
+
+    print(f"{answer['facts']} fact(s) in the instance, {answer['mapped']} of them cells of {args.table}")
+    if answer["unmapped"]:
+        print(f"  {answer['unmapped']} did not map; is the instance for {args.module} {args.version}?")
+
+    evaluated = len(answer["hold"]) + len(answer["fail"])
+    print(f"\n{evaluated} rule(s) evaluated: {len(answer['hold'])} hold, {len(answer['fail'])} do not")
+    for bad in answer["fail"]:
+        print(
+            f"  {bad['rule_code']:12} {bad['severity']:8} fails {bad['fails']} of {bad['of']} "
+            "column/sheet combination(s)"
+        )
+    if answer["not_evaluated"]:
+        print(f"\n{len(answer['not_evaluated'])} rule(s) NOT evaluated - this checker implements four operators:")
+        for skipped in answer["not_evaluated"]:
+            print(f"  {skipped['rule_code']:12} needs {skipped['needs']!r}")
+    sys.exit(1 if answer["fail"] else 0)
 
 
 if __name__ == "__main__":

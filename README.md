@@ -18,9 +18,9 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `07-agent-prompt.md` | The stanza to paste into an agent's system prompt, covering every framework | You are configuring an agent |
 | `describe_table.py` | Writes descriptions and glossary terms onto a table's columns, by name | You are describing a real table |
 | `pay42_lookup.py` | Deterministic datapoint lookup over DuckDB, and its tool definition | You are giving an agent a lookup tool |
-| `agent_tools.py` | All nine tool definitions, one dispatcher, and a shell front end for trying one | You are wiring the tools into an agent |
+| `agent_tools.py` | All ten tool definitions, one dispatcher, and a shell front end for trying one | You are wiring the tools into an agent |
 | `dpm_lookup.py` | Five lookups over the whole DPM 2.0 database: a template, a cell, what a template breaks down by, the cells one dimension member covers, and which rows add up to which | A warehouse table is COREP, FINREP or anything but PAY and DORA, or you need the codes behind a business aggregate |
-| `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file | You want to know whether a report adds up before you send it |
+| `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file, as a CLI and as the `check_report` tool | You want to know whether a report adds up before you send it, or want an agent to check its own arithmetic |
 | `source/load_to_mssql.py` | Loads the DPM database into SQL Server over TDS, authenticating with your Kerberos ticket | You want the dictionary in the same database as the reported figures |
 | `display_names.py` | The rule for what a table and its columns are called | You are setting display names |
 | `08-lookup-tool.md` | How to register and dispatch that tool | You are wiring it into an agent |
@@ -127,6 +127,7 @@ uv run agent_tools.py lookup_dpm_sums table='F 12.01.a' module=FINREP9 version=n
 uv run agent_tools.py lookup_dpm_dimensions table=F_04.04.1 module=FINREP9 version=null
 uv run agent_tools.py lookup_dpm_cells table=F_04.04.1 dimension='Counterparty sector' \
     member='Credit institutions' module=FINREP9 version=null
+uv run agent_tools.py check_report table=Y_01.01 module=PSD_FRP version=1.1.0 instance=report.csv
 ```
 
 Arguments are `key=value`, and `null` is spelled out, because that is what the schemas

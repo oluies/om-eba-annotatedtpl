@@ -7,7 +7,8 @@ silently skips what it cannot do reports a clean run over a report it never chec
 
 import pytest
 
-from check_instance import Node, Rule, Unsupported, evaluate
+import check_instance
+from check_instance import Node, Rule, Unsupported, evaluate, verdicts
 from conftest import needs_dpm2
 
 
@@ -121,3 +122,97 @@ def test_every_psd_frp_rule_for_y_01_01_can_be_evaluated():
     for rule in rules:
         for col, sheet in sorted({(c, s) for _, c, s in values})[:1]:
             evaluate(rule, values, col, sheet)  # raises Unsupported if any operator is missing
+
+
+# --- the whole run, as the tool answers it ---------------------------------------------
+
+
+def test_each_rule_lands_in_exactly_one_bucket():
+    """verdicts separates three things a caller must not confuse. A rule the checker
+    cannot evaluate is in `skipped` and in neither of the others: counting it as passing
+    would report a clean run over a report that was never checked."""
+    holds = tree(
+        "=",
+        leaves={1: [C], 3: [("0030", "0010", "0010")], 4: [("0040", "0010", "0010")]},
+        root_children=[2, 1],
+        nested={2: ("+", [3, 4])},
+    )._replace(code="holds")
+    fails = holds._replace(code="fails")
+    cannot = holds._replace(code="cannot", nodes=holds.nodes | {0: Node(None, False, "*", None)})
+    values = {C: 100.0, ("0030", "0010", "0010"): 40.0, ("0040", "0010", "0010"): 60.0}
+
+    passed, failed, skipped = verdicts([holds, cannot], values)
+    assert set(passed) == {"holds"}
+    assert failed == {}
+    assert set(skipped) == {"cannot"}
+
+    passed, failed, skipped = verdicts([fails], {**values, C: 99.0})
+    assert set(failed) == {"fails"}
+    assert passed == {} and skipped == {}
+
+
+def test_a_rule_naming_no_reported_axis_is_counted_nowhere():
+    """An empty report evaluates nothing, which is not the same as everything holding."""
+    rule = tree("=", leaves={1: [C], 2: 0}, root_children=[1, 2])
+    assert verdicts([rule], {}) == ({}, {}, {})
+
+
+def test_a_missing_report_names_the_file_and_not_its_content(tmp_path, monkeypatch):
+    """A wrong path is a typo to correct. Echoing a file a model named is how a lookup
+    tool becomes a way to read one, so only the name comes back."""
+    monkeypatch.setattr(check_instance, "DB", tmp_path / "dpm2.duckdb")
+    (tmp_path / "dpm2.duckdb").write_text("not really a database")
+    answer = check_instance.check_report("Y_01.01", "PSD_FRP", "1.1.0", str(tmp_path / "absent.csv"))
+    assert answer["found"] is False
+    assert "absent.csv" in answer["message"]
+
+
+def test_a_file_that_is_not_an_xbrl_csv_report_says_so(tmp_path, monkeypatch):
+    monkeypatch.setattr(check_instance, "DB", tmp_path / "dpm2.duckdb")
+    (tmp_path / "dpm2.duckdb").write_text("not really a database")
+    report = tmp_path / "wrong.csv"
+    report.write_text("a,b\n1,2\n", encoding="utf-8")
+    answer = check_instance.check_report("Y_01.01", "PSD_FRP", "1.1.0", str(report))
+    assert answer["found"] is False
+    assert "factValue" in answer["message"]
+    assert "1,2" not in answer["message"], "the content of the file must not come back"
+
+
+def test_without_the_database_it_says_what_to_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(check_instance, "DB", tmp_path / "absent.duckdb")
+    answer = check_instance.check_report("Y_01.01", "PSD_FRP", "1.1.0", str(tmp_path / "any.csv"))
+    assert answer["found"] is False
+    assert "fetch_dpm2.py" in answer["message"]
+
+
+@needs_dpm2
+def test_a_report_of_ones_fails_the_sums_and_skips_nothing(tmp_path):
+    """Against PSD_FRP 1.1.0 every rule is evaluable, so not_evaluated must be empty -
+    the claim the module docstring makes, checked through the tool rather than around it.
+    A report where every cell is 1.0 cannot satisfy a sum, so the failures are expected."""
+    from check_instance import load
+
+    grid, _ = load("Y_01.01", "PSD_FRP", "1.1.0")
+    report = tmp_path / "ones.csv"
+    rows = "\n".join(f"dp{dp},1.0" for dp in sorted(grid))
+    report.write_text(f"datapoint,factValue\n{rows}\n", encoding="utf-8")
+
+    answer = check_instance.check_report("Y_01.01", "PSD_FRP", "1.1.0", str(report))
+    assert answer["found"] is True
+    assert answer["module"] == "PSD_FRP 1.1.0"
+    assert answer["facts"] == answer["mapped"] == len(grid)
+    assert answer["unmapped"] == 0
+    assert answer["not_evaluated"] == [], "four operators cover this module"
+    assert answer["fail"], "a report of ones does not add up"
+    assert {bad["severity"] for bad in answer["fail"]} <= {"error", "warning"}
+
+
+def test_an_unreadable_database_answers_rather_than_raising(tmp_path, monkeypatch):
+    """A traceback out of a tool call loses the turn; a message is something to act on."""
+    monkeypatch.setattr(check_instance, "DB", tmp_path / "dpm2.duckdb")
+    (tmp_path / "dpm2.duckdb").write_text("not really a database")
+    report = tmp_path / "ok.csv"
+    report.write_text("datapoint,factValue\ndp1,1.0\n", encoding="utf-8")
+    answer = check_instance.check_report("Y_01.01", "PSD_FRP", "1.1.0", str(report))
+    assert answer["found"] is False
+    assert "could not be read" in answer["message"]
