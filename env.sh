@@ -1,8 +1,10 @@
 # Source this to set the pack's environment and see what it resolved to.
 #
-#     source env.sh                      # the defaults for a local checkout
+#     source env.sh                      # .env, then the defaults, then the report
 #     source env.sh --release 4.4        # the DPM 2.0 database of another release
 #     source env.sh --quiet              # set without the report
+#     source env.sh --env-file other.env # read that instead of ./.env
+#     source env.sh --no-env-file        # ignore it
 #
 # Sourced, not run: it has to change the calling shell, so there is no shebang, no `exit`
 # and no `set -e` - a failed command in a sourced script with `set -e` closes the
@@ -11,8 +13,13 @@
 # It sets only what has a safe local default: the two DuckDB stores and the DPM download
 # directory. Secrets and hostnames are reported, never assigned - a committed file that
 # sets OM_JWT_TOKEN is a committed file that leaks it, and a default SQL Server host is a
-# wrong host. Put those in your shell profile, a private file, or `.env` where the tool
-# reads one.
+# wrong host. Those belong in `.env`, which is gitignored and which this reads.
+#
+# Precedence, which is pydantic-settings' own: the environment wins over `.env`, and
+# `.env` wins over the defaults here. So exporting a variable for one command still
+# overrides the file, and the file still overrides a default - and `DPM2_*`, which the
+# pack reads with os.environ and which pydantic-settings therefore never sees in `.env`,
+# works here like everything else.
 #
 # The report is the point. Every variable the pack reads, what it is set to, whether that
 # is yours or the default, and for a path whether it exists - because the failures worth
@@ -21,10 +28,15 @@
 
 _pack_release=""
 _pack_quiet=""
+_pack_env_file=""
+_pack_no_env_file=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --release) _pack_release="$2"; shift 2 ;;
     --release=*) _pack_release="${1#*=}"; shift ;;
+    --env-file) _pack_env_file="$2"; shift 2 ;;
+    --env-file=*) _pack_env_file="${1#*=}"; shift ;;
+    --no-env-file) _pack_no_env_file=1; shift ;;
     --quiet|-q) _pack_quiet=1; shift ;;
     *) echo "env.sh: unknown argument $1" >&2; shift ;;
   esac
@@ -39,6 +51,72 @@ elif [ -n "${ZSH_VERSION:-}" ]; then
 else
   _pack_root="$(pwd)"
 fi
+
+# --- .env ---------------------------------------------------------------------------------
+
+_pack_from_file=""   # names this run took from the file
+_pack_from_shell=""  # names that were already in the environment, which the file did not touch
+
+_pack_read_env_file() {
+  # Read, never execute. `source .env` runs whatever is in it, and a file holding a
+  # password is the last file to hand a shell. So: NAME=VALUE only, `export ` allowed,
+  # comments and blanks skipped, one pair of surrounding quotes removed, and nothing
+  # expanded - $HOME in a value stays the four characters it is.
+  _file="$1"
+  [ -r "$_file" ] || { unset _file; return 1; }
+  while IFS= read -r _line || [ -n "$_line" ]; do
+    case "$_line" in
+      ''|'#'*) continue ;;
+    esac
+    _line="${_line#export }"
+    case "$_line" in
+      *=*) ;;
+      *) continue ;;
+    esac
+    _key="${_line%%=*}"
+    _val="${_line#*=}"
+    # Trailing space on the name, leading space on the value: both are typos that would
+    # otherwise become a variable nothing reads.
+    _key="$(printf '%s' "$_key" | tr -d '[:space:]')"
+    case "$_key" in
+      ''|*[!A-Za-z0-9_]*|[0-9]*) continue ;;
+    esac
+    # Whitespace around the value, before the quotes are looked at: `A = b ` means b, and
+    # a quoted "  b  " still means two spaces either side.
+    _val="${_val#"${_val%%[![:space:]]*}"}"
+    _val="${_val%"${_val##*[![:space:]]}"}"
+    case "$_val" in
+      \"*\") _val="${_val#\"}"; _val="${_val%\"}" ;;
+      \'*\') _val="${_val#\'}"; _val="${_val%\'}" ;;
+    esac
+    eval "_current=\"\${$_key-}\""
+    if [ -n "$_current" ]; then
+      _pack_from_shell="$_pack_from_shell $_key"
+    else
+      export "$_key=$_val"
+      _pack_from_file="$_pack_from_file $_key"
+    fi
+  done < "$_file"
+  unset _file _line _key _val _current
+  return 0
+}
+
+_pack_env_path=""
+if [ -z "$_pack_no_env_file" ]; then
+  _pack_env_path="${_pack_env_file:-$_pack_root/.env}"
+  if [ -r "$_pack_env_path" ]; then
+    _pack_read_env_file "$_pack_env_path"
+  elif [ -n "$_pack_env_file" ]; then
+    # An explicitly named file that is not there is a mistake worth hearing about; the
+    # default one being absent is the normal case and says nothing.
+    echo "env.sh: no such env file: $_pack_env_path" >&2
+    _pack_env_path=""
+  else
+    _pack_env_path=""
+  fi
+fi
+
+# --- defaults -----------------------------------------------------------------------------
 
 export PAY42_DB="${PAY42_DB:-$_pack_root/pay42.duckdb}"
 export DPM2_DIR="${DPM2_DIR:-$_pack_root/source/dpm2}"
@@ -66,26 +144,35 @@ _pack_row() {
     unset _name _kind _value
     return
   fi
+  case " $_pack_from_file " in *" $_name "*) _from="  (.env)" ;; *) _from="" ;; esac
   case "$_kind" in
     secret)
-      printf '  %-28s %s\n' "$_name" "set, ${#_value} characters (not shown)" ;;
+      printf '  %-28s %s\n' "$_name" "set, ${#_value} characters (not shown)$_from" ;;
     path)
       if [ -e "$_value" ]; then
         # -s, or a directory prints one line per entry inside it and the report
         # grows a paragraph where it wanted a size.
         _size="$(du -sh "$_value" 2>/dev/null | cut -f1 | tr -d '[:space:]')"
-        printf '  %-28s %s\n' "$_name" "$_value  [$_size]"
+        printf '  %-28s %s\n' "$_name" "$_value  [$_size]$_from"
       else
-        printf '  %-28s %s\n' "$_name" "$_value  [DOES NOT EXIST]"
+        printf '  %-28s %s\n' "$_name" "$_value  [DOES NOT EXIST]$_from"
       fi ;;
     *)
-      printf '  %-28s %s\n' "$_name" "$_value" ;;
+      printf '  %-28s %s\n' "$_name" "$_value$_from" ;;
   esac
-  unset _name _kind _value _size
+  unset _name _kind _value _size _from
 }
 
 pack_env() {
   echo "pack: $_pack_root"
+  if [ -n "$_pack_env_path" ]; then
+    _count=$(printf '%s' "$_pack_from_file" | wc -w | tr -d '[:space:]')
+    _kept=$(printf '%s' "$_pack_from_shell" | wc -w | tr -d '[:space:]')
+    echo "env file: $_pack_env_path - $_count taken, $_kept already set and left alone"
+    unset _count _kept
+  else
+    echo "env file: none read"
+  fi
   echo
   echo "PAY 4.2 store"
   _pack_row PAY42_DB path
@@ -143,10 +230,11 @@ except Exception as exc:
   _pack_row MSSQL_ENCRYPT
   _pack_row MSSQL_TRUST_SERVER_CERTIFICATE
   echo
-  echo "unset is not an error: each tool falls back to its default and says what it is"
-  echo "missing. Re-run this report any time with: pack_env"
+  echo "(.env) marks a value this run took from the env file. The environment wins over"
+  echo "the file, and the file over the defaults here. unset is not an error: each tool"
+  echo "falls back to its default and says what it is missing. Re-run with: pack_env"
 }
 
 [ -n "$_pack_quiet" ] || pack_env
 
-unset _pack_release _pack_quiet
+unset _pack_release _pack_quiet _pack_env_file _pack_no_env_file

@@ -1682,7 +1682,7 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `describe_table.py` | Writes descriptions and glossary terms onto a table's columns, by name | You are describing a real table |
 | `pay42_lookup.py` | Deterministic datapoint lookup over DuckDB, and its tool definition | You are giving an agent a lookup tool |
 | `agent_tools.py` | All thirteen tool definitions, one dispatcher, and a shell front end for trying one | You are wiring the tools into an agent |
-| `env.sh` | `source env.sh` sets the two DuckDB stores and prints every variable the pack reads, with secrets counted rather than shown | A tool reads the wrong store, or a datapoint id will not resolve |
+| `env.sh` | `source env.sh` reads `.env`, sets the two DuckDB stores and prints every variable the pack reads, with secrets counted rather than shown | A tool reads the wrong store, or a datapoint id will not resolve |
 | `dpm_lookup.py` | Five lookups over the whole DPM 2.0 database: a template, a cell, what a template breaks down by, the cells one dimension member covers, and which rows add up to which | A warehouse table is COREP, FINREP or anything but PAY and DORA, or you need the codes behind a business aggregate |
 | `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file, as a CLI and as the `check_report` tool | You want to know whether a report adds up before you send it, or want an agent to check its own arithmetic |
 | `source/load_to_mssql.py` | Loads the DPM database into SQL Server over TDS, authenticating with your Kerberos ticket | You want the dictionary in the same database as the reported figures |
@@ -2067,20 +2067,31 @@ rename.
 ### Seeing what is actually set
 
 ```bash
-source env.sh                 # the defaults for a local checkout, then the report
-source env.sh --release 4.4   # point DPM2_DB at another release's database
-source env.sh --quiet         # set without the report; `pack_env` prints it later
+source env.sh                     # .env, then the defaults, then the report
+source env.sh --release 4.4       # point DPM2_DB at another release's database
+source env.sh --quiet             # set without the report; `pack_env` prints it later
+source env.sh --env-file other.env   # read that instead of ./.env
+source env.sh --no-env-file          # ignore it
 ```
 
-It sets only what has a safe local default - the two stores and the download directory -
-and leaves anything already set alone, so a release pinned for one shell stays pinned.
-Secrets and hostnames are reported, never assigned: a committed file that sets
-`OM_JWT_TOKEN` is a committed file that leaks it, and a default SQL Server host is a wrong
-host.
+It reads `.env` first, then fills in what has a safe local default - the two stores and
+the download directory. The precedence is pydantic-settings' own: **the environment wins
+over `.env`, and `.env` wins over the defaults here**, so exporting a variable for one
+command still overrides the file, and a release pinned for one shell stays pinned. This
+is also what closes the gap the next section describes: `DPM2_*` is read with `os.environ`
+and never reaches pydantic-settings, so until now a `.env` could not pin it.
 
-The report names every variable the pack reads, says whether each path exists, counts a
-secret rather than printing it, and for `DPM2_DB` opens the database to say which releases
-it contains and what its highest datapoint id is:
+The file is read, never executed. `source .env` runs whatever is in it, and a file holding
+a password is the last one to hand a shell, so this parses `NAME=VALUE` only: `export` is
+allowed, comments and blanks skipped, one pair of surrounding quotes removed, and nothing
+expanded - `$HOME` in a value stays the five characters it is. Secrets and hostnames are
+still never *assigned* by the script itself: a committed file that sets `OM_JWT_TOKEN` is
+a committed file that leaks it, and a default SQL Server host is a wrong host.
+
+The report names every variable the pack reads, marks the ones this run took from the
+file with `(.env)`, says whether each path exists, counts a secret rather than printing
+it, and for `DPM2_DB` opens the database to say which releases it contains and what its
+highest datapoint id is:
 
 ```
 DPM2_DB    .../source/dpm2/dpm2_4_4.duckdb  [158M]
@@ -2098,8 +2109,9 @@ reads `.env`. `DPM2_*` everywhere, and `PAY42_DB` and `PAY42_TEMP_DIR` as
 `source/build_duckdb.py` reads them, use `os.environ` and do not.
 
 So a `PAY42_DB` in `.env` steers where a lookup reads but not where the build writes: you
-can build one file and read another with nothing complaining. `DPM2_*` in `.env` does
-nothing at all. Export them in the shell instead.
+can build one file and read another with nothing complaining, and `DPM2_*` in `.env` does
+nothing at all — to the tools. `source env.sh` is the way round it: it reads the file
+itself and exports what it finds, so one `.env` then governs every variable here.
 
 ## Importing into OpenMetadata
 

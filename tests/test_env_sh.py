@@ -117,3 +117,125 @@ def test_an_unknown_argument_is_named_and_the_rest_still_runs(shell):
     )
     assert "unknown argument --nonsense" in done.stderr
     assert done.stdout.strip().endswith(".duckdb")
+
+
+# --- the env file -----------------------------------------------------------------------
+
+
+def with_env_file(
+    contents: str,
+    script: str,
+    shell: str,
+    tmp: Path,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Source env.sh against a written env file, then run `script`."""
+    path = tmp / "sample.env"
+    path.write_text(contents, encoding="utf-8")
+    done = subprocess.run(
+        [shell, "-c", f"cd {ENV_SH.parent} && source ./env.sh --quiet --env-file {path} && {script}"],
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(Path.home()), **(env or {})},
+    )
+    return done
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_pair_in_the_file_reaches_the_shell(shell, tmp_path):
+    done = with_env_file("OM_GLOSSARY=PAY_4_2\n", "echo $OM_GLOSSARY", shell, tmp_path)
+    assert done.stdout.strip() == "PAY_4_2"
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_environment_wins_over_the_file(shell, tmp_path):
+    """pydantic-settings' own precedence, so exporting a variable for one command still
+    overrides the file rather than being silently replaced by it."""
+    done = with_env_file(
+        "OM_GLOSSARY=from_file\n", "echo $OM_GLOSSARY", shell, tmp_path, env={"OM_GLOSSARY": "from_shell"}
+    )
+    assert done.stdout.strip() == "from_shell"
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_file_wins_over_the_defaults_here(shell, tmp_path):
+    """DPM2_* is read with os.environ and never reaches pydantic-settings, so the file is
+    the only place a release can be pinned without exporting it by hand."""
+    done = with_env_file("DPM2_DB=/chosen/dpm2_4_4.duckdb\n", "echo $DPM2_DB", shell, tmp_path)
+    assert done.stdout.strip() == "/chosen/dpm2_4_4.duckdb"
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("OM_GLOSSARY=plain\n", "plain"),
+        ('OM_GLOSSARY="double"\n', "double"),
+        ("OM_GLOSSARY='single'\n", "single"),
+        ("export OM_GLOSSARY=exported\n", "exported"),
+        ("OM_GLOSSARY = spaced \n", "spaced"),
+        ('OM_GLOSSARY="  kept  "\n', "  kept  "),  # inside the quotes is the value
+        ("# OM_GLOSSARY=commented\n", ""),
+        ("OM_GLOSSARY\n", ""),  # not a pair
+        ("1BAD=x\nOM_GLOSSARY=after\n", "after"),  # an unusable name does not stop the file
+    ],
+)
+def test_the_file_is_read_rather_than_executed(shell, line, expected, tmp_path):
+    """`source .env` would run whatever is in it, and a file holding a password is the
+    last one to hand a shell. So these are parsed, and only as NAME=VALUE."""
+    done = with_env_file(line, 'printf "[%s]" "$OM_GLOSSARY"', shell, tmp_path)
+    assert done.stdout.strip() == f"[{expected}]"
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_value_is_never_expanded(shell, tmp_path):
+    """$HOME in a value is four characters, not the home directory - and a value holding
+    `$(rm -rf ~)` is a string, which is the property that matters."""
+    done = with_env_file("OM_PAGE_URL=$HOME/x\n", "echo $OM_PAGE_URL", shell, tmp_path)
+    assert done.stdout.strip() == "$HOME/x"
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_report_says_where_a_value_came_from(shell, tmp_path):
+    path = tmp_path / "sample.env"
+    path.write_text("OM_GLOSSARY=from_file\nOM_HOST=from_file\n", encoding="utf-8")
+    done = subprocess.run(
+        [shell, "-c", f"cd {ENV_SH.parent} && source ./env.sh --env-file {path}"],
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(Path.home()), "OM_HOST": "from_shell"},
+    )
+    assert f"env file: {path} - 1 taken, 1 already set and left alone" in done.stdout
+    assert "OM_GLOSSARY                  from_file  (.env)" in done.stdout
+    assert "OM_HOST                      from_shell\n" in done.stdout, "no (.env) on a value the shell gave"
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_no_env_file_ignores_one_that_is_there(shell, tmp_path):
+    path = tmp_path / "sample.env"
+    path.write_text("OM_GLOSSARY=from_file\n", encoding="utf-8")
+    done = subprocess.run(
+        [
+            shell,
+            "-c",
+            # printf, not `echo [$X]`: in zsh an empty variable leaves a bare [] that the
+            # shell tries to glob and fails on before the test ever sees it.
+            f'cd {ENV_SH.parent} && source ./env.sh --no-env-file --env-file {path} && printf "[%s]" "$OM_GLOSSARY"',
+        ],
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin:/usr/local/bin"},
+    )
+    assert done.stdout.strip().endswith("[]")
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_named_file_that_is_missing_is_said_out_loud(shell, tmp_path):
+    """An absent default .env is the normal case and says nothing; one the caller named
+    and misspelled is a mistake worth hearing about."""
+    done = subprocess.run(
+        [shell, "-c", f"cd {ENV_SH.parent} && source ./env.sh --quiet --env-file {tmp_path}/absent.env"],
+        capture_output=True,
+        text=True,
+    )
+    assert "no such env file" in done.stderr
