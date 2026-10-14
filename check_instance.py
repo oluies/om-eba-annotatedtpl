@@ -29,6 +29,7 @@ import csv
 import os
 import sys
 from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -43,12 +44,18 @@ Cell = tuple[str, str, str]  # row, column, sheet
 
 
 class Node(NamedTuple):
-    """One node of a rule's expression tree."""
+    """One node of a rule's expression tree.
+
+    `scalar` is a number where the literal is one, and the raw string where it is not:
+    DORA's rules compare against regular expressions such as `^[A-Z0-9]{18}[0-9]{2}$` for
+    an LEI. Keeping the string rather than refusing to load is what lets the rule be
+    reported as unevaluated with the rest, instead of taking the whole module down.
+    """
 
     parent: int | None
     is_leaf: bool
     symbol: str | None
-    scalar: float | None
+    scalar: float | str | None
 
 
 class Rule(NamedTuple):
@@ -63,7 +70,17 @@ class Rule(NamedTuple):
 
 
 class Unsupported(Exception):
-    """The tree uses an operator this evaluator does not implement."""
+    """The tree uses an operator, or a kind of literal, this evaluator does not implement."""
+
+
+def scalar(raw: Any) -> float | str | None:
+    """A literal as a number where it is one, as itself where it is not. Pure."""
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return str(raw)
 
 
 # Four of the model's operators. Comparisons are applied elementwise when one side is a
@@ -85,6 +102,11 @@ def operand(rule: Rule, node_id: int, values: dict[Cell, float], col: str, sheet
     """
     node = rule.nodes[node_id]
     if node.is_leaf:
+        if isinstance(node.scalar, str):
+            # A regular expression, a date or a code: a literal this evaluator has no
+            # arithmetic for. Unsupported, so the rule is reported unevaluated rather
+            # than silently treated as holding.
+            raise Unsupported(f"the literal {node.scalar!r}")
         if node.scalar is not None:
             return [node.scalar]
         here = [c for c in rule.cells.get(node_id, []) if c[1] == col and c[2] == sheet]
@@ -130,18 +152,24 @@ def evaluate(rule: Rule, values: dict[Cell, float], col: str, sheet: str) -> boo
 # Loading. Everything above is pure; everything below reads a file or the database.
 # --------------------------------------------------------------------------------------
 
+# An open axis has no header: every cell of an open table carries RowID NULL and the DPM
+# writes its coordinate `{B_01.01, r*, c0020}`. The joins have to be outer ones or the
+# whole template disappears - which is what happened, silently, to all fourteen DORA
+# templates. `*` matches the spelling LEAF_SQL gives a rule's own operands, whose "Row"
+# is NULL for exactly the same reason.
 GRID_SQL = """
-SELECT vv.VariableID AS dp, hr.Code AS row_code, hc.Code AS col, coalesce(hs.Code, '') AS sheet
+SELECT vv.VariableID AS dp, coalesce(hr.Code, '*') AS row_code, coalesce(hc.Code, '*') AS col,
+       coalesce(hs.Code, '') AS sheet
 FROM   ModuleVersionComposition mvc
 JOIN   TableVersion tv USING (TableVID)
 JOIN   ModuleVersion mv USING (ModuleVID)
 JOIN   TableVersionCell c ON c.TableVID = tv.TableVID
 JOIN   VariableVersion vv ON vv.VariableVID = c.VariableVID
 JOIN   Cell cc ON cc.CellID = c.CellID
-JOIN   TableVersionHeader tr ON tr.TableVID = tv.TableVID AND tr.HeaderID = cc.RowID
-JOIN   HeaderVersion hr ON hr.HeaderVID = tr.HeaderVID
-JOIN   TableVersionHeader tc ON tc.TableVID = tv.TableVID AND tc.HeaderID = cc.ColumnID
-JOIN   HeaderVersion hc ON hc.HeaderVID = tc.HeaderVID
+LEFT JOIN TableVersionHeader tr ON tr.TableVID = tv.TableVID AND tr.HeaderID = cc.RowID
+LEFT JOIN HeaderVersion hr ON hr.HeaderVID = tr.HeaderVID
+LEFT JOIN TableVersionHeader tc ON tc.TableVID = tv.TableVID AND tc.HeaderID = cc.ColumnID
+LEFT JOIN HeaderVersion hc ON hc.HeaderVID = tc.HeaderVID
 LEFT JOIN TableVersionHeader ts ON ts.TableVID = tv.TableVID AND ts.HeaderID = cc.SheetID
 LEFT JOIN HeaderVersion hs ON hs.HeaderVID = ts.HeaderVID
 WHERE  tv.Code = ? AND mv.Code = ? AND mv.VersionNumber = ?
@@ -161,17 +189,34 @@ WHERE  mv.Code = ? AND mv.VersionNumber = ?
 """
 
 LEAF_SQL = """
-SELECT r.NodeID AS node_id, l."Row" AS row_code, l."Column" AS col, coalesce(l.Sheet, '') AS sheet
+SELECT r.NodeID AS node_id, coalesce(l."Row", '*') AS row_code, coalesce(l."Column", '*') AS col,
+       coalesce(l.Sheet, '') AS sheet
 FROM   OperandReference r
 JOIN   OperandReferenceLocation l USING (OperandReferenceID)
 WHERE  l."Table" = ?
 """
 
 
-def read_facts(path: Path) -> dict[int, float]:
-    """The instance, as datapoint id to value."""
+def facts_by_datapoint(rows: Iterable[dict[str, str]]) -> tuple[dict[int, float], int]:
+    """Reported rows as datapoint id to value, with how many rows that was. Pure.
+
+    The two numbers differ on an open table, where the rows of the report are records
+    rather than fixed rows of a grid: every record carries the same datapoint ids, told
+    apart by a typed dimension this evaluator does not read. The last value wins, so one
+    record is checked and the count is how the caller finds out.
+    """
+    facts = {}
+    read = 0
+    for row in rows:
+        facts[int(row["datapoint"].removeprefix("dp"))] = float(row["factValue"])
+        read += 1
+    return facts, read
+
+
+def read_facts(path: Path) -> tuple[dict[int, float], int]:
+    """The instance, as datapoint id to value, and the number of rows it had."""
     with path.open(encoding="utf-8") as fh:
-        return {int(r["datapoint"].removeprefix("dp")): float(r["factValue"]) for r in csv.DictReader(fh)}
+        return facts_by_datapoint(csv.DictReader(fh))
 
 
 def load(table: str, module: str, version: str) -> tuple[dict[int, Cell], list[Rule]]:
@@ -192,8 +237,8 @@ def load(table: str, module: str, version: str) -> tuple[dict[int, Cell], list[R
 
     nodes: dict[str, dict[int, Node]] = defaultdict(dict)
     severity: dict[str, str] = {}
-    for code, sev, node_id, parent, is_leaf, symbol, scalar in raw:
-        nodes[code][node_id] = Node(parent, bool(is_leaf), symbol, None if scalar is None else float(scalar))
+    for code, sev, node_id, parent, is_leaf, symbol, raw_scalar in raw:
+        nodes[code][node_id] = Node(parent, bool(is_leaf), symbol, scalar(raw_scalar))
         severity[code] = sev
 
     rules = []
@@ -262,7 +307,7 @@ def check_report(table: str, module: str, version: str, instance: str) -> dict[s
     # The report first: it is the cheap check, and a bad path or a wrong file should not
     # cost a database load to find out about.
     try:
-        facts = read_facts(path)
+        facts, records = read_facts(path)
     except (OSError, UnicodeDecodeError, csv.Error, KeyError, ValueError) as exc:
         return {
             "found": False,
@@ -285,6 +330,7 @@ def check_report(table: str, module: str, version: str, instance: str) -> dict[s
         "table": table,
         "module": f"{module} {version}",
         "facts": len(facts),
+        "records": records,
         "mapped": len(values),
         "unmapped": len(facts) - len(values),
         "hold": sorted(passed),
@@ -298,6 +344,13 @@ def check_report(table: str, module: str, version: str, instance: str) -> dict[s
             "many. not_evaluated is this checker's limit, not a pass: it implements four of the "
             "model's thirty-eight operators and names the one each skipped rule needs. A large "
             "unmapped count means the file is probably for another module version."
+            + (
+                f" records ({records}) exceeds facts ({len(facts)}): this template has an open "
+                "axis, so the report's rows are records sharing one set of datapoint ids. Only "
+                "the last of each was checked."
+                if records > len(facts)
+                else ""
+            )
         ),
     }
 

@@ -216,3 +216,66 @@ def test_an_unreadable_database_answers_rather_than_raising(tmp_path, monkeypatc
     answer = check_instance.check_report("Y_01.01", "PSD_FRP", "1.1.0", str(report))
     assert answer["found"] is False
     assert "could not be read" in answer["message"]
+
+
+# --- open tables, and literals that are not numbers ------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (0, 0.0),
+        ("12.5", 12.5),
+        (None, None),
+        ("^[A-Z0-9]{18}[0-9]{2}$", "^[A-Z0-9]{18}[0-9]{2}$"),  # DORA checks an LEI this way
+        ("2024-01-01", "2024-01-01"),
+    ],
+)
+def test_a_literal_is_a_number_where_it_is_one_and_itself_where_it_is_not(raw, expected):
+    assert check_instance.scalar(raw) == expected
+
+
+def test_a_non_numeric_literal_is_unsupported_rather_than_a_crash():
+    """Loading DORA raised ValueError on a regular expression, taking the whole module
+    down. A literal with no arithmetic belongs in not_evaluated with everything else."""
+    rule = tree("=", leaves={1: [C], 2: 0}, root_children=[1, 2])
+    rule = rule._replace(nodes=rule.nodes | {2: Node(parent=0, is_leaf=True, symbol=None, scalar="^[A-Z]{2}$")})
+    with pytest.raises(Unsupported, match=r"\^\[A-Z\]"):
+        evaluate(rule, {C: 1.0}, "0010", "")
+
+
+def test_records_of_an_open_table_are_counted_even_though_one_is_checked():
+    """An open table's report has one row per record, all carrying the same datapoint
+    ids. The dict keeps the last; the count is how a caller learns the rest existed."""
+    rows = [
+        {"datapoint": "dp1", "factValue": "10"},
+        {"datapoint": "dp2", "factValue": "20"},
+        {"datapoint": "dp1", "factValue": "30"},
+    ]
+    facts, read = check_instance.facts_by_datapoint(rows)
+    assert facts == {1: 30.0, 2: 20.0}
+    assert read == 3
+
+
+@needs_dpm2
+def test_an_open_template_has_cells_and_every_rule_refuses(tmp_path):
+    """Every DORA template is open-rowed, so its cells carry no row header and the DPM
+    writes the coordinate `r*`. An inner join on that header dropped all fourteen
+    templates silently - a report checked against nothing reads as a report that passed."""
+    from check_instance import load
+
+    grid, rules = load("B_01.01", "DORA", "1.1.0")
+    assert grid, "an open template still has cells"
+    assert {row for row, _, _ in grid.values()} == {"*"}
+    assert rules, "DORA's rules reach the template"
+
+    report = tmp_path / "records.csv"
+    records = "\n".join(f"dp{dp},{1000 + n}" for n in range(3) for dp in sorted(grid))
+    report.write_text(f"datapoint,factValue\n{records}\n", encoding="utf-8")
+
+    answer = check_instance.check_report("B_01.01", "DORA", "1.1.0", str(report))
+    assert answer["mapped"] == len(grid) and answer["unmapped"] == 0
+    assert answer["records"] == 3 * len(grid)
+    assert "open axis" in answer["message"]
+    assert answer["hold"] == [] and answer["fail"] == [], "DORA's rules are not arithmetic"
+    assert {skipped["needs"] for skipped in answer["not_evaluated"]} >= {"if-then-else"}
