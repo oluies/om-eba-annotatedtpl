@@ -9,6 +9,7 @@ import ast
 import datetime
 import decimal
 import json
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -468,3 +469,38 @@ def test_key_value_arguments_become_a_tool_call(pairs, expected):
 def test_an_argument_without_a_value_is_refused_rather_than_guessed():
     with pytest.raises(SystemExit, match="key=value"):
         agent_tools.parse_arguments(["table"])
+
+
+# --- the enum, the arms and the definitions must agree ---------------------------------
+
+
+def tool_names_named_in(source: str) -> set[str]:
+    """Every `ToolName.X` the module mentions, by member name."""
+    return {
+        node.attr
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "ToolName"
+    }
+
+
+def test_every_tool_name_has_an_arm_and_every_arm_a_name():
+    """A tool lives in the enum, in a `case` arm and in TOOLS. Removing it from the enum
+    alone is the half-edit that hurts: match evaluates arms in order, so the first arm
+    naming a member that is gone raises AttributeError and every tool dispatched after it
+    fails with `type object 'ToolName' has no attribute ...`, however healthy it is."""
+    named = tool_names_named_in(Path(agent_tools.__file__).read_text())
+    assert named == {member.name for member in agent_tools.ToolName}
+
+
+def test_dropping_a_member_but_not_its_arm_is_what_the_test_above_catches():
+    """The failure reproduced: an arm outliving its member takes the later tools with it."""
+    source = textwrap.dedent("""
+        class ToolName:
+            A = "a"
+
+        def run(name):
+            match name:
+                case ToolName.B:
+                    return 1
+    """)
+    assert tool_names_named_in(source) == {"B"}

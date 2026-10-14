@@ -15,6 +15,13 @@ instead of nine and cannot end up with a definition registered but not dispatche
     lookup_dpm_sums         which rows add up to which, from the validation rules
                                                                     (dpm_lookup.py)
 
+A tool lives in three places - the `ToolName` member, the `case` arm in `_run` and the
+definition in `TOOLS` - and dropping one means dropping all three. Removing only the
+member is the dangerous half-edit: `match` evaluates its arms in order, so the first arm
+naming a member that is gone raises AttributeError, and *every* tool dispatched after it
+fails with `type object 'ToolName' has no attribute ...` - including tools that are
+perfectly fine. The test suite pins the three against each other.
+
 Registration, with the OpenAI-shaped tools parameter:
 
     from agent_tools import TOOLS, dispatch
