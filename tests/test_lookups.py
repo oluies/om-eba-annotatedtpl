@@ -6,6 +6,8 @@ it. So the shapes it must and must not match are pinned here.
 """
 
 import ast
+import datetime
+import decimal
 import json
 from pathlib import Path
 
@@ -386,3 +388,38 @@ def test_a_cell_and_its_table_answer_different_questions():
     assert set(cell["dimensions"][0]) == {"dimension", "member", "definition"}
     assert set(table["dimensions"][0]) == {"dimension", "members"}
     assert "cells" in table["dimensions"][0]["members"][0]
+
+
+# --- a host serialises what dispatch returns -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (datetime.date(2022, 12, 31), "2022-12-31"),
+        (datetime.datetime(2022, 12, 31, 9, 30), "2022-12-31T09:30:00"),
+        (decimal.Decimal("1.5"), 1.5),
+        ({"a": [datetime.date(2026, 3, 30)]}, {"a": ["2026-03-30"]}),
+        (("x", 1), ["x", 1]),
+        ({"keep": None, "flag": True, "n": 3}, {"keep": None, "flag": True, "n": 3}),
+    ],
+)
+def test_only_what_json_refuses_is_converted(value, expected):
+    assert agent_tools.jsonable(value) == expected
+    json.dumps(agent_tools.jsonable(value))
+
+
+@needs_dpm2
+def test_every_dpm_answer_survives_a_plain_json_dumps():
+    """A host hands the answer back to the model with json.dumps and no `default=`. The
+    DPM's module validity window arrives from DuckDB as two dates, which raises there -
+    losing the turn rather than the answer."""
+    calls = {
+        "lookup_dpm_table": {"table": "F 12.01.a"},
+        "lookup_dpm_cell": {"table": "F 12.01.a", "row": "0015", "column": "0010", "sheet": None},
+        "lookup_dpm_dimensions": {"table": "F 12.01.a", "module": "FINREP9", "version": None},
+    }
+    for name, args in calls.items():
+        answer = agent_tools.dispatch(name, args)
+        assert answer["found"] is True, name
+        json.dumps(answer)

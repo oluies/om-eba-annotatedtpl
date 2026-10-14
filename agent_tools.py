@@ -40,6 +40,8 @@ downloaded" costs a turn and teaches the model to stop calling it. `dispatch` st
 them either way, so a host that registered them before the file moved does not break.
 """
 
+import datetime
+import decimal
 import enum
 import json
 from typing import Any
@@ -70,6 +72,33 @@ TOOLS = (
 )
 
 
+def jsonable(value: Any) -> Any:
+    """The same answer with nothing in it that plain json.dumps refuses.
+
+    A host serialises a tool answer before handing it back to the model, and the obvious
+    way to do that is `json.dumps(dispatch(...))` - no `default=`. DuckDB hands back the
+    column's own type, so the DPM's module validity window arrives as two datetime.date
+    objects and that call raises TypeError, losing the turn rather than the answer. Dates
+    become ISO strings, which is how the model reads them anyway; a Decimal becomes a
+    float, since every numeric in these answers is a count or an amount, not money being
+    added up here.
+
+    `case dict()` and `case list()` are class patterns, not captures, so recursion is on
+    shape. datetime.datetime is a subclass of date and isoformat covers both.
+    """
+    match value:
+        case dict():
+            return {key: jsonable(item) for key, item in value.items()}
+        case list() | tuple():
+            return [jsonable(item) for item in value]
+        case datetime.date() | datetime.time():
+            return value.isoformat()
+        case decimal.Decimal():
+            return float(value)
+        case _:
+            return value
+
+
 def dispatch(name: str, arguments: str | dict[str, Any]) -> dict[str, Any]:
     """Run one tool call and return its answer, ready to be serialised back.
 
@@ -84,7 +113,7 @@ def dispatch(name: str, arguments: str | dict[str, Any]) -> dict[str, Any]:
     """
     try:
         args = json.loads(arguments) if isinstance(arguments, str) else arguments
-        return _run(name, args)
+        return jsonable(_run(name, args))
     except ValueError as exc:
         # JSONDecodeError is a ValueError, but not the only one json.loads raises: an
         # integer literal over 4300 digits trips CPython's conversion limit with a plain
