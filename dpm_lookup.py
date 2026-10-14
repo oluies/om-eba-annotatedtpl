@@ -145,7 +145,9 @@ FROM   TableVersionCell
 WHERE  TableVID = ? AND CellCode = ?
 """
 
-DIMENSIONS_SQL = """
+# Keyed on a VariableVID: one cell's own members. Distinct from TABLE_DIMENSIONS_SQL
+# below, which is keyed on a TableVID and counts cells per member across a template.
+CELL_DIMENSIONS_SQL = """
 SELECT DISTINCT dimension.Name AS dimension, member.Name AS member,
        nullif(member.Description, '') AS definition
 FROM   VariableVersion vv
@@ -210,7 +212,7 @@ def fold_rules(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # Every dimension a template breaks down by, with its members. The discovery step: a
 # template can have 800 cells and 17 dimensions, so handing an agent every cell with
 # every member is both unusable and unnecessary. 17 rows with 7 members at most is not.
-DIMENSIONS_SQL = """
+TABLE_DIMENSIONS_SQL = """
 SELECT   trim(dim.Name) AS dimension, trim(i.Name) AS member, count(DISTINCT c.CellID) AS cells
 FROM     TableVersionCell c
 JOIN     VariableVersion vv ON vv.VariableVID = c.VariableVID
@@ -378,7 +380,7 @@ def lookup_dpm_cell(table: str, row: str, column: str, sheet: str | None = None)
                     + (f" This template has a sheet axis: {', '.join(codes)}." if codes and not sheet else "")
                 )
             cell = cells[0]
-            dimensions = _rows(con, DIMENSIONS_SQL, cell["VariableVID"])
+            dimensions = _rows(con, CELL_DIMENSIONS_SQL, cell["VariableVID"])
             types = _rows(con, DATATYPE_SQL, cell["VariableVID"])
             rules = fold_rules(_rows(con, RULES_SQL, version["Code"], row, column, sheet or ""))
     except DpmError as exc:
@@ -427,7 +429,7 @@ def lookup_dpm_dimensions(table: str, module: str | None = None, version: str | 
     try:
         with _connect() as con:
             tv = _table_version(con, table, module, version)
-            rows = _rows(con, DIMENSIONS_SQL, tv["TableVID"])
+            rows = _rows(con, TABLE_DIMENSIONS_SQL, tv["TableVID"])
     except DpmError as exc:
         return {"found": False, "table": table, "message": str(exc)}
 

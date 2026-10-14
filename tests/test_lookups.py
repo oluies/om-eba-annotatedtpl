@@ -5,7 +5,9 @@ row off yields a correct-looking description of the wrong datapoint, and nothing
 it. So the shapes it must and must not match are pinned here.
 """
 
+import ast
 import json
+from pathlib import Path
 
 import pytest
 
@@ -314,3 +316,73 @@ def test_the_three_new_tools_are_registered_when_the_database_is_there():
     names = registered_names()
     assert names >= NEW_DPM_TOOLS
     assert names <= {name.value for name in agent_tools.ToolName}
+
+
+# --- two queries must not share one name -----------------------------------------------
+
+
+def overwritten_at_module_level(source: str) -> set[str]:
+    """Top-level names rebound to a value that does not derive from the old one.
+
+    The second binding silently wins, so two different queries under one name is a bug no
+    amount of exercising either caller reveals - both callers get the survivor. That is
+    how DIMENSIONS_SQL shipped twice, with lookup_dpm_cell passing a VariableVID to a
+    query filtering on TableVID and getting an empty list back.
+
+    Extending a name from itself - `X = (*X, "more")`, with a comment saying why - is not
+    that bug: nothing is lost. So a rebinding counts only when the new value never reads
+    the name, which is what makes the old value unreachable.
+    """
+    overwritten: set[str] = set()
+    bound: set[str] = set()
+    for node in ast.parse(source).body:
+        if not isinstance(node, ast.Assign):
+            continue
+        reads = {n.id for n in ast.walk(node.value) if isinstance(n, ast.Name)}
+        for target in (t for t in node.targets if isinstance(t, ast.Name)):
+            if target.id in bound and target.id not in reads:
+                overwritten.add(target.id)
+            bound.add(target.id)
+    return overwritten
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("A = 1\nA = 2\n", {"A"}),
+        ("A = 1\nA = (*A, 2)\n", set()),  # extended from itself, nothing lost
+        ("A = 1\nB = 2\n", set()),
+        ("A = B = 1\nB = 2\n", {"B"}),
+    ],
+)
+def test_the_rebinding_detector_separates_losing_a_value_from_extending_one(source, expected):
+    assert overwritten_at_module_level(source) == expected
+
+
+@pytest.mark.parametrize("module", [dpm_lookup, pay42_lookup, agent_tools])
+def test_no_module_level_name_is_overwritten(module):
+    path = Path(module.__file__)
+    assert overwritten_at_module_level(path.read_text()) == set(), f"{path.name} loses a value"
+
+
+@needs_dpm2
+def test_a_cell_carries_its_own_dimension_members():
+    """The members of one cell, not of its template: seven for this one, and the query is
+    keyed on the cell's VariableVID. An empty list here is the collision above."""
+    answer = dpm_lookup.lookup_dpm_cell("F 12.01.a", "0015", "0010")
+    assert answer["found"] is True
+    members = {row["dimension"]: row["member"] for row in answer["dimensions"]}
+    assert members, "a reportable cell has dimension members"
+    assert members["Counterparty sector"] == "Central banks and credit institutions"
+    assert members["Calculation method"] == "Accumulated"
+
+
+@needs_dpm2
+def test_a_cell_and_its_table_answer_different_questions():
+    """lookup_dpm_dimensions counts cells per member across the template; lookup_dpm_cell
+    names the members of one cell. The two must not return the same shape."""
+    cell = dpm_lookup.lookup_dpm_cell("F 12.01.a", "0015", "0010")
+    table = dpm_lookup.lookup_dpm_dimensions("F 12.01.a", "FINREP9")
+    assert set(cell["dimensions"][0]) == {"dimension", "member", "definition"}
+    assert set(table["dimensions"][0]) == {"dimension", "members"}
+    assert "cells" in table["dimensions"][0]["members"][0]
