@@ -135,6 +135,85 @@ offer for an unpinned module version. Take the dimension and member wording from
 `lookup_dpm_dimensions`: a near miss matches nothing, and that is as true from the shell
 as from the model.
 
+### Questions that reach the tools
+
+A question only reaches these tools if it carries a **template code** — `F 12.01.a`,
+`F_04.04.1`, `Y_01_01`, `C_01.00`. Without one the model has nothing to pass and answers
+from memory. The sequence below replaces a hand-maintained spreadsheet of row codes by
+column codes, which is the job this is for. Every answer quoted is from FINREP9 3.3.0.
+
+**The structure, instead of a YAML file of levels.**
+
+> Which rows and columns does F_04.04.1 have, with the nesting?
+
+`lookup_dpm_table` returns `parent_code` and `is_abstract` per entry — the hierarchy
+itself. `0014 Gross carrying amount` is abstract: a heading with no cell of its own, whose
+children are `0015, 0030, 0040, 0041`. An "of which" row is simply a child, so excluding
+them is a filter on `parent_code` rather than a convention to maintain by hand.
+
+**A dimension breakdown.**
+
+> What does F_04.04.1 break down by? And which cells have Counterparty sector =
+> Credit institutions?
+
+`lookup_dpm_dimensions` first, always: it is what says that `Counterparty sector` is a
+dimension of that template at all, and under which exact wording. Then
+`lookup_dpm_cells`, which for that member returns 24 cells across rows `0040` (debt
+securities) and `0100` (loans and advances) — both instrument blocks, which a hand-written
+mapping of one block would have missed.
+
+**The aggregate, as code.**
+
+> Write a SQL query summing gross carrying amount for financial corporations in
+> F_04.04.1 — counterparty is credit institutions or other financial corporations, the
+> column sits under *Gross carrying amount*, no "of which" columns. **Every column name
+> must come from `lookup_dpm_cells`; do not write one yourself.** Leave the table name a
+> parameter and name the rule code you built the selection on.
+
+Sixteen columns, `F04041_r0040_c0015` through `F04041_r0110_c0041`. The sentence in bold
+is the one that matters: without it a model produces `F04041_r0070_c0015`, which looks
+exactly as plausible and is not a cell.
+
+**The grouping is yours, not the model's.**
+
+> Build the same aggregation table as my notebook, but take the hierarchy from the DPM
+> rather than from a YAML file. The grouping of counterparty sectors is my own business
+> definition and must be an explicit dict in the code — not something you derive.
+
+Rolling `Credit institutions` and `Financial corporations other than credit
+institutions` up into one `Financial corporations` figure is not in the DPM. The model
+holds the leaves; a roll-up across them is a decision, and it should read as one in the
+code rather than arrive as though the EBA had said it. (The EBA does publish member
+hierarchies, in `ATTT2Hierarchies` — no tool exposes them yet.)
+
+**The check, rather than an instruction not to guess.**
+
+> Which rows add up to which in F_04.04.1 in FINREP9? Then check `report.csv` with
+> `check_report` and tell me which rules failed and which could not be evaluated.
+
+`lookup_dpm_sums` answers that row `0140` is rows `0010` and `0070` added together, over
+12 columns, under rule `v23856_h` — the EBA's own rule, not arithmetic the model wrote.
+`check_report` then runs every rule of that module version against the file:
+
+```json
+{ "found": true, "table": "Y_01.01", "module": "PSD_FRP 1.1.0",
+  "facts": 324, "mapped": 324, "unmapped": 0,
+  "hold": ["v09124_m", "v09198_s", "v09247_s"],
+  "fail": [{"rule_code": "v09123_m", "severity": "warning", "fails": 12, "of": 12}],
+  "not_evaluated": [] }
+```
+
+Read `not_evaluated` before `hold`: it is the checker's limit, not a pass — four of the
+model's thirty-eight operators, each skipped rule named with the operator it needs. An
+empty list, as here, is the claim that this module is covered completely. `unmapped` is
+the next one to read: a large count almost always means the file is for another module
+version rather than that the report is wrong.
+
+Two phrases worth reusing in any of these: **"do not write any column name yourself"**,
+and **"say which module version the answer is for"** — a rule changes both its expression
+and its severity between versions, so a generated query should carry the version in a
+comment.
+
 ### What the model has that the layout does not
 
 Validation rules, nesting and every other framework. The first two are extracted into the

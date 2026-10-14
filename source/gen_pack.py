@@ -1681,9 +1681,9 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `07-agent-prompt.md` | The stanza to paste into an agent's system prompt, covering every framework | You are configuring an agent |
 | `describe_table.py` | Writes descriptions and glossary terms onto a table's columns, by name | You are describing a real table |
 | `pay42_lookup.py` | Deterministic datapoint lookup over DuckDB, and its tool definition | You are giving an agent a lookup tool |
-| `agent_tools.py` | All six tool definitions and one dispatcher | You are wiring the tools into an agent |
+| `agent_tools.py` | All ten tool definitions, one dispatcher, and a shell front end for trying one | You are wiring the tools into an agent |
 | `dpm_lookup.py` | Five lookups over the whole DPM 2.0 database: a template, a cell, what a template breaks down by, the cells one dimension member covers, and which rows add up to which | A warehouse table is COREP, FINREP or anything but PAY and DORA, or you need the codes behind a business aggregate |
-| `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file | You want to know whether a report adds up before you send it |
+| `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file, as a CLI and as the `check_report` tool | You want to know whether a report adds up before you send it, or want an agent to check its own arithmetic |
 | `source/load_to_mssql.py` | Loads the DPM database into SQL Server over TDS, authenticating with your Kerberos ticket | You want the dictionary in the same database as the reported figures |
 | `display_names.py` | The rule for what a table and its columns are called | You are setting display names |
 | `08-lookup-tool.md` | How to register and dispatch that tool | You are wiring it into an agent |
@@ -1777,6 +1777,105 @@ Two details it has to absorb. The DPM writes a table code `Y_01.01` where the la
 the warehouse write `Y 01.01`. And a cell with `IsExcluded` set is a greyed-out box in
 the template — in the model, not reportable — which the pack leaves out, so the
 comparison does too. `Y_01.01` has 396 cells, 72 of them excluded, and the pack has 324.
+
+### Trying a lookup before wiring it into anything
+
+`agent_tools.py` runs any one tool from a shell, through the same dispatcher an agent
+calls, and prints the answer with a plain `json.dumps` — the host's own serialisation, so
+an answer it could not hand back fails here rather than mid-turn.
+
+```bash
+uv run agent_tools.py                    # the definitions the model will be shown
+uv run agent_tools.py lookup_dpm_sums table='F 12.01.a' module=FINREP9 version=null
+uv run agent_tools.py lookup_dpm_dimensions table=F_04.04.1 module=FINREP9 version=null
+uv run agent_tools.py lookup_dpm_cells table=F_04.04.1 dimension='Counterparty sector' \\
+    member='Credit institutions' module=FINREP9 version=null
+uv run agent_tools.py check_report table=Y_01.01 module=PSD_FRP version=1.1.0 instance=report.csv
+```
+
+Arguments are `key=value`, and `null` is spelled out, because that is what the schemas
+offer for an unpinned module version. Take the dimension and member wording from
+`lookup_dpm_dimensions`: a near miss matches nothing, and that is as true from the shell
+as from the model.
+
+### Questions that reach the tools
+
+A question only reaches these tools if it carries a **template code** — `F 12.01.a`,
+`F_04.04.1`, `Y_01_01`, `C_01.00`. Without one the model has nothing to pass and answers
+from memory. The sequence below replaces a hand-maintained spreadsheet of row codes by
+column codes, which is the job this is for. Every answer quoted is from FINREP9 3.3.0.
+
+**The structure, instead of a YAML file of levels.**
+
+> Which rows and columns does F_04.04.1 have, with the nesting?
+
+`lookup_dpm_table` returns `parent_code` and `is_abstract` per entry — the hierarchy
+itself. `0014 Gross carrying amount` is abstract: a heading with no cell of its own, whose
+children are `0015, 0030, 0040, 0041`. An "of which" row is simply a child, so excluding
+them is a filter on `parent_code` rather than a convention to maintain by hand.
+
+**A dimension breakdown.**
+
+> What does F_04.04.1 break down by? And which cells have Counterparty sector =
+> Credit institutions?
+
+`lookup_dpm_dimensions` first, always: it is what says that `Counterparty sector` is a
+dimension of that template at all, and under which exact wording. Then
+`lookup_dpm_cells`, which for that member returns 24 cells across rows `0040` (debt
+securities) and `0100` (loans and advances) — both instrument blocks, which a hand-written
+mapping of one block would have missed.
+
+**The aggregate, as code.**
+
+> Write a SQL query summing gross carrying amount for financial corporations in
+> F_04.04.1 — counterparty is credit institutions or other financial corporations, the
+> column sits under *Gross carrying amount*, no "of which" columns. **Every column name
+> must come from `lookup_dpm_cells`; do not write one yourself.** Leave the table name a
+> parameter and name the rule code you built the selection on.
+
+Sixteen columns, `F04041_r0040_c0015` through `F04041_r0110_c0041`. The sentence in bold
+is the one that matters: without it a model produces `F04041_r0070_c0015`, which looks
+exactly as plausible and is not a cell.
+
+**The grouping is yours, not the model's.**
+
+> Build the same aggregation table as my notebook, but take the hierarchy from the DPM
+> rather than from a YAML file. The grouping of counterparty sectors is my own business
+> definition and must be an explicit dict in the code — not something you derive.
+
+Rolling `Credit institutions` and `Financial corporations other than credit
+institutions` up into one `Financial corporations` figure is not in the DPM. The model
+holds the leaves; a roll-up across them is a decision, and it should read as one in the
+code rather than arrive as though the EBA had said it. (The EBA does publish member
+hierarchies, in `ATTT2Hierarchies` — no tool exposes them yet.)
+
+**The check, rather than an instruction not to guess.**
+
+> Which rows add up to which in F_04.04.1 in FINREP9? Then check `report.csv` with
+> `check_report` and tell me which rules failed and which could not be evaluated.
+
+`lookup_dpm_sums` answers that row `0140` is rows `0010` and `0070` added together, over
+12 columns, under rule `v23856_h` — the EBA's own rule, not arithmetic the model wrote.
+`check_report` then runs every rule of that module version against the file:
+
+```json
+{{ "found": true, "table": "Y_01.01", "module": "PSD_FRP 1.1.0",
+  "facts": 324, "mapped": 324, "unmapped": 0,
+  "hold": ["v09124_m", "v09198_s", "v09247_s"],
+  "fail": [{{"rule_code": "v09123_m", "severity": "warning", "fails": 12, "of": 12}}],
+  "not_evaluated": [] }}
+```
+
+Read `not_evaluated` before `hold`: it is the checker's limit, not a pass — four of the
+model's thirty-eight operators, each skipped rule named with the operator it needs. An
+empty list, as here, is the claim that this module is covered completely. `unmapped` is
+the next one to read: a large count almost always means the file is for another module
+version rather than that the report is wrong.
+
+Two phrases worth reusing in any of these: **"do not write any column name yourself"**,
+and **"say which module version the answer is for"** — a rule changes both its expression
+and its severity between versions, so a generated query should carry the version in a
+comment.
 
 ### What the model has that the layout does not
 
