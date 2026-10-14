@@ -377,6 +377,9 @@ def open_dimension_columns(header: list[str]) -> list[str]:
 def key_columns(header: list[str], expected: Iterable[str]) -> dict[str, list[str]]:
     """The report's dimension columns against the template's key dimensions. Pure.
 
+    Only called where the model names a key, because an empty `expected` would make every
+    dimension column unexpected and read as the report's fault.
+
     An open table is keyed on the headers the model marks IsKey, and a report of it
     carries exactly those codes beside datapoint and factValue. Comparing the two is the
     only check on a column that catches a near miss: qCDF is "Name of entity" and qGDF is
@@ -440,20 +443,16 @@ def explain_report(instance: str | None = None, limit: int = 5, text: str | None
     )
     resolved = sum(1 for answer in datapoints if answer["found"])
     # Only with one template is the comparison meaningful: a sample spanning two would
-    # have each one's keys count as the other's unexpected columns.
-    keys = (
-        key_columns(
-            header,
-            (
-                column["property_code"]
-                for column in dpm_lookup.lookup_dpm_table(tables[0]).get("columns", [])
-                + dpm_lookup.lookup_dpm_table(tables[0]).get("rows", [])
-                if column["is_key"]
-            ),
-        )
-        if len(tables) == 1
-        else None
-    )
+    # have each one's keys count as the other's unexpected columns. And only where the
+    # model names at least one key: an empty `expected` would otherwise make every
+    # dimension column "unexpected" and blame the report for what the model did not say.
+    keys = None
+    if len(tables) == 1:
+        template = dpm_lookup.lookup_dpm_table(tables[0])
+        headers = template.get("columns", []) + template.get("rows", [])
+        expected = [header_row["property_code"] for header_row in headers if header_row["is_key"]]
+        if expected:
+            keys = key_columns(header, expected)
     return {
         "found": True,
         "file": name,

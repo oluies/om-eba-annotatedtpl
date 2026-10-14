@@ -150,7 +150,11 @@ JOIN     Header h ON h.HeaderID = tvh.HeaderID
 LEFT JOIN TableVersionHeader ptvh ON ptvh.TableVID = tvh.TableVID AND ptvh.HeaderID = tvh.ParentHeaderID
 LEFT JOIN HeaderVersion parent ON parent.HeaderVID = ptvh.HeaderVID
 LEFT JOIN Item i ON i.ItemID = hv.PropertyID
-LEFT JOIN ItemCategory ic ON ic.ItemID = i.ItemID
+-- EndReleaseID IS NULL is the code in force now, and it is exactly one per property:
+-- 233 of them have been recoded at some point, and an unscoped join returned the header
+-- once per code it has ever had - 11022 duplicated headers across the model, each of
+-- which put a retired code into the set a report's columns are compared against.
+LEFT JOIN ItemCategory ic ON ic.ItemID = i.ItemID AND ic.EndReleaseID IS NULL
 WHERE    tvh.TableVID = ?
 ORDER BY h.Direction, tvh."Order"
 """

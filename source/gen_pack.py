@@ -1863,7 +1863,7 @@ headed by a property code. For the EBA's own sample file:
 
 | Column | Property |
 |---|---|
-| `qGDF` | Name of Holding entity, a typed dimension — hence a free-text value |
+| `qCDF` | Name of entity — a typed dimension, hence a free-text value |
 | `qBBE` | Location of activity |
 | `ei1452` | Country where a service/activity is provided |
 
@@ -1875,18 +1875,22 @@ resolve to nothing in release 4.2.1, to nothing in 4.3, and in the 4.4 draft to 
 `AML_ELIGIBILITY` module - customers, incoming transactions, outgoing transactions.
 
 An open table's key dimensions are the headers the model marks `IsKey`, and a report of
-it carries exactly their property codes. V_04.01 is keyed on `qCDF` (Name of entity),
-`qBBE` (Location of activity) and `ei1452` (Country where a service/activity is
-provided), which `lookup_dpm_table` now reports per header, and `explain_report` checks
-the report's columns against. That check earns its place: `qCDF` is *Name of entity* and
-`qGDF` is *Name of Holding entity*, both real properties, so a header resolving to
-something proves nothing about whether it belongs to this template. A header that resolves to nothing usually
-means the same thing: a property code is scoped to a release, and the same property is
-`x21` through release 4.2 and `qx2013` after it. And where the file has more rows than
-distinct datapoints, it has one row per record of an open table, told apart by those
-dimension columns. Run `explain_report` before `check_report` on any file whose
-provenance is not certain: a file from another release checks as "nothing mapped", which
-reads like a bad report rather than a newer file.
+it carries exactly their property codes. V_04.01 is keyed on `qCDF`, `qBBE` and `ei1452`
+— the three columns above — which `lookup_dpm_table` reports per header and
+`explain_report` compares the report's columns against.
+
+That comparison is the only check on a column that works. The first column of that sample
+was read off a screenshot as `qGDF`, which resolves: *Name of Holding entity*, a real
+property of the model, and the wrong one — the template's key is `qCDF`, *Name of
+entity*. A header resolving to something proves nothing about whether it belongs to this
+template, and only the comparison against the keys says so.
+
+A header that resolves to nothing points at the release instead: a property code is
+scoped to one, and the same property is `x21` through release 4.2 and `qx2013` after it.
+And where the report has more rows than distinct datapoints, it has one row per record of
+an open table, told apart by those dimension columns. Run `explain_report` before
+`check_report` on any report whose provenance is not certain: one from another release
+checks as "nothing mapped", which reads like a bad report rather than a newer file.
 
 **The check, rather than an instruction not to guess.**
 

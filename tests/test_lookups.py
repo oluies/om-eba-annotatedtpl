@@ -605,3 +605,28 @@ def test_a_property_code_carries_the_releases_it_was_current_in():
     answer = dpm_lookup.lookup_dpm_property("qGDF")
     assert answer["properties"][0]["from_release"] == "4.0"
     assert answer["properties"][0]["until_release"] is None
+
+
+@needs_dpm2
+def test_a_key_header_carries_the_property_a_report_heads_its_column_with():
+    """An open table is keyed on the headers the model marks IsKey, and their property
+    codes are what a report writes beside datapoint and factValue."""
+    answer = dpm_lookup.lookup_dpm_table("B_01.01")
+    headers = answer["columns"] + answer["rows"]
+    keys = [header for header in headers if header["is_key"]]
+    assert keys, "every DORA template is keyed"
+    assert all(header["property_code"] for header in keys)
+    assert {header["property_code"] for header in keys} == {"ERI"}
+
+
+@needs_dpm2
+def test_a_header_appears_once_however_often_its_property_has_been_recoded():
+    """The join to ItemCategory was unscoped, and 233 properties carry more than one code
+    across releases, so a header came back once per code it had ever had - 11022
+    duplicated headers, each putting a retired code into what a report is compared
+    against. EndReleaseID IS NULL is the code in force, and there is exactly one."""
+    for table in ("B_01.01", "F_04.04.1", "F_12.01.a", "Y_01_01"):
+        answer = dpm_lookup.lookup_dpm_table(table)
+        for axis in ("rows", "columns", "sheets"):
+            codes = [header["code"] for header in answer[axis]]
+            assert len(codes) == len(set(codes)), f"{table} {axis} repeats a header"

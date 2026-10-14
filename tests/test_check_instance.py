@@ -8,6 +8,7 @@ silently skips what it cannot do reports a clean run over a report it never chec
 import pytest
 
 import check_instance
+import dpm_lookup
 from check_instance import Node, Rule, Unsupported, evaluate, verdicts
 from conftest import needs_dpm2
 
@@ -303,7 +304,7 @@ def test_a_file_from_another_release_says_so_rather_than_mapping_nothing(tmp_pat
     call this 'nothing mapped', which reads like a bad report rather than a newer file."""
     report = tmp_path / "sample.csv"
     report.write_text(
-        "datapoint,factValue,qGDF,qBBE,ei1452\n"
+        "datapoint,factValue,qCDF,qBBE,ei1452\n"
         "dp1010005012,58994,pipwgiwl,eba_GA:AL,eba_GA:AL\n"
         "dp1010005011,76396,pipwgiwl,eba_GA:AL,eba_GA:AL\n"
         "dp1010005012,58994,hhpgygtl,eba_GA:AT,eba_GA:AT\n"
@@ -317,7 +318,7 @@ def test_a_file_from_another_release_says_so_rather_than_mapping_nothing(tmp_pat
     assert "None of the" in answer["message"]
     assert "one row per record" in answer["message"]
     headers = {column["code"]: column for column in answer["columns"]}
-    assert headers["qGDF"]["properties"][0]["property"] == "Name of Holding entity"
+    assert headers["qCDF"]["properties"][0]["property"] == "Name of entity"
     assert headers["ei1452"]["properties"][0]["property"] == "Country where a service/activity is provided"
 
 
@@ -398,11 +399,34 @@ def test_a_near_miss_in_a_column_code_is_the_only_thing_that_catches_it(header, 
 
 
 @needs_dpm2
-def test_a_report_of_a_closed_template_expects_no_dimension_columns():
+def test_a_closed_template_has_nothing_to_compare():
+    """A closed template is keyed on nothing, so there is no comparison to report - not
+    an empty one, which would read as "checked, and the report carries no keys"."""
     from check_instance import load
 
     grid, _ = load("Y_01.01", "PSD_FRP", "1.1.0")
     rows = "\n".join(f"dp{dp},1.0" for dp in sorted(grid)[:3])
     answer = check_instance.explain_report(text=f"datapoint,factValue\n{rows}\n", limit=3)
     assert answer["tables"] == ["Y_01.01"]
-    assert answer["key_dimensions"] == {"expected": [], "in_report": [], "unexpected": [], "missing": []}
+    assert answer["key_dimensions"] is None
+
+
+@needs_dpm2
+def test_a_template_the_model_gives_no_key_is_not_compared(monkeypatch):
+    """`expected: []` would make every dimension column unexpected and the message would
+    blame the report - "keyed on  and the report carries qCDF" - for what the model never
+    said. No keys, no comparison."""
+    monkeypatch.setattr(
+        dpm_lookup,
+        "lookup_dpm_table",
+        lambda table: {"found": True, "columns": [], "rows": []},
+    )
+    monkeypatch.setattr(
+        dpm_lookup,
+        "lookup_dpm_datapoint",
+        lambda dp: {"found": True, "cells": [{"table_code": "X_01.01"}], "modules": [], "datapoint": dp},
+    )
+    answer = check_instance.explain_report(text="datapoint,factValue,qCDF\ndp1,1.0,abc\n")
+    assert answer["tables"] == ["X_01.01"]
+    assert answer["key_dimensions"] is None
+    assert "does not line up" not in answer["message"]
