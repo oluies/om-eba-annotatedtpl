@@ -104,21 +104,27 @@ LIMIT    1
 # the module at once, which took over two minutes for FINREP9 against 0.1s for one.
 TABLE_IN_MODULE_SQL = """
 SELECT   tv.TableVID, tv.TableID, tv.Code, tv.Name, mv.VersionNumber AS module_version,
+         rel.Code AS dpm_release,
+         mv.ToReferenceDate IS NOT NULL AND mv.FromReferenceDate = mv.ToReferenceDate AS do_not_use,
          t.HasOpenRows <> 0 AS open_rows, t.HasOpenColumns <> 0 AS open_columns,
          t.HasOpenSheets <> 0 AS open_sheets
 FROM     ModuleVersionComposition mvc
 JOIN     TableVersion tv ON tv.TableVID = mvc.TableVID
 JOIN     ModuleVersion mv ON mv.ModuleVID = mvc.ModuleVID
+JOIN     Release rel ON rel.ReleaseID = mv.StartReleaseID
 JOIN     "Table" t ON t.TableID = tv.TableID
 WHERE    upper(regexp_replace(tv.Code, '[^A-Za-z0-9]', '', 'g')) = ?
      AND mv.Code = ? AND (? IS NULL OR mv.VersionNumber = ?)
-ORDER BY tv.StartReleaseID DESC, mv.FromReferenceDate DESC, tv.TableVID DESC
+-- A module version nobody reports under is the last thing "newest" should mean.
+ORDER BY (mv.ToReferenceDate IS NOT NULL AND mv.FromReferenceDate = mv.ToReferenceDate),
+         tv.StartReleaseID DESC, mv.FromReferenceDate DESC, tv.TableVID DESC
 LIMIT    1
 """
 
 MODULES_SQL = """
 SELECT DISTINCT f.Code AS framework, f.Name AS framework_name, mv.Code AS module,
-       mv.VersionNumber AS version,
+       mv.VersionNumber AS taxonomy_version, rel.Code AS dpm_release,
+       mv.ToReferenceDate IS NOT NULL AND mv.FromReferenceDate = mv.ToReferenceDate AS do_not_use,
        -- ISO strings, not DATEs: these answers are serialised with json.dumps by whoever
        -- holds them, and a date raises there. Cast at the source so a caller that reaches
        -- past dispatch into the lookup is safe too.
@@ -128,6 +134,7 @@ FROM   ModuleVersionComposition mvc
 JOIN   ModuleVersion mv ON mv.ModuleVID = mvc.ModuleVID
 JOIN   Module m ON m.ModuleID = mv.ModuleID
 JOIN   Framework f ON f.FrameworkID = m.FrameworkID
+JOIN   Release rel ON rel.ReleaseID = mv.StartReleaseID
 WHERE  mvc.TableID = ?
 ORDER  BY mv.Code, mv.VersionNumber
 """
@@ -185,6 +192,16 @@ JOIN   Property p ON p.PropertyID = vv.PropertyID
 LEFT JOIN DataType dt ON dt.DataTypeID = p.DataTypeID
 WHERE  vv.VariableVID = ?
 """
+
+# Two different versions, and conflating them is the usual mistake. `VersionNumber` is
+# the *taxonomy* version of the module - FINREP9 3.3.0 - and the DPM version, which is
+# what a reporting institution normally means by "the version", is the release the module
+# version was introduced in: StartReleaseID, 4.2 for that one. Every answer here reports
+# both, named.
+#
+# FromReferenceDate = ToReferenceDate marks a module version that is not to be used: it
+# was published and superseded without ever covering a reporting period. 43 of the 165
+# module versions in release 4.4 are such, so "the newest" has to skip them.
 
 # A rule code is not one rule: the same code is re-issued per module version, and the
 # expression and the severity both change between them - v09247_s is a warning in PSD_FRP
@@ -337,11 +354,13 @@ WHERE    vv.VariableID = ?
 """
 
 DATAPOINT_MODULES_SQL = """
-SELECT DISTINCT mv.Code AS module, mv.VersionNumber AS version
+SELECT DISTINCT mv.Code AS module, mv.VersionNumber AS taxonomy_version, rel.Code AS dpm_release,
+         mv.ToReferenceDate IS NOT NULL AND mv.FromReferenceDate = mv.ToReferenceDate AS do_not_use
 FROM     VariableVersion vv
 JOIN     TableVersionCell c ON c.VariableVID = vv.VariableVID
 JOIN     ModuleVersionComposition mvc ON mvc.TableVID = c.TableVID
 JOIN     ModuleVersion mv ON mv.ModuleVID = mvc.ModuleVID
+JOIN     Release rel ON rel.ReleaseID = mv.StartReleaseID
 WHERE    vv.VariableID = ?
 ORDER BY 1, 2
 """
@@ -593,6 +612,7 @@ def lookup_dpm_sums(table: str, module: str, version: str | None = None) -> dict
             # query to one module version is the difference between 0.1s and minutes.
             scoped = version or tv["module_version"]
             rows = _rows(con, SUMS_SQL, module, scoped, scoped, tv["Code"])
+            release, unusable = tv["dpm_release"], tv["do_not_use"]
     except DpmError as exc:
         return {"found": False, "table": table, "message": str(exc)}
 
@@ -601,11 +621,16 @@ def lookup_dpm_sums(table: str, module: str, version: str | None = None) -> dict
     return {
         "found": True,
         "table": tv["Code"],
-        "module": f"{module} {scoped}",
+        "module": module,
+        "taxonomy_version": scoped,
+        "dpm_release": release,
+        "do_not_use": unusable,
         "sums": rows,
         "roots": sorted(totals - addends),
         "message": (
-            "roots are the totals nothing else breaks down into - where to start walking. "
+            "taxonomy_version is the module's own version number; dpm_release is the DPM "
+            "version it belongs to, which is what a reporting institution usually means by the "
+            "version. roots are the totals nothing else breaks down into - where to start walking. "
             "A row in both totals and addends is an intermediate level. An empty answer means "
             "the module's rules are not arithmetic: DORA's are presence and comparison checks."
             if rows
@@ -727,7 +752,8 @@ def lookup_dpm_property(code: str) -> dict[str, Any]:
 # and 4.0.0 and a warning in 4.1.0 - so the answer is a row per version, not one verdict.
 RULE_SCOPES_SQL = """
 SELECT   ov.OperationVID AS operation_vid,
-         mv.Code AS module, mv.VersionNumber AS version,
+         mv.Code AS module, mv.VersionNumber AS taxonomy_version, rel.Code AS dpm_release,
+         mv.ToReferenceDate IS NOT NULL AND mv.FromReferenceDate = mv.ToReferenceDate AS do_not_use,
          os.Severity AS severity, os.IsActive <> 0 AS active,
          CAST(os.FromSubmissionDate AS VARCHAR) AS from_submission_date,
          ov.Expression AS expression, nullif(ov.Description, '') AS description
@@ -736,6 +762,7 @@ JOIN     OperationVersion ov ON ov.OperationID = op.OperationID
 JOIN     OperationScope os ON os.OperationVID = ov.OperationVID
 JOIN     OperationScopeComposition osc ON osc.OperationScopeID = os.OperationScopeID
 JOIN     ModuleVersion mv ON mv.ModuleVID = osc.ModuleVID
+JOIN     Release rel ON rel.ReleaseID = mv.StartReleaseID
 WHERE    trim(lower(op.Code)) = trim(lower(?))
 ORDER BY mv.Code, mv.VersionNumber
 """
@@ -837,10 +864,13 @@ ORDER BY op.Code
 # from _table_version because a rule can name a template its own module does not contain:
 # COREP_LE checks four cells of C_01.00, which belongs to COREP_OF.
 MODULE_VERSION_SQL = """
-SELECT   mv.VersionNumber AS version
+SELECT   mv.VersionNumber AS version, rel.Code AS dpm_release,
+         mv.ToReferenceDate IS NOT NULL AND mv.FromReferenceDate = mv.ToReferenceDate AS do_not_use
 FROM     ModuleVersion mv
+JOIN     Release rel ON rel.ReleaseID = mv.StartReleaseID
 WHERE    mv.Code = ? AND (? IS NULL OR mv.VersionNumber = ?)
-ORDER BY mv.FromReferenceDate DESC, mv.ModuleVID DESC
+ORDER BY (mv.ToReferenceDate IS NOT NULL AND mv.FromReferenceDate = mv.ToReferenceDate),
+         mv.FromReferenceDate DESC, mv.ModuleVID DESC
 LIMIT    1
 """
 
@@ -873,9 +903,9 @@ def lookup_dpm_rules(table: str, module: str, version: str | None = None) -> dic
             # must never give by accident.
             found = _rows(con, MODULE_VERSION_SQL, module, version, version)
             if not found:
-                scope = f"{module!r} version {version!r}" if version else f"{module!r}"
+                scope = f"{module!r} taxonomy version {version!r}" if version else f"{module!r}"
                 raise DpmError(f"No module {scope} in the DPM 2.0 database.")
-            scoped = found[0]["version"]
+            scoped, release, unusable = (found[0][key] for key in ("version", "dpm_release", "do_not_use"))
             rules = _rows(con, TABLE_RULES_SQL, tv["Code"], tv["Code"], module, scoped, tv["Code"])
     except DpmError as exc:
         return {"found": False, "table": table, "message": str(exc)}
@@ -886,7 +916,10 @@ def lookup_dpm_rules(table: str, module: str, version: str | None = None) -> dic
     return {
         "found": True,
         "table": tv["Code"],
-        "module": f"{module} {scoped}",
+        "module": module,
+        "taxonomy_version": scoped,
+        "dpm_release": release,
+        "do_not_use": unusable,
         "rules": rules,
         "severities": severities,
         "message": (
@@ -1002,7 +1035,12 @@ _MODULE_ARG = {
 }
 _VERSION_ARG = {
     "type": ["string", "null"],
-    "description": "Module version such as 1.1.0 or 3.3.0. Null means the newest.",
+    "description": (
+        "The module's own taxonomy version, such as 1.1.0 or 3.3.0 - not the DPM version. "
+        "Null means the newest one that is actually reported under. Every answer reports both: "
+        "taxonomy_version and dpm_release, the DPM version the module version belongs to (4.2 "
+        "for FINREP9 3.3.0), which is what a reporting institution usually means by the version."
+    ),
 }
 
 LOOKUP_DPM_RULES_TOOL_NAME = "lookup_dpm_rules"

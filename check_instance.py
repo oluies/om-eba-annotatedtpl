@@ -439,7 +439,13 @@ def explain_report(instance: str | None = None, limit: int = 5, text: str | None
     datapoints = [dpm_lookup.lookup_dpm_datapoint(dp) for dp in sorted(facts)[:limit]]
     tables = sorted({cell["table_code"] for answer in datapoints if answer["found"] for cell in answer["cells"]})
     modules = sorted(
-        {f"{m['module']} {m['version']}" for answer in datapoints if answer["found"] for m in answer["modules"]}
+        {
+            f"{m['module']} {m['taxonomy_version']} (DPM {m['dpm_release']})"
+            + (" - not to be used" if m["do_not_use"] else "")
+            for answer in datapoints
+            if answer["found"]
+            for m in answer["modules"]
+        }
     )
     resolved = sum(1 for answer in datapoints if answer["found"])
     # Only with one template is the comparison meaningful: a sample spanning two would

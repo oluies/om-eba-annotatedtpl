@@ -446,10 +446,12 @@ def test_sums_without_a_version_resolve_to_one_and_say_which():
     unable to tell which framework it had been answered about."""
     newest = dpm_lookup.lookup_dpm_sums("F 12.01.a", "FINREP9")
     assert newest["found"] is True
-    module, _, version = newest["module"].partition(" ")
-    assert module == "FINREP9"
-    assert version, "the answer must name the version it resolved to"
-    assert newest["sums"] == dpm_lookup.lookup_dpm_sums("F 12.01.a", "FINREP9", version)["sums"]
+    assert newest["module"] == "FINREP9"
+    assert newest["taxonomy_version"], "the answer must name the version it resolved to"
+    assert newest["dpm_release"], "and the DPM version that one belongs to"
+    assert newest["do_not_use"] is False, "newest must not resolve to a version nobody reports under"
+    pinned = dpm_lookup.lookup_dpm_sums("F 12.01.a", "FINREP9", newest["taxonomy_version"])
+    assert newest["sums"] == pinned["sums"]
 
 
 @needs_dpm2
@@ -645,7 +647,7 @@ def test_a_rule_code_is_one_rule_per_module_version():
     answer = dpm_lookup.lookup_dpm_rule("v0174_m")
     assert answer["found"] is True
     assert answer["tables"] == ["C_01.00"]
-    by_version = {scope["version"]: scope for scope in answer["scopes"]}
+    by_version = {scope["taxonomy_version"]: scope for scope in answer["scopes"]}
     assert {scope["module"] for scope in answer["scopes"]} == {"COREP_OF"}
     assert by_version["3.1.0"]["severity"] == "error"
     assert by_version["4.1.0"]["severity"] == "warning"
@@ -694,7 +696,7 @@ def test_the_rule_lookup_is_dispatchable_and_says_what_is_missing(monkeypatch):
 def test_every_rule_that_reaches_a_template_is_listed_with_what_it_touches():
     answer = dpm_lookup.lookup_dpm_rules("C01.00", "COREP_OF")
     assert answer["found"] is True
-    assert answer["module"].startswith("COREP_OF ")
+    assert (answer["module"], answer["dpm_release"]) == ("COREP_OF", "4.2")
     by_code = {rule["rule_code"]: rule for rule in answer["rules"]}
     assert by_code["v0174_m"]["rows"] == ["0070", "0080", "0090", "0091"]
     assert by_code["v0174_m"]["columns"] == ["0010"]
@@ -728,8 +730,8 @@ def test_a_rule_reaching_another_template_says_which():
     ("module", "version", "phrase"),
     [
         ("NOSUCH", None, "No module 'NOSUCH'"),
-        ("NOSUCH", "4.1.0", "No module 'NOSUCH' version '4.1.0'"),
-        ("COREP_OF", "4.1", "No module 'COREP_OF' version '4.1'"),  # a version, mistyped
+        ("NOSUCH", "4.1.0", "No module 'NOSUCH' taxonomy version '4.1.0'"),
+        ("COREP_OF", "4.1", "No module 'COREP_OF' taxonomy version '4.1'"),  # a version, mistyped
         ("DORA", None, "No rule of this module version"),
     ],
 )
@@ -745,6 +747,51 @@ def test_the_rules_lookup_separates_a_wrong_module_from_an_unchecked_template(mo
 @needs_dpm2
 def test_a_version_that_exists_is_used_as_given():
     pinned = dpm_lookup.lookup_dpm_rules("C_01.00", "COREP_OF", "3.1.0")
-    assert pinned["module"] == "COREP_OF 3.1.0"
+    assert (pinned["module"], pinned["taxonomy_version"], pinned["dpm_release"]) == ("COREP_OF", "3.1.0", "3.4")
     assert pinned["rules"], "3.1.0 has rules for this template"
     assert pinned["rules"] != dpm_lookup.lookup_dpm_rules("C_01.00", "COREP_OF", "4.1.0")["rules"]
+
+
+# --- the taxonomy version is not the DPM version ---------------------------------------
+
+
+@needs_dpm2
+def test_a_module_version_carries_both_versions_and_the_dpm_one_is_the_release():
+    """The usual confusion, and the model's own column names invite it: VersionNumber is
+    the module's taxonomy version, and the DPM version is the release it was introduced
+    in. FINREP9 3.3.0 is DPM 4.2; FINREP9DP 1.1.0 is DPM 4.2.1."""
+    modules = {(m["module"], m["taxonomy_version"]): m for m in dpm_lookup.lookup_dpm_table("F_12.01.a")["modules"]}
+    assert modules[("FINREP9", "3.1.0")]["dpm_release"] == "3.4"
+    assert modules[("FINREP9", "3.2.0")]["dpm_release"] == "4.0"
+    assert modules[("FINREP9", "3.3.0")]["dpm_release"] == "4.2"
+    assert modules[("FINREP9DP", "1.1.0")]["dpm_release"] == "4.2.1"
+
+
+@needs_dpm2
+def test_a_module_version_that_covers_no_reporting_period_is_marked():
+    """FromReferenceDate = ToReferenceDate means it was published and superseded without
+    ever covering a period, so nothing is reported under it - 43 of the 165 module
+    versions in release 4.4. An answer that does not say so invites a description written
+    against a version no one files."""
+    modules = {(m["module"], m["taxonomy_version"]): m for m in dpm_lookup.lookup_dpm_table("F_12.01.a")["modules"]}
+    assert modules[("FINREP9", "3.2.0")]["do_not_use"] is True
+    assert modules[("FINREP9DP", "1.0.0")]["do_not_use"] is True
+    assert modules[("FINREP9", "3.3.0")]["do_not_use"] is False
+
+
+@needs_dpm2
+def test_the_newest_version_is_one_that_is_actually_reported_under():
+    """ "Newest" resolving to a version nobody files is worse than refusing: it is a
+    confident answer about a module version that never applied."""
+    for table, module in (("F_12.01.a", "FINREP9"), ("C_01.00", "COREP_OF")):
+        assert dpm_lookup.lookup_dpm_sums(table, module)["do_not_use"] is False
+        assert dpm_lookup.lookup_dpm_rules(table, module)["do_not_use"] is False
+
+
+@needs_dpm2
+def test_a_rule_scope_names_the_dpm_release_as_well():
+    scopes = dpm_lookup.lookup_dpm_rule("v0174_m")["scopes"]
+    by_version = {scope["taxonomy_version"]: scope for scope in scopes}
+    assert by_version["3.1.0"]["dpm_release"] == "3.4"
+    assert by_version["4.1.0"]["dpm_release"] == "4.2"
+    assert all(scope["do_not_use"] is False for scope in scopes)

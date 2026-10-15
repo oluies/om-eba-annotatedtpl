@@ -1520,10 +1520,18 @@ These hold regardless of what you find:
     belongs to.
   - Never write a datapoint id, a cell code or a warehouse column name that did not come
     out of a tool answer. F04041_r0070_c0015 looks exactly as plausible as a real one.
-  - Every answer belongs to one module version, and a rule code is one rule per version:
-    v0174_m is an error in COREP_OF 3.1.0 and a warning in 4.1.0. Name the version you
-    answered under, in the description and in any query you generate. Two entries with
-    the same rule code are not a duplicate.
+  - Two versions, and they are not the same thing. taxonomy_version is the module's own
+    version number, 3.3.0; dpm_release is the DPM version it belongs to, 4.2, which is
+    what a reporting institution usually means by "the version". Every answer carries
+    both - write both, and never one as if it were the other.
+  - do_not_use marks a module version whose FromReferenceDate equals its
+    ToReferenceDate: published and superseded without ever covering a reporting period,
+    43 of 165 in DPM 4.4. Nothing is filed under it, so do not describe anything against
+    it. "The newest" skips them.
+  - A rule code is one rule per module version: v0174_m is an error in COREP_OF 3.1.0
+    (DPM 3.4) and a warning in 4.1.0 (DPM 4.2). Name the version you answered under, in
+    the description and in any query you generate. Two entries with the same rule code
+    are not a duplicate.
   - For a reported file, explain_report before check_report. not_evaluated is the
     checker's limit and not a pass, and a large unmapped count means the file belongs to
     another release rather than that the report is wrong.
@@ -2055,6 +2063,31 @@ outside the template, and 4 more in **COREP_LE, a module C_01.00 is not part of 
 `v0655_m` multiplies row 0015 of C_01.00 by a column of C_28.00. Those cross-return
 checks are the ones a reader is least likely to know about, which is why the template is
 resolved without the module and why each rule lists every template it names.
+
+### Taxonomy version and DPM version are different things
+
+This is the conflation that costs the most, and the model's own column names invite it.
+`ModuleVersion.VersionNumber` is the module's **taxonomy version** — FINREP9 3.3.0 — and
+the **DPM version**, which is what a reporting institution usually means by "the
+version", is the release the module version was introduced in:
+
+| Module | Taxonomy version | DPM version | From | To |
+|---|---|---|---|---|
+| FINREP9 | 3.1.0 | 3.4 | 2022-12-31 | 2026-03-30 |
+| FINREP9 | 3.2.0 | 4.0 | 2024-12-31 | 2024-12-31 |
+| FINREP9 | 3.3.0 | 4.2 | 2026-03-31 | 2027-09-29 |
+| FINREP9DP | 1.0.0 | 4.2 | 2026-03-31 | 2026-03-31 |
+| FINREP9DP | 1.1.0 | 4.2.1 | 2026-03-31 | — |
+
+Every lookup reports both, as `taxonomy_version` and `dpm_release`, and the `version`
+argument is the taxonomy one.
+
+**`FromReferenceDate` equal to `ToReferenceDate` means the module version is not to be
+used.** It was published and superseded without ever covering a reporting period, so
+nothing is filed under it — FINREP9 3.2.0 and FINREP9DP 1.0.0 above, and 43 of the 165
+module versions in DPM 4.4. The answers mark it `do_not_use`, and resolving "the newest"
+skips those, because a confident answer about a version no one files is worse than a
+refusal.
 
 ### A rule code is not one rule
 

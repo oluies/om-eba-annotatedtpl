@@ -93,10 +93,18 @@ These hold regardless of what you find:
     belongs to.
   - Never write a datapoint id, a cell code or a warehouse column name that did not come
     out of a tool answer. F04041_r0070_c0015 looks exactly as plausible as a real one.
-  - Every answer belongs to one module version, and a rule code is one rule per version:
-    v0174_m is an error in COREP_OF 3.1.0 and a warning in 4.1.0. Name the version you
-    answered under, in the description and in any query you generate. Two entries with
-    the same rule code are not a duplicate.
+  - Two versions, and they are not the same thing. taxonomy_version is the module's own
+    version number, 3.3.0; dpm_release is the DPM version it belongs to, 4.2, which is
+    what a reporting institution usually means by "the version". Every answer carries
+    both - write both, and never one as if it were the other.
+  - do_not_use marks a module version whose FromReferenceDate equals its
+    ToReferenceDate: published and superseded without ever covering a reporting period,
+    43 of 165 in DPM 4.4. Nothing is filed under it, so do not describe anything against
+    it. "The newest" skips them.
+  - A rule code is one rule per module version: v0174_m is an error in COREP_OF 3.1.0
+    (DPM 3.4) and a warning in 4.1.0 (DPM 4.2). Name the version you answered under, in
+    the description and in any query you generate. Two entries with the same rule code
+    are not a duplicate.
   - For a reported file, explain_report before check_report. not_evaluated is the
     checker's limit and not a pass, and a large unmapped count means the file belongs to
     another release rather than that the report is wrong.
