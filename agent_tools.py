@@ -1,6 +1,6 @@
 """The tool definitions an agent registers, and the one dispatcher that runs them.
 
-Fourteen tools, from four modules, assembled here so a host application imports one name
+Fifteen tools, from four modules, assembled here so a host application imports one name
 instead of nine and cannot end up with a definition registered but not dispatched:
 
     lookup_datapoint        resolve a column name to its datapoint, and to the display
@@ -13,6 +13,7 @@ instead of nine and cannot end up with a definition registered but not dispatche
     lookup_dpm_datapoint    a reported dp<N> id back to the cell it is
     lookup_dpm_property     a report's column header, e.g. qGDF, to the property it names
     lookup_dpm_rule         a validation code, e.g. v0174_m, to the check it stands for
+    lookup_dpm_rules        the other way: every rule that reaches one template
     lookup_dpm_dimensions   what a template breaks down by, and under which wording
     lookup_dpm_cells        the cells one dimension member covers - an aggregate's codes
     lookup_dpm_sums         which rows add up to which, from the validation rules
@@ -84,6 +85,7 @@ class ToolName(enum.StrEnum):
     LOOKUP_DPM_DATAPOINT = dpm_lookup.LOOKUP_DPM_DATAPOINT_TOOL_NAME
     LOOKUP_DPM_PROPERTY = dpm_lookup.LOOKUP_DPM_PROPERTY_TOOL_NAME
     LOOKUP_DPM_RULE = dpm_lookup.LOOKUP_DPM_RULE_TOOL_NAME
+    LOOKUP_DPM_RULES = dpm_lookup.LOOKUP_DPM_RULES_TOOL_NAME
     LOOKUP_DPM_DIMENSIONS = dpm_lookup.LOOKUP_DPM_DIMENSIONS_TOOL_NAME
     LOOKUP_DPM_CELLS = dpm_lookup.LOOKUP_DPM_CELLS_TOOL_NAME
     LOOKUP_DPM_SUMS = dpm_lookup.LOOKUP_DPM_SUMS_TOOL_NAME
@@ -196,6 +198,8 @@ def _run(name: str, args: dict[str, Any]) -> dict[str, Any]:
             return dpm_lookup.lookup_dpm_property(args["code"])
         case ToolName.LOOKUP_DPM_RULE:
             return dpm_lookup.lookup_dpm_rule(args["rule_code"])
+        case ToolName.LOOKUP_DPM_RULES:
+            return dpm_lookup.lookup_dpm_rules(args["table"], args["module"], args.get("version"))
         case ToolName.EXPLAIN_REPORT:
             return check_instance.explain_report(args.get("instance"), args.get("limit") or 5, args.get("text"))
         case ToolName.CHECK_REPORT:

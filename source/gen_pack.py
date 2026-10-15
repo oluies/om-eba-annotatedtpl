@@ -1681,7 +1681,7 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `07-agent-prompt.md` | The stanza to paste into an agent's system prompt, covering every framework | You are configuring an agent |
 | `describe_table.py` | Writes descriptions and glossary terms onto a table's columns, by name | You are describing a real table |
 | `pay42_lookup.py` | Deterministic datapoint lookup over DuckDB, and its tool definition | You are giving an agent a lookup tool |
-| `agent_tools.py` | All fourteen tool definitions, one dispatcher, and a shell front end for trying one | You are wiring the tools into an agent |
+| `agent_tools.py` | All fifteen tool definitions, one dispatcher, and a shell front end for trying one | You are wiring the tools into an agent |
 | `env.sh` | `source env.sh` reads `.env`, sets the two DuckDB stores and prints every variable the pack reads, with secrets counted rather than shown | A tool reads the wrong store, or a datapoint id will not resolve |
 | `dpm_lookup.py` | Five lookups over the whole DPM 2.0 database: a template, a cell, what a template breaks down by, the cells one dimension member covers, and which rows add up to which | A warehouse table is COREP, FINREP or anything but PAY and DORA, or you need the codes behind a business aggregate |
 | `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file, as a CLI and as the `check_report` tool | You want to know whether a report adds up before you send it, or want an agent to check its own arithmetic |
@@ -1795,6 +1795,7 @@ uv run agent_tools.py check_report table=Y_01.01 module=PSD_FRP version=1.1.0 in
 uv run agent_tools.py explain_report instance=report.csv text=null limit=null
 uv run agent_tools.py lookup_dpm_datapoint datapoint=dp152217
 uv run agent_tools.py lookup_dpm_rule rule_code=v0174_m
+uv run agent_tools.py lookup_dpm_rules table=C_01.00 module=COREP_OF version=null
 ```
 
 Arguments are `key=value`, and `null` is spelled out, because that is what the schemas
@@ -2009,6 +2010,19 @@ on C_01.00
 One row per module version, each with its own severity, the first submission date it
 applies to, and the cells that version names — resolved by the model rather than parsed
 out of the DPM-XL in `expression`. Which is the point of the next section.
+
+`lookup_dpm_rules` goes the other way, from a template you are about to describe to every
+rule that reaches it:
+
+```bash
+uv run agent_tools.py lookup_dpm_rules table=C_01.00 module=COREP_OF version=null
+```
+
+C_01.00 has 50 rules in COREP_OF 4.1.0 — 12 errors and 38 warnings — of which 23 reach
+outside the template, and 4 more in **COREP_LE, a module C_01.00 is not part of at all**:
+`v0655_m` multiplies row 0015 of C_01.00 by a column of C_28.00. Those cross-return
+checks are the ones a reader is least likely to know about, which is why the template is
+resolved without the module and why each rule lists every template it names.
 
 ### A rule code is not one rule
 

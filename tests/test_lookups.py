@@ -301,6 +301,7 @@ NEW_DPM_TOOLS = {
     "lookup_dpm_property",
     "explain_report",
     "lookup_dpm_rule",
+    "lookup_dpm_rules",
 }
 
 
@@ -687,3 +688,46 @@ def test_the_rule_lookup_is_dispatchable_and_says_what_is_missing(monkeypatch):
     answer = agent_tools.dispatch("lookup_dpm_rule", {"rule_code": "v0174_m"})
     assert answer["found"] is False
     assert "fetch_dpm2" in answer["message"]
+
+
+@needs_dpm2
+def test_every_rule_that_reaches_a_template_is_listed_with_what_it_touches():
+    answer = dpm_lookup.lookup_dpm_rules("C01.00", "COREP_OF")
+    assert answer["found"] is True
+    assert answer["module"].startswith("COREP_OF ")
+    by_code = {rule["rule_code"]: rule for rule in answer["rules"]}
+    assert by_code["v0174_m"]["rows"] == ["0070", "0080", "0090", "0091"]
+    assert by_code["v0174_m"]["columns"] == ["0010"]
+    assert by_code["v0174_m"]["tables"] == ["C_01.00"]
+    assert sum(answer["severities"].values()) == len(answer["rules"])
+
+
+@needs_dpm2
+def test_a_rule_is_found_through_a_module_the_template_does_not_belong_to():
+    """COREP_LE contains no C_01.00 and still checks four of its cells. Resolving the
+    template inside the module would have hidden exactly those - the cross-return checks
+    a reader is least likely to know about."""
+    answer = dpm_lookup.lookup_dpm_rules("C_01.00", "COREP_LE")
+    assert answer["found"] is True
+    assert {rule["rule_code"] for rule in answer["rules"]} == {"v0655_m", "v0656_m", "v6258_m", "v6259_m"}
+    assert all(rule["rows"] == ["0015"] for rule in answer["rules"])
+
+
+@needs_dpm2
+def test_a_rule_reaching_another_template_says_which():
+    """The locations in other templates have to survive the grouping, or a cross-return
+    check reads as a local one: v0655_m multiplies a C_01.00 row by a C_28.00 column."""
+    answer = dpm_lookup.lookup_dpm_rules("C_01.00", "COREP_LE")
+    by_code = {rule["rule_code"]: rule for rule in answer["rules"]}
+    assert by_code["v0655_m"]["tables"] == ["C_01.00", "C_28.00"]
+    assert by_code["v6258_m"]["tables"] == ["C_01.00", "C_29.00"]
+
+
+@needs_dpm2
+@pytest.mark.parametrize(
+    ("module", "phrase"),
+    [("NOSUCH", "No module 'NOSUCH'"), ("DORA", "No rule of this module version")],
+)
+def test_the_rules_lookup_separates_a_wrong_module_from_an_unchecked_template(module, phrase):
+    answer = dpm_lookup.lookup_dpm_rules("C_01.00", module)
+    assert phrase in answer["message"]

@@ -800,6 +800,102 @@ def lookup_dpm_rule(rule_code: str) -> dict[str, Any]:
     }
 
 
+# The other direction: every rule that reaches one template, scoped to one module version
+# because a rule belongs to one. The rows and columns are this template's own - a rule
+# often spans two templates, and which cells of *this* one it touches is the question.
+TABLE_RULES_SQL = """
+SELECT   op.Code AS rule_code, os.Severity AS severity,
+         any_value(ov.Expression) AS expression,
+         -- FILTER rather than a WHERE on the table: the rule's locations in other
+         -- templates have to stay in the group, or `tables` below is always this one
+         -- and a cross-return check reads as a local one.
+         list_sort(list(DISTINCT coalesce(l."Row", '*')) FILTER (WHERE l."Table" = ?))    AS rows,
+         list_sort(list(DISTINCT coalesce(l."Column", '*')) FILTER (WHERE l."Table" = ?)) AS columns,
+         list_sort(list(DISTINCT l."Table")) AS tables
+FROM     OperandReferenceLocation l
+JOIN     OperandReference ref USING (OperandReferenceID)
+JOIN     OperationNode n ON n.NodeID = ref.NodeID
+JOIN     OperationVersion ov ON ov.OperationVID = n.OperationVID
+JOIN     Operation op ON op.OperationID = ov.OperationID
+JOIN     OperationScope os ON os.OperationVID = ov.OperationVID
+JOIN     OperationScopeComposition osc ON osc.OperationScopeID = os.OperationScopeID
+JOIN     ModuleVersion mv ON mv.ModuleVID = osc.ModuleVID
+WHERE    mv.Code = ? AND mv.VersionNumber = ?
+     AND ov.OperationVID IN (
+         SELECT n2.OperationVID
+         FROM   OperandReferenceLocation l2
+         JOIN   OperandReference ref2 USING (OperandReferenceID)
+         JOIN   OperationNode n2 ON n2.NodeID = ref2.NodeID
+         WHERE  l2."Table" = ?
+     )
+GROUP BY op.Code, os.Severity
+ORDER BY op.Code
+"""
+
+
+# The newest version of a module, for a rules question that names no version. Separate
+# from _table_version because a rule can name a template its own module does not contain:
+# COREP_LE checks four cells of C_01.00, which belongs to COREP_OF.
+MODULE_VERSION_SQL = """
+SELECT   mv.VersionNumber AS version
+FROM     ModuleVersion mv
+WHERE    mv.Code = ?
+ORDER BY mv.FromReferenceDate DESC, mv.ModuleVID DESC
+LIMIT    1
+"""
+
+
+def lookup_dpm_rules(table: str, module: str, version: str | None = None) -> dict[str, Any]:
+    """Every validation rule that reaches one template, with what it touches in it.
+
+    The reverse of lookup_dpm_rule: that one starts from a code in a validation outcome,
+    this one from a template you are about to describe or report. C_01.00 has 50 rules in
+    COREP_OF 4.1.0 and 4 more in COREP_LE, which is why the module is not optional - the
+    same template is checked differently depending on which return it is part of.
+
+    The module need not be one the template belongs to. COREP_LE contains no C_01.00 and
+    still checks four of its cells - the kind of rule a reader is least likely to know
+    about, and the reason the template is resolved without the module here.
+
+    `rows` and `columns` are this template's own; `tables` is every template the rule
+    names. More than one means the check reaches outside this template, and its other
+    half is not in this answer - v0655_m multiplies a C_01.00 row by a C_28.00 column.
+    """
+    if not available():
+        return {"found": False, "table": table, "message": BUILD_IT}
+    try:
+        with _connect() as con:
+            tv = _table_version(con, table)
+            found = [{"version": version}] if version else _rows(con, MODULE_VERSION_SQL, module)
+            if not found:
+                raise DpmError(f"No module {module!r} in the DPM 2.0 database.")
+            scoped = found[0]["version"]
+            rules = _rows(con, TABLE_RULES_SQL, tv["Code"], tv["Code"], module, scoped, tv["Code"])
+    except DpmError as exc:
+        return {"found": False, "table": table, "message": str(exc)}
+
+    severities: dict[str, int] = {}
+    for rule in rules:
+        severities[rule["severity"]] = severities.get(rule["severity"], 0) + 1
+    return {
+        "found": True,
+        "table": tv["Code"],
+        "module": f"{module} {scoped}",
+        "rules": rules,
+        "severities": severities,
+        "message": (
+            "Every rule of this module version that names a cell of this template. rows and "
+            "columns are the ones it names here; tables is every template the rule names, and "
+            "more than one means the check reaches outside this one. An empty "
+            "answer means this module's rules do not reach the template, not that it is unchecked "
+            "in every module - ask the others it belongs to as well."
+            if rules
+            else "No rule of this module version names a cell of this template. It may still be "
+            "checked by another module the template belongs to; lookup_dpm_table lists them."
+        ),
+    }
+
+
 LOOKUP_DPM_RULE_TOOL_NAME = "lookup_dpm_rule"
 
 LOOKUP_DPM_RULE_TOOL_DEFINITION = {
@@ -902,6 +998,36 @@ _VERSION_ARG = {
     "type": ["string", "null"],
     "description": "Module version such as 1.1.0 or 3.3.0. Null means the newest.",
 }
+
+LOOKUP_DPM_RULES_TOOL_NAME = "lookup_dpm_rules"
+
+LOOKUP_DPM_RULES_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": LOOKUP_DPM_RULES_TOOL_NAME,
+        "description": (
+            "Every validation rule that reaches one template, with the rows and columns of it "
+            "each one names. The reverse of lookup_dpm_rule, which starts from a code in a "
+            "validation outcome; this starts from a template you are about to describe or "
+            "report. Needs the module code, because the same template is checked differently "
+            "depending on which return it is part of - C_01.00 has 50 rules in COREP_OF and 4 "
+            "more in COREP_LE, a module it is not part of at all. Each rule lists every template "
+            "it names, so a check reaching outside this one is visible as such."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "table": _TABLE_ARG,
+                "module": {"type": "string", "description": "Module code, e.g. COREP_OF. Required here."},
+                "version": _VERSION_ARG,
+            },
+            "required": ["table", "module", "version"],
+            "additionalProperties": False,
+        },
+    },
+}
+
 
 LOOKUP_DPM_DIMENSIONS_TOOL_DEFINITION = {
     "type": "function",
@@ -1059,6 +1185,7 @@ DPM_TOOL_DEFINITIONS = (
     LOOKUP_DPM_DATAPOINT_TOOL_DEFINITION,
     LOOKUP_DPM_PROPERTY_TOOL_DEFINITION,
     LOOKUP_DPM_RULE_TOOL_DEFINITION,
+    LOOKUP_DPM_RULES_TOOL_DEFINITION,
     LOOKUP_DPM_DIMENSIONS_TOOL_DEFINITION,
     LOOKUP_DPM_CELLS_TOOL_DEFINITION,
     LOOKUP_DPM_SUMS_TOOL_DEFINITION,
