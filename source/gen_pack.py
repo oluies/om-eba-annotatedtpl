@@ -1730,6 +1730,7 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `env.sh` | `source env.sh` reads `.env`, sets the two DuckDB stores and prints every variable the pack reads, with secrets counted rather than shown | A tool reads the wrong store, or a datapoint id will not resolve |
 | `dpm_lookup.py` | Nine lookups over the whole DPM 2.0 database: a template, a cell, a reported datapoint id, a report's column header, a validation code, every rule reaching a template, what a template breaks down by, the cells one dimension member covers, and which rows add up to which | A warehouse table is COREP, FINREP or anything but PAY and DORA, you need the codes behind a business aggregate, or you are reading a report or a validation outcome |
 | `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file, as a CLI and as the `check_report` tool | You want to know whether a report adds up before you send it, or want an agent to check its own arithmetic |
+| `source/apply_vr_updates.py` | Applies the EBA's between-release validation rule updates (deactivations, reactivations, severity changes) to a local DPM database | A rule's severity or activity changed since the release you downloaded |
 | `source/load_to_mssql.py` | Loads the DPM database into SQL Server over TDS, authenticating with your Kerberos ticket | You want the dictionary in the same database as the reported figures |
 | `display_names.py` | The rule for what a table and its columns are called | You are setting display names |
 | `08-lookup-tool.md` | How to register and dispatch that tool | You are wiring it into an agent |
@@ -2095,6 +2096,29 @@ nothing is filed under it — FINREP9 3.2.0 and FINREP9DP 1.0.0 above, and 43 of
 module versions in DPM 4.4. The answers mark it `do_not_use`, and resolving "the newest"
 skips those, because a confident answer about a version no one files is worse than a
 refusal.
+
+### The rules change between releases, and the EBA publishes the patches
+
+A DPM release is a snapshot. Between releases the EBA deactivates rules, reactivates them
+and changes severities, and publishes each batch as a SQL script on its [validation rules
+packages page](https://www.eba.europa.eu/risk-and-data-analysis/reporting/reporting-frameworks/validation-rules-packages).
+The next DPM release absorbs them, so an older database is behind by every batch published
+since:
+
+```bash
+uv run source/apply_vr_updates.py 'https://www.eba.europa.eu/.../DPM VR updates scripts.zip'
+```
+
+The batch of 2026-09-13 deactivates 81 rule scopes and reactivates 2. Against DPM 4.4 it
+is a no-op — all 83 are already there. Against 4.2.1, 79 of them would change. Which is
+the measure of what a release snapshot costs: a description written from 4.2.1 can name a
+rule the EBA stopped running a year earlier.
+
+The script is read and parsed, never executed. It arrives as SQL over the internet, and
+handing that to a database is how a dictionary acquires a statement nobody read — only
+`UPDATE OperationScope SET IsActive, Severity, FromSubmissionDate WHERE OperationScopeID
+IN (...)` is recognised, and a file with anything else in it is refused rather than
+partly applied. Without `--commit` it reports and changes nothing.
 
 ### A rule code is not one rule
 
