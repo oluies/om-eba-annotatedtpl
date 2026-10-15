@@ -6,6 +6,8 @@ variant unknown a description must state neither a datapoint id nor a unit, beca
 picking one of six would be inventing five sixths of an answer.
 """
 
+from pathlib import Path
+
 import pytest
 
 from conftest import needs_store
@@ -210,3 +212,52 @@ def test_no_two_columns_of_a_table_share_a_display_name():
             assert len(set(labels.values())) == len(labels), f"{table} has a collision"
     finally:
         con.close()
+
+
+# --- the stanza that goes into an agent's prompt ---------------------------------------
+
+
+PROMPT = Path(__file__).resolve().parent.parent / "07-agent-prompt.md"
+
+
+def test_the_prompt_names_every_tool_that_reads_the_model():
+    """A tool the agent has and the prompt never mentions is a tool it will not reach
+    for. The OpenMetadata writers are deliberately not all named: the prompt covers
+    writing in prose, because the rule there is how to write rather than which tool."""
+    import agent_tools
+    import dpm_lookup
+
+    prompt = PROMPT.read_text(encoding="utf-8")
+    # From the *_TOOL_NAME constants rather than the definitions: those are literal
+    # dicts, so their values read as one wide union and a subscript into them is what ty
+    # rejects - the same narrowing dance as registered_names() in test_lookups.py.
+    reads_the_model = {
+        value for name, value in vars(dpm_lookup).items() if name.endswith("_TOOL_NAME") and isinstance(value, str)
+    } | {"check_report", "explain_report", "lookup_datapoint"}
+    assert reads_the_model <= {name.value for name in agent_tools.ToolName}, "a name the dispatcher does not have"
+    assert not [name for name in sorted(reads_the_model) if name not in prompt]
+
+
+def test_the_prompt_names_no_tool_that_does_not_exist():
+    """The other half: a renamed tool leaves its old name in the prose, and an agent told
+    to call that gets "no such tool" instead of an answer."""
+    import re
+
+    import agent_tools
+
+    prompt = PROMPT.read_text(encoding="utf-8")
+    looks_like_a_tool = set(re.findall(r"\b(?:lookup|check|explain|write|read|find|get|patch)_[a-z_0-9]+\b", prompt))
+    known = {name.value for name in agent_tools.ToolName} | {
+        # OpenMetadata's own, which this pack does not define
+        "find_context",
+        "get_persona_context",
+        "get_entity_details",
+        "patch_entity",
+    }
+    assert looks_like_a_tool <= known, f"named but not a tool: {sorted(looks_like_a_tool - known)}"
+
+
+def test_the_prompt_carries_no_character_the_viewer_mangles():
+    """It is published as a Context Center article like the rest of the pack, and the
+    OpenMetadata viewer renders a plus sign as a literal &amp;#43;."""
+    assert "+" not in PROMPT.read_text(encoding="utf-8")
