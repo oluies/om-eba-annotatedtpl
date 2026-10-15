@@ -839,7 +839,7 @@ ORDER BY op.Code
 MODULE_VERSION_SQL = """
 SELECT   mv.VersionNumber AS version
 FROM     ModuleVersion mv
-WHERE    mv.Code = ?
+WHERE    mv.Code = ? AND (? IS NULL OR mv.VersionNumber = ?)
 ORDER BY mv.FromReferenceDate DESC, mv.ModuleVID DESC
 LIMIT    1
 """
@@ -866,9 +866,15 @@ def lookup_dpm_rules(table: str, module: str, version: str | None = None) -> dic
     try:
         with _connect() as con:
             tv = _table_version(con, table)
-            found = [{"version": version}] if version else _rows(con, MODULE_VERSION_SQL, module)
+            # The version goes through the database even when the caller named one. Taking
+            # it on trust turned a mistyped version into found: true with no rules and the
+            # message "no rule of this module version names a cell of this template" - a
+            # confident claim that a template is unchecked, which is the one answer this
+            # must never give by accident.
+            found = _rows(con, MODULE_VERSION_SQL, module, version, version)
             if not found:
-                raise DpmError(f"No module {module!r} in the DPM 2.0 database.")
+                scope = f"{module!r} version {version!r}" if version else f"{module!r}"
+                raise DpmError(f"No module {scope} in the DPM 2.0 database.")
             scoped = found[0]["version"]
             rules = _rows(con, TABLE_RULES_SQL, tv["Code"], tv["Code"], module, scoped, tv["Code"])
     except DpmError as exc:

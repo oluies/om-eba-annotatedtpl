@@ -1,7 +1,7 @@
 """The tool definitions an agent registers, and the one dispatcher that runs them.
 
 Fifteen tools, from four modules, assembled here so a host application imports one name
-instead of nine and cannot end up with a definition registered but not dispatched:
+instead of fifteen and cannot end up with a definition registered but not dispatched:
 
     lookup_datapoint        resolve a column name to its datapoint, and to the display
                             name to use for it                      (pay42_lookup.py)
@@ -54,8 +54,9 @@ Trying one from a shell, before any of that:
     uv run agent_tools.py                       # the definitions the model will be shown
     uv run agent_tools.py lookup_dpm_sums table='F 12.01.a' module=FINREP9 version=null
 
-The five DPM tools are the exception: they need a 139 MB database that a checkout does not
-have, so they are registered only when it is there. A tool whose every answer is "not
+The eleven DPM-backed tools are the exception - the nine lookups and the two that read a
+reported file: they need a 139 MB database that a checkout does not have, so they are
+registered only when it is there. A tool whose every answer is "not
 downloaded" costs a turn and teaches the model to stop calling it. `dispatch` still knows
 them either way, so a host that registered them before the file moved does not break.
 """

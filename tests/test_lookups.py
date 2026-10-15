@@ -725,9 +725,26 @@ def test_a_rule_reaching_another_template_says_which():
 
 @needs_dpm2
 @pytest.mark.parametrize(
-    ("module", "phrase"),
-    [("NOSUCH", "No module 'NOSUCH'"), ("DORA", "No rule of this module version")],
+    ("module", "version", "phrase"),
+    [
+        ("NOSUCH", None, "No module 'NOSUCH'"),
+        ("NOSUCH", "4.1.0", "No module 'NOSUCH' version '4.1.0'"),
+        ("COREP_OF", "4.1", "No module 'COREP_OF' version '4.1'"),  # a version, mistyped
+        ("DORA", None, "No rule of this module version"),
+    ],
 )
-def test_the_rules_lookup_separates_a_wrong_module_from_an_unchecked_template(module, phrase):
-    answer = dpm_lookup.lookup_dpm_rules("C_01.00", module)
+def test_the_rules_lookup_separates_a_wrong_module_from_an_unchecked_template(module, version, phrase):
+    """A version taken on trust turned a typo into found: true with no rules and the
+    message "no rule of this module version names a cell of this template" - a confident
+    claim that a template is unchecked, which is the one answer this must not invent."""
+    answer = dpm_lookup.lookup_dpm_rules("C_01.00", module, version)
     assert phrase in answer["message"]
+    assert answer.get("rules", []) == []
+
+
+@needs_dpm2
+def test_a_version_that_exists_is_used_as_given():
+    pinned = dpm_lookup.lookup_dpm_rules("C_01.00", "COREP_OF", "3.1.0")
+    assert pinned["module"] == "COREP_OF 3.1.0"
+    assert pinned["rules"], "3.1.0 has rules for this template"
+    assert pinned["rules"] != dpm_lookup.lookup_dpm_rules("C_01.00", "COREP_OF", "4.1.0")["rules"]
