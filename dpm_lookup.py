@@ -414,6 +414,21 @@ LIMIT    1
 
 RELEASES_IN_FILE_SQL = "SELECT Code FROM Release ORDER BY ReleaseID"
 
+# A precondition is a real code with no scope of its own: it is not run against a module,
+# it gates the rules that name it. p_1 reads `( {v_C_95.00} or {v_C_95.00} ) and
+# {v_C_97.00}` and gates v22480_m. Answering "no such rule" for one would be wrong, and
+# trimming its digits off would answer about a different precondition.
+PRECONDITION_SQL = """
+SELECT   op.Code AS code, op.Type AS type, ov.Expression AS expression,
+         list_sort(list(DISTINCT used.Code)) AS used_by
+FROM     Operation op
+JOIN     OperationVersion ov ON ov.OperationID = op.OperationID
+LEFT JOIN OperationVersion gated ON gated.PreconditionOperationVID = ov.OperationVID
+LEFT JOIN Operation used ON used.OperationID = gated.OperationID
+WHERE    trim(lower(op.Code)) = trim(lower(?))
+GROUP BY op.Code, op.Type, ov.Expression
+"""
+
 
 def _version_asked_for(
     con: duckdb.DuckDBPyConnection, module: str, version: str | None, dpm_release: str | None
@@ -712,6 +727,13 @@ def lookup_dpm_sums(
 
 DP = re.compile(r"^\s*(?:dp?)?(\d+)\s*$", re.IGNORECASE)
 
+# A validation engine numbers each occurrence of a rule it ran: v3775_s covers 432 cells
+# of C_20.00 and expands once per reported record, so an outcome names v3775_s_62. The
+# model has the rule, never the occurrence. Only tried when the code itself is not found,
+# because p_1133 and the dash-numbered variants v10270_a-2 are real codes in their own
+# right and must not be truncated into something else.
+OCCURRENCE = re.compile(r"^(?P<rule>.+?)_(?P<occurrence>\d+)$")
+
 
 def datapoint_id(datapoint: str | int) -> int | None:
     """`dp1010005012`, `1010005012` or the integer, as the integer. Pure.
@@ -863,8 +885,34 @@ def lookup_dpm_rule(rule_code: str) -> dict[str, Any]:
     """
     if not available():
         return {"found": False, "rule_code": rule_code, "message": BUILD_IT}
+    occurrence = None
     with _connect() as con:
         scopes = _rows(con, RULE_SCOPES_SQL, rule_code)
+        if not scopes and (gate := _rows(con, PRECONDITION_SQL, rule_code)):
+            # Real, and not scoped to a module: say what it is rather than "no such rule".
+            return {
+                "found": True,
+                "rule_code": rule_code,
+                "occurrence": None,
+                "type": gate[0]["type"],
+                "scopes": [],
+                "tables": [],
+                "expressions": [row["expression"] for row in gate],
+                "used_by": sorted({code for row in gate for code in row["used_by"] if code}),
+                "message": (
+                    f"This is a {gate[0]['type']}, not a rule run against a module: it has no "
+                    "severity and no module version of its own. It gates the rules in used_by - "
+                    "they are checked only where it holds - so an outcome naming it is about one "
+                    "of those."
+                ),
+            }
+        if not scopes and (found := OCCURRENCE.match(rule_code.strip())):
+            # An outcome's code with the engine's occurrence number on it. The number is
+            # only reported when the stem is a rule: otherwise this was a code that
+            # happens to end in digits, and trimming it would invent a different one.
+            scopes = _rows(con, RULE_SCOPES_SQL, found["rule"])
+            if scopes:
+                rule_code, occurrence = found["rule"], found["occurrence"]
         if not scopes:
             return {
                 "found": False,
@@ -880,13 +928,22 @@ def lookup_dpm_rule(rule_code: str) -> dict[str, Any]:
     return {
         "found": True,
         "rule_code": rule_code,
+        "occurrence": occurrence,
         "scopes": [
             {k: v for k, v in scope.items() if k != "operation_vid"} | {"cells": cells[scope["operation_vid"]]}
             for scope in scopes
         ],
         "tables": sorted({cell["table_code"] for rows in cells.values() for cell in rows}),
         "message": (
-            "One row per module version, because that is what a rule code is. "
+            (
+                f"The code asked for carried the occurrence number {occurrence}, which is the "
+                "validation engine's count of which application of the rule failed - the rule "
+                "itself is the part before it. The model has the rule, not the occurrence: which "
+                "reported record or column the number points at is in the validation report. "
+                if occurrence
+                else ""
+            )
+            + "One row per module version, because that is what a rule code is. "
             + (
                 f"The severity is not the same in all of them ({', '.join(sorted(severities))}), so an "
                 "outcome means nothing until the module version it was raised under is known."
@@ -1023,7 +1080,9 @@ LOOKUP_DPM_RULE_TOOL_DEFINITION = {
             "returns the check itself, the cells it names, and one row per module version, each "
             "with its own severity and the first submission date it applies to. A code is not one "
             "rule: v0174_m is an error in COREP_OF 3.1.0 and a warning in 4.1.0, so an outcome "
-            "means nothing until the module version it was raised under is known."
+            "means nothing until the module version it was raised under is known. A code pasted "
+            "straight out of a report may carry the engine's occurrence number - v3775_s_62 is "
+            "the 62nd application of v3775_s - which is stripped and reported back as occurrence."
         ),
         "strict": True,
         "parameters": {

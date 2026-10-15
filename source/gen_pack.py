@@ -1533,6 +1533,22 @@ These hold regardless of what you find:
   - active is false for a rule the EBA has deactivated. It is published and not run -
     2928 of 30791 rule scopes in DPM 4.4 - so do not tell a reader to satisfy it, and do
     not quietly leave it out either.
+
+  Reading a code out of a validation outcome, where it rarely arrives clean:
+
+    v0174_m        a rule. Also _h, _s, _a, _q, _e, by framework.
+    v10270_a-2     a variant of a rule, numbered with a DASH. A real, separate code.
+    v3775_s_62     a rule with the engine's OCCURRENCE number after an UNDERSCORE.
+                   v3775_s covers 432 cells of C_20.00 and expands once per reported
+                   record, so 62 says which application failed. The model has the rule,
+                   never the occurrence: which record it was is in the report, not here.
+                   lookup_dpm_rule strips it and reports it back as occurrence.
+    p_1            a precondition. No severity and no module version of its own: it
+                   gates the rules that name it, and they are checked only where it
+                   holds. An outcome naming one is about a rule in its used_by.
+
+  Pass the code as it came. Do not trim it yourself - p_10 is not p_1, and v10270_a-2 is
+  not v10270_a. The lookup knows which suffixes mean what.
   - A rule code is one rule per module version: v0174_m is an error in COREP_OF 3.1.0
     (DPM 3.4) and a warning in 4.1.0 (DPM 4.2). Name the version you answered under, in
     the description and in any query you generate. Two entries with the same rule code

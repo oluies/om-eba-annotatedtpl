@@ -910,3 +910,51 @@ def test_a_cell_carries_the_activity_of_each_rule_it_names():
     rules = dpm_lookup.lookup_dpm_cell("C_01.00", "0070", "0010")["validation_rules"]
     assert rules and all("active" in rule for rule in rules)
     assert {rule["rule_code"] for rule in rules} >= {"v0174_m"}
+
+
+# --- a code pasted out of a validation report ------------------------------------------
+
+
+@needs_dpm2
+def test_an_occurrence_number_is_stripped_and_reported_back():
+    """A validation engine numbers each application of a rule it ran: v3775_s covers 432
+    cells of C_20.00 and expands once per reported record, so an outcome names
+    v3775_s_62. The model has the rule, never the occurrence."""
+    answer = dpm_lookup.lookup_dpm_rule("v3775_s_62")
+    assert answer["found"] is True
+    assert (answer["rule_code"], answer["occurrence"]) == ("v3775_s", "62")
+    assert answer["tables"] == ["C_20.00"]
+    assert "occurrence number 62" in answer["message"]
+
+
+@needs_dpm2
+def test_a_code_without_one_reports_no_occurrence():
+    assert dpm_lookup.lookup_dpm_rule("v3775_s")["occurrence"] is None
+
+
+@needs_dpm2
+@pytest.mark.parametrize("code", ["p_1", "p_10"])
+def test_a_precondition_is_a_code_and_not_a_rule(code):
+    """A precondition has no severity and no module version: it gates the rules that name
+    it. Answering "no such rule" would be wrong, and trimming its digits off would answer
+    about a different precondition - p_10 is not p_1."""
+    answer = dpm_lookup.lookup_dpm_rule(code)
+    assert answer["found"] is True
+    assert (answer["rule_code"], answer["occurrence"]) == (code, None)
+    assert answer["type"] == "precondition"
+    assert answer["scopes"] == []
+    assert "gates the rules in used_by" in answer["message"]
+
+
+@needs_dpm2
+def test_a_precondition_names_the_rules_it_gates():
+    answer = dpm_lookup.lookup_dpm_rule("p_1")
+    assert answer["used_by"] == ["v22480_m"]
+    assert "{v_C_97.00}" in answer["expressions"][0]
+
+
+@needs_dpm2
+def test_an_unknown_code_with_a_number_is_still_unknown():
+    answer = dpm_lookup.lookup_dpm_rule("v9999_x_7")
+    assert answer["found"] is False
+    assert "check the release before the code" in answer["message"]
