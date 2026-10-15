@@ -11,6 +11,7 @@ import decimal
 import json
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -100,10 +101,10 @@ def test_cell_code_is_written_as_the_model_writes_it():
 def test_dpm_fold_rules_keeps_one_entry_per_module_version():
     """v09247_s is a warning in 1.1.0 and an error in 1.2.0; that is not a duplicate."""
     rows = [
-        {"rule_code": "v09247_s", "severity": "warning", "expression": "a", "module": "PSD_FRP 1.1.0"},
-        {"rule_code": "v09247_s", "severity": "error", "expression": "a", "module": "PSD_FRP 1.2.0"},
-        {"rule_code": "v1", "severity": "warning", "expression": "b", "module": "PSD_FRP 1.1.0"},
-        {"rule_code": "v1", "severity": "warning", "expression": "b", "module": "PSD_FRP 1.2.0"},
+        {"rule_code": "v09247_s", "severity": "warning", "expression": "a", "module": "PSD_FRP 1.1.0", "active": True},
+        {"rule_code": "v09247_s", "severity": "error", "expression": "a", "module": "PSD_FRP 1.2.0", "active": True},
+        {"rule_code": "v1", "severity": "warning", "expression": "b", "module": "PSD_FRP 1.1.0", "active": True},
+        {"rule_code": "v1", "severity": "warning", "expression": "b", "module": "PSD_FRP 1.2.0", "active": True},
     ]
     folded = dpm_lookup.fold_rules(rows)
     by_code = {(r["rule_code"], r["severity"]): r["modules"] for r in folded}
@@ -795,3 +796,117 @@ def test_a_rule_scope_names_the_dpm_release_as_well():
     assert by_version["3.1.0"]["dpm_release"] == "3.4"
     assert by_version["4.1.0"]["dpm_release"] == "4.2"
     assert all(scope["do_not_use"] is False for scope in scopes)
+
+
+# --- asking by DPM release -------------------------------------------------------------
+
+
+@needs_dpm2
+@pytest.mark.parametrize(
+    ("release", "taxonomy"),
+    [("3.4", "3.1.0"), ("3.5", "3.1.0"), ("4.0", "3.2.0"), ("4.1", "3.2.0"), ("4.2", "3.3.0"), ("4.2.1", "3.3.0")],
+)
+def test_a_dpm_release_resolves_to_the_taxonomy_version_it_shipped(release, taxonomy):
+    """A module version is in force from the release that introduced it until the one
+    that replaced it, so a release in between resolves to the same module version - DPM
+    3.5 still has FINREP9 3.1.0, and 4.1 still has 3.2.0."""
+    answer = dpm_lookup.lookup_dpm_sums("F 12.01.a", "FINREP9", dpm_release=release)
+    assert answer["taxonomy_version"] == taxonomy
+
+
+@needs_dpm2
+def test_a_release_that_shipped_an_unusable_version_says_so_rather_than_substituting():
+    """DPM 4.0 shipped FINREP9 3.2.0, which covers no reporting period. Answering 3.3.0
+    instead would be a nicer answer to a different question."""
+    answer = dpm_lookup.lookup_dpm_sums("F 12.01.a", "FINREP9", dpm_release="4.0")
+    assert (answer["taxonomy_version"], answer["do_not_use"]) == ("3.2.0", True)
+
+
+@needs_dpm2
+def test_both_numbers_at_once_is_two_questions():
+    answer = dpm_lookup.lookup_dpm_rules("C_01.00", "COREP_OF", version="4.1.0", dpm_release="4.2")
+    assert answer["found"] is False
+    assert "pass one" in answer["message"]
+
+
+@needs_dpm2
+@pytest.mark.parametrize(
+    ("module", "release", "phrase"),
+    [
+        ("FINREP9", "9.9", "No DPM release '9.9' in this copy"),
+        ("DORA", "3.4", "not in DPM release '3.4'"),
+    ],
+)
+def test_a_release_that_is_not_there_is_distinguished_from_a_module_that_is_not_in_it(module, release, phrase):
+    """One means fetch another release; the other means the module did not exist yet."""
+    answer = dpm_lookup.lookup_dpm_rules("C_01.00", module, dpm_release=release)
+    assert phrase in answer["message"]
+
+
+def tool_schema(tool: Any) -> tuple[str, dict[str, Any], list[str]]:
+    """A definition's name, properties and required list, narrowed.
+
+    The definitions are literal dicts, so ty reads their values as one wide union and
+    rejects a chain of subscripts - the same narrowing as registered_names().
+    """
+    function = tool["function"]
+    assert isinstance(function, dict)
+    parameters = function["parameters"]
+    assert isinstance(parameters, dict)
+    properties, required = parameters["properties"], parameters["required"]
+    assert isinstance(properties, dict) and isinstance(required, list)
+    return str(function["name"]), properties, [str(name) for name in required]
+
+
+def test_every_tool_that_takes_a_version_takes_a_release():
+    """The two are alternatives, so a tool offering one and not the other sends the model
+    back to guessing the translation itself."""
+    for tool in dpm_lookup.DPM_TOOL_DEFINITIONS:
+        name, properties, required = tool_schema(tool)
+        assert ("version" in properties) == ("dpm_release" in properties), name
+        if "dpm_release" in properties:
+            assert "dpm_release" in required, name
+
+
+def test_the_schema_and_the_function_agree_on_what_can_be_asked():
+    """A property the function does not take is a tool call that raises TypeError."""
+    import inspect
+
+    for tool in dpm_lookup.DPM_TOOL_DEFINITIONS:
+        name, properties, _ = tool_schema(tool)
+        takes = set(inspect.signature(getattr(dpm_lookup, name)).parameters)
+        assert set(properties) <= takes, f"{name}: schema offers {sorted(set(properties) - takes)}"
+
+
+# --- the EBA's deactivated-rules list, in the model ------------------------------------
+
+
+def test_a_rule_folds_on_its_activity_as_well_as_its_expression():
+    """The EBA deactivates a rule for one module version and leaves it running in
+    another, so folding those together would hide which is which."""
+    rows = [
+        {"rule_code": "v1_m", "severity": "error", "expression": "a = b", "module": "M 1.0", "active": True},
+        {"rule_code": "v1_m", "severity": "error", "expression": "a = b", "module": "M 2.0", "active": False},
+        {"rule_code": "v1_m", "severity": "error", "expression": "a = b", "module": "M 3.0", "active": True},
+    ]
+    folded = {(rule["active"], tuple(rule["modules"])) for rule in dpm_lookup.fold_rules(rows)}
+    assert folded == {(True, ("M 1.0", "M 3.0")), (False, ("M 2.0",))}
+
+
+@needs_dpm2
+def test_a_deactivated_rule_is_marked_rather_than_dropped():
+    """A description naming a deactivated rule tells a reader to satisfy a check nobody
+    runs; leaving it out hides that the EBA ever published it. 2928 of 30791 scopes are
+    off in DPM 4.4, and six of C_01.00's fifty rules in COREP_OF 4.0.0."""
+    answer = dpm_lookup.lookup_dpm_rules("C_01.00", "COREP_OF", dpm_release="4.0")
+    off = [rule["rule_code"] for rule in answer["rules"] if not rule["active"]]
+    assert "v0190_m" in off
+    assert 0 < len(off) < len(answer["rules"])
+    assert all("active" in rule for rule in answer["rules"])
+
+
+@needs_dpm2
+def test_a_cell_carries_the_activity_of_each_rule_it_names():
+    rules = dpm_lookup.lookup_dpm_cell("C_01.00", "0070", "0010")["validation_rules"]
+    assert rules and all("active" in rule for rule in rules)
+    assert {rule["rule_code"] for rule in rules} >= {"v0174_m"}

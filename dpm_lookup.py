@@ -209,7 +209,11 @@ WHERE  vv.VariableVID = ?
 # applied behind the caller's back.
 RULES_SQL = """
 SELECT   o.Code AS rule_code, os.Severity AS severity, ov.Expression AS expression,
-         mv.Code || ' ' || mv.VersionNumber AS module
+         mv.Code || ' ' || mv.VersionNumber AS module,
+         -- OperationScope.IsActive is the EBA's deactivated-rules list, in the model:
+         -- 2928 of 30791 scopes are off. A description that names a deactivated rule
+         -- tells a reader to satisfy a check nobody runs.
+         os.IsActive <> 0 AS active
 FROM     OperandReferenceLocation l
 JOIN     OperandReference r ON r.OperandReferenceID = l.OperandReferenceID
 JOIN     OperationNode n ON n.NodeID = r.NodeID
@@ -220,23 +224,28 @@ JOIN     OperationScopeComposition osc ON osc.OperationScopeID = os.OperationSco
 JOIN     ModuleVersion mv ON mv.ModuleVID = osc.ModuleVID
 WHERE    l."Table" = ? AND coalesce(l."Row", '') = ? AND coalesce(l."Column", '') = ?
      AND coalesce(l.Sheet, '') = ?
-GROUP BY rule_code, severity, expression, module
+GROUP BY rule_code, severity, expression, module, active
 ORDER BY rule_code, module
 """
 
 
 def fold_rules(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """One entry per rule, severity and expression, with the module versions it holds in.
+    """One entry per rule, severity, expression and activity, with the module versions.
 
     Pure. Two entries for the same code is not a duplicate: it means the rule was changed
     between module versions, and which one applies depends on what the table reports.
+    `active` is false for a rule the EBA has deactivated - published and not run.
     """
-    folded: dict[tuple[str, str, str], list[str]] = {}
+    folded: dict[tuple[str, str, str, bool], list[str]] = {}
     for row in rows:
-        folded.setdefault((row["rule_code"], row["severity"], row["expression"]), []).append(row["module"])
+        key = (row["rule_code"], row["severity"], row["expression"], bool(row["active"]))
+        folded.setdefault(key, []).append(row["module"])
     return [
-        {"rule_code": code, "severity": severity, "expression": expression, "modules": modules}
-        for (code, severity, expression), modules in folded.items()
+        # `active` is part of the key, not a property of the code: the EBA deactivates a
+        # rule for one module version and leaves it running in another, so folding them
+        # together would hide which is which.
+        {"rule_code": code, "severity": severity, "expression": expression, "active": active, "modules": modules}
+        for (code, severity, expression, active), modules in folded.items()
     ]
 
 
@@ -385,6 +394,56 @@ ORDER BY ic.StartReleaseID DESC
 """
 
 
+# Which taxonomy version of a module a DPM release shipped. A module version is in force
+# from the release it was introduced in until the one that replaced it, and ReleaseID
+# increases with publication order, so the window is a pair of comparisons. In DPM 4.0 the
+# FINREP9 module version is 3.2.0 - the one marked do_not_use - which is what that release
+# shipped and is the honest answer to "what did 4.0 have".
+MODULE_VERSION_IN_RELEASE_SQL = """
+SELECT   mv.VersionNumber AS version, rel.Code AS dpm_release,
+         mv.ToReferenceDate IS NOT NULL AND mv.FromReferenceDate = mv.ToReferenceDate AS do_not_use
+FROM     ModuleVersion mv
+JOIN     Release rel ON rel.ReleaseID = mv.StartReleaseID
+JOIN     Release asked ON asked.Code = ?
+WHERE    mv.Code = ?
+     AND mv.StartReleaseID <= asked.ReleaseID
+     AND (mv.EndReleaseID IS NULL OR mv.EndReleaseID > asked.ReleaseID)
+ORDER BY mv.StartReleaseID DESC
+LIMIT    1
+"""
+
+RELEASES_IN_FILE_SQL = "SELECT Code FROM Release ORDER BY ReleaseID"
+
+
+def _version_asked_for(
+    con: duckdb.DuckDBPyConnection, module: str, version: str | None, dpm_release: str | None
+) -> str | None:
+    """The taxonomy version a caller asked for, by either name. Null for "the newest".
+
+    `version` is the module's own version number and `dpm_release` is the DPM release,
+    which is what a reporting institution usually means. Both at once is two different
+    questions, and answering one of them silently is how a release gets reported under a
+    taxonomy version it never shipped.
+    """
+    if version and dpm_release:
+        raise DpmError(
+            f"Asked for both taxonomy version {version!r} and DPM release {dpm_release!r}. "
+            "They are different numbers for different things - pass one."
+        )
+    if not dpm_release:
+        return version
+    found = _rows(con, MODULE_VERSION_IN_RELEASE_SQL, dpm_release, module)
+    if found:
+        return found[0]["version"]
+    releases = [row["Code"] for row in _rows(con, RELEASES_IN_FILE_SQL)]
+    if dpm_release not in releases:
+        raise DpmError(
+            f"No DPM release {dpm_release!r} in this copy of the database. It has: {', '.join(releases)}. "
+            "A newer release is a separate download - see source/fetch_dpm2.py --release."
+        )
+    raise DpmError(f"Module {module!r} is not in DPM release {dpm_release!r}.")
+
+
 def cell_code(table: str, row: str, column: str, sheet: str = "") -> str:
     """The model's own spelling of a coordinate: {Y_01.01, r0010, c0010, s0010}."""
     parts = [table, f"r{row}", f"c{column}"] + ([f"s{sheet}"] if sheet else [])
@@ -509,7 +568,9 @@ def warehouse_name(table: str, row: str, column: str) -> str:
     return f"{code_key(table)}_r{row}_c{column}"
 
 
-def lookup_dpm_dimensions(table: str, module: str | None = None, version: str | None = None) -> dict[str, Any]:
+def lookup_dpm_dimensions(
+    table: str, module: str | None = None, version: str | None = None, dpm_release: str | None = None
+) -> dict[str, Any]:
     """What a template breaks down by: its dimensions, their members, and how many cells each.
 
     The step to take before asking for cells. A template can carry 800 cells across 17
@@ -520,6 +581,7 @@ def lookup_dpm_dimensions(table: str, module: str | None = None, version: str | 
         return {"found": False, "table": table, "message": BUILD_IT}
     try:
         with _connect() as con:
+            version = _version_asked_for(con, module or "", version, dpm_release)
             tv = _table_version(con, table, module, version)
             rows = _rows(con, TABLE_DIMENSIONS_SQL, tv["TableVID"])
     except DpmError as exc:
@@ -542,7 +604,12 @@ def lookup_dpm_dimensions(table: str, module: str | None = None, version: str | 
 
 
 def lookup_dpm_cells(
-    table: str, dimension: str, member: str, module: str | None = None, version: str | None = None
+    table: str,
+    dimension: str,
+    member: str,
+    module: str | None = None,
+    version: str | None = None,
+    dpm_release: str | None = None,
 ) -> dict[str, Any]:
     """The cells where one dimension takes one member: the codes that make up an aggregate.
 
@@ -554,6 +621,7 @@ def lookup_dpm_cells(
         return {"found": False, "table": table, "message": BUILD_IT}
     try:
         with _connect() as con:
+            version = _version_asked_for(con, module or "", version, dpm_release)
             tv = _table_version(con, table, module, version)
             rows = _rows(con, CELLS_BY_MEMBER_SQL, tv["TableVID"], dimension, member)
     except DpmError as exc:
@@ -592,7 +660,9 @@ def lookup_dpm_cells(
     }
 
 
-def lookup_dpm_sums(table: str, module: str, version: str | None = None) -> dict[str, Any]:
+def lookup_dpm_sums(
+    table: str, module: str, version: str | None = None, dpm_release: str | None = None
+) -> dict[str, Any]:
     """Which rows add up to which, from the validation rules rather than from reading a grid.
 
     Scoped to a module version because a rule belongs to one: the same code is reissued
@@ -607,6 +677,7 @@ def lookup_dpm_sums(table: str, module: str, version: str | None = None) -> dict
         return {"found": False, "table": table, "message": BUILD_IT}
     try:
         with _connect() as con:
+            version = _version_asked_for(con, module, version, dpm_release)
             tv = _table_version(con, table, module, version)
             # Never the caller's null: see TABLE_IN_MODULE_SQL. Scoping the recursive
             # query to one module version is the difference between 0.1s and minutes.
@@ -831,7 +902,7 @@ def lookup_dpm_rule(rule_code: str) -> dict[str, Any]:
 # because a rule belongs to one. The rows and columns are this template's own - a rule
 # often spans two templates, and which cells of *this* one it touches is the question.
 TABLE_RULES_SQL = """
-SELECT   op.Code AS rule_code, os.Severity AS severity,
+SELECT   op.Code AS rule_code, os.Severity AS severity, os.IsActive <> 0 AS active,
          any_value(ov.Expression) AS expression,
          -- FILTER rather than a WHERE on the table: the rule's locations in other
          -- templates have to stay in the group, or `tables` below is always this one
@@ -855,7 +926,7 @@ WHERE    mv.Code = ? AND mv.VersionNumber = ?
          JOIN   OperationNode n2 ON n2.NodeID = ref2.NodeID
          WHERE  l2."Table" = ?
      )
-GROUP BY op.Code, os.Severity
+GROUP BY op.Code, os.Severity, os.IsActive
 ORDER BY op.Code
 """
 
@@ -875,7 +946,9 @@ LIMIT    1
 """
 
 
-def lookup_dpm_rules(table: str, module: str, version: str | None = None) -> dict[str, Any]:
+def lookup_dpm_rules(
+    table: str, module: str, version: str | None = None, dpm_release: str | None = None
+) -> dict[str, Any]:
     """Every validation rule that reaches one template, with what it touches in it.
 
     The reverse of lookup_dpm_rule: that one starts from a code in a validation outcome,
@@ -896,6 +969,7 @@ def lookup_dpm_rules(table: str, module: str, version: str | None = None) -> dic
     try:
         with _connect() as con:
             tv = _table_version(con, table)
+            version = _version_asked_for(con, module, version, dpm_release)
             # The version goes through the database even when the caller named one. Taking
             # it on trust turned a mistyped version into found: true with no rules and the
             # message "no rule of this module version names a cell of this template" - a
@@ -925,7 +999,9 @@ def lookup_dpm_rules(table: str, module: str, version: str | None = None) -> dic
         "message": (
             "Every rule of this module version that names a cell of this template. rows and "
             "columns are the ones it names here; tables is every template the rule names, and "
-            "more than one means the check reaches outside this one. An empty "
+            "more than one means the check reaches outside this one. active is false for a rule "
+            "the EBA has deactivated: it is published and not run, so do not tell a reader to "
+            "satisfy it. An empty "
             "answer means this module's rules do not reach the template, not that it is unchecked "
             "in every module - ask the others it belongs to as well."
             if rules
@@ -1043,6 +1119,17 @@ _VERSION_ARG = {
     ),
 }
 
+_RELEASE_ARG = {
+    "type": ["string", "null"],
+    "description": (
+        "The DPM release, such as 4.2 or 4.4 - what a reporting institution usually means by "
+        "the version. Resolves to whichever taxonomy version of the module that release shipped, "
+        "which is the translation a caller cannot do alone. Pass this or version, never both. "
+        "Null when neither is being pinned."
+    ),
+}
+
+
 LOOKUP_DPM_RULES_TOOL_NAME = "lookup_dpm_rules"
 
 LOOKUP_DPM_RULES_TOOL_DEFINITION = {
@@ -1065,8 +1152,9 @@ LOOKUP_DPM_RULES_TOOL_DEFINITION = {
                 "table": _TABLE_ARG,
                 "module": {"type": "string", "description": "Module code, e.g. COREP_OF. Required here."},
                 "version": _VERSION_ARG,
+                "dpm_release": _RELEASE_ARG,
             },
-            "required": ["table", "module", "version"],
+            "required": ["table", "module", "version", "dpm_release"],
             "additionalProperties": False,
         },
     },
@@ -1089,8 +1177,13 @@ LOOKUP_DPM_DIMENSIONS_TOOL_DEFINITION = {
         "strict": True,
         "parameters": {
             "type": "object",
-            "properties": {"table": _TABLE_ARG, "module": _MODULE_ARG, "version": _VERSION_ARG},
-            "required": ["table", "module", "version"],
+            "properties": {
+                "table": _TABLE_ARG,
+                "module": _MODULE_ARG,
+                "version": _VERSION_ARG,
+                "dpm_release": _RELEASE_ARG,
+            },
+            "required": ["table", "module", "version", "dpm_release"],
             "additionalProperties": False,
         },
     },
@@ -1123,8 +1216,9 @@ LOOKUP_DPM_CELLS_TOOL_DEFINITION = {
                 },
                 "module": _MODULE_ARG,
                 "version": _VERSION_ARG,
+                "dpm_release": _RELEASE_ARG,
             },
-            "required": ["table", "dimension", "member", "module", "version"],
+            "required": ["table", "dimension", "member", "module", "version", "dpm_release"],
             "additionalProperties": False,
         },
     },
@@ -1152,8 +1246,9 @@ LOOKUP_DPM_SUMS_TOOL_DEFINITION = {
                 "table": _TABLE_ARG,
                 "module": {"type": "string", "description": "Module code, e.g. FINREP9 or PSD_FRP. Required here."},
                 "version": _VERSION_ARG,
+                "dpm_release": _RELEASE_ARG,
             },
-            "required": ["table", "module", "version"],
+            "required": ["table", "module", "version", "dpm_release"],
             "additionalProperties": False,
         },
     },

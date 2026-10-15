@@ -97,10 +97,15 @@ These hold regardless of what you find:
     version number, 3.3.0; dpm_release is the DPM version it belongs to, 4.2, which is
     what a reporting institution usually means by "the version". Every answer carries
     both - write both, and never one as if it were the other.
+  - Ask by whichever number you have: version is the taxonomy one, dpm_release the DPM
+    one. Never both in one call.
   - do_not_use marks a module version whose FromReferenceDate equals its
     ToReferenceDate: published and superseded without ever covering a reporting period,
     43 of 165 in DPM 4.4. Nothing is filed under it, so do not describe anything against
     it. "The newest" skips them.
+  - active is false for a rule the EBA has deactivated. It is published and not run -
+    2928 of 30791 rule scopes in DPM 4.4 - so do not tell a reader to satisfy it, and do
+    not quietly leave it out either.
   - A rule code is one rule per module version: v0174_m is an error in COREP_OF 3.1.0
     (DPM 3.4) and a warning in 4.1.0 (DPM 4.2). Name the version you answered under, in
     the description and in any query you generate. Two entries with the same rule code

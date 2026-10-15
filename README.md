@@ -376,8 +376,10 @@ version", is the release the module version was introduced in:
 | FINREP9DP | 1.0.0 | 4.2 | 2026-03-31 | 2026-03-31 |
 | FINREP9DP | 1.1.0 | 4.2.1 | 2026-03-31 | — |
 
-Every lookup reports both, as `taxonomy_version` and `dpm_release`, and the `version`
-argument is the taxonomy one.
+Every lookup reports both, as `taxonomy_version` and `dpm_release`, and takes either:
+`version` is the taxonomy one, `dpm_release` is the DPM one, and passing both is two
+questions rather than one, so it is refused. Asking by release does the translation the
+caller cannot: DPM 4.0 and 4.1 both resolve to FINREP9 3.2.0, DPM 4.2 onwards to 3.3.0.
 
 **`FromReferenceDate` equal to `ToReferenceDate` means the module version is not to be
 used.** It was published and superseded without ever covering a reporting period, so

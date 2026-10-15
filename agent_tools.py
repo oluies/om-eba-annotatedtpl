@@ -186,13 +186,22 @@ def _run(name: str, args: dict[str, Any]) -> dict[str, Any]:
         case ToolName.LOOKUP_DPM_CELL:
             return dpm_lookup.lookup_dpm_cell(args["table"], args["row"], args["column"], args.get("sheet"))
         case ToolName.LOOKUP_DPM_DIMENSIONS:
-            return dpm_lookup.lookup_dpm_dimensions(args["table"], args.get("module"), args.get("version"))
+            return dpm_lookup.lookup_dpm_dimensions(
+                args["table"], args.get("module"), args.get("version"), args.get("dpm_release")
+            )
         case ToolName.LOOKUP_DPM_CELLS:
             return dpm_lookup.lookup_dpm_cells(
-                args["table"], args["dimension"], args["member"], args.get("module"), args.get("version")
+                args["table"],
+                args["dimension"],
+                args["member"],
+                args.get("module"),
+                args.get("version"),
+                args.get("dpm_release"),
             )
         case ToolName.LOOKUP_DPM_SUMS:
-            return dpm_lookup.lookup_dpm_sums(args["table"], args["module"], args.get("version"))
+            return dpm_lookup.lookup_dpm_sums(
+                args["table"], args["module"], args.get("version"), args.get("dpm_release")
+            )
         case ToolName.LOOKUP_DPM_DATAPOINT:
             return dpm_lookup.lookup_dpm_datapoint(args["datapoint"])
         case ToolName.LOOKUP_DPM_PROPERTY:
@@ -200,7 +209,9 @@ def _run(name: str, args: dict[str, Any]) -> dict[str, Any]:
         case ToolName.LOOKUP_DPM_RULE:
             return dpm_lookup.lookup_dpm_rule(args["rule_code"])
         case ToolName.LOOKUP_DPM_RULES:
-            return dpm_lookup.lookup_dpm_rules(args["table"], args["module"], args.get("version"))
+            return dpm_lookup.lookup_dpm_rules(
+                args["table"], args["module"], args.get("version"), args.get("dpm_release")
+            )
         case ToolName.EXPLAIN_REPORT:
             return check_instance.explain_report(args.get("instance"), args.get("limit") or 5, args.get("text"))
         case ToolName.CHECK_REPORT:
