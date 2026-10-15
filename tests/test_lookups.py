@@ -300,6 +300,7 @@ NEW_DPM_TOOLS = {
     "lookup_dpm_datapoint",
     "lookup_dpm_property",
     "explain_report",
+    "lookup_dpm_rule",
 }
 
 
@@ -630,3 +631,59 @@ def test_a_header_appears_once_however_often_its_property_has_been_recoded():
         for axis in ("rows", "columns", "sheets"):
             codes = [header["code"] for header in answer[axis]]
             assert len(codes) == len(set(codes)), f"{table} {axis} repeats a header"
+
+
+# --- a validation outcome, back to the rule --------------------------------------------
+
+
+@needs_dpm2
+def test_a_rule_code_is_one_rule_per_module_version():
+    """A validation report names a code and a failing cell. v0174_m is the same check in
+    every COREP_OF version that has it and an error in two of them and a warning in the
+    third, so an outcome means nothing until the version it was raised under is known."""
+    answer = dpm_lookup.lookup_dpm_rule("v0174_m")
+    assert answer["found"] is True
+    assert answer["tables"] == ["C_01.00"]
+    by_version = {scope["version"]: scope for scope in answer["scopes"]}
+    assert {scope["module"] for scope in answer["scopes"]} == {"COREP_OF"}
+    assert by_version["3.1.0"]["severity"] == "error"
+    assert by_version["4.1.0"]["severity"] == "warning"
+    assert "not the same in all of them" in answer["message"]
+
+
+@needs_dpm2
+def test_a_rule_carries_the_cells_it_names_and_when_it_starts_applying():
+    """The DPM resolved every leaf of the expression to a location, so the cells are a
+    join rather than a parse of the DPM-XL in `expression`."""
+    scope = dpm_lookup.lookup_dpm_rule("v0174_m")["scopes"][0]
+    assert scope["from_submission_date"] == "2023-06-30"
+    assert {(cell["row_code"], cell["column_code"]) for cell in scope["cells"]} == {
+        ("0070", "0010"),
+        ("0080", "0010"),
+        ("0090", "0010"),
+        ("0091", "0010"),
+    }
+    assert "{r0070} = {r0080}" in scope["expression"]
+
+
+@needs_dpm2
+@pytest.mark.parametrize("given", ["v23845_h", "V23845_H", "  v23845_h  "])
+def test_a_rule_code_is_matched_however_it_is_written(given):
+    """It arrives pasted out of a validation report, with whatever case and spacing."""
+    assert dpm_lookup.lookup_dpm_rule(given)["tables"] == ["F_12.01.a"]
+
+
+@needs_dpm2
+def test_an_unknown_rule_code_points_at_the_release():
+    """A rule retired before this release, or added after it, is simply not here - which
+    is a different thing from a mistyped code and the answer says so."""
+    answer = dpm_lookup.lookup_dpm_rule("v9999_x")
+    assert answer["found"] is False
+    assert "check the release before the code" in answer["message"]
+
+
+def test_the_rule_lookup_is_dispatchable_and_says_what_is_missing(monkeypatch):
+    monkeypatch.setattr(dpm_lookup, "DB", dpm_lookup.DB.with_name("absent.duckdb"))
+    answer = agent_tools.dispatch("lookup_dpm_rule", {"rule_code": "v0174_m"})
+    assert answer["found"] is False
+    assert "fetch_dpm2" in answer["message"]

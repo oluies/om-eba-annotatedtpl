@@ -721,6 +721,112 @@ def lookup_dpm_property(code: str) -> dict[str, Any]:
     }
 
 
+# A validation report names a rule code and nothing else, so this is the way back from an
+# outcome to what was checked. One code is one rule per module version, and both the
+# expression and the severity change between them - v0174_m is an error in COREP_OF 3.1.0
+# and 4.0.0 and a warning in 4.1.0 - so the answer is a row per version, not one verdict.
+RULE_SCOPES_SQL = """
+SELECT   ov.OperationVID AS operation_vid,
+         mv.Code AS module, mv.VersionNumber AS version,
+         os.Severity AS severity, os.IsActive <> 0 AS active,
+         CAST(os.FromSubmissionDate AS VARCHAR) AS from_submission_date,
+         ov.Expression AS expression, nullif(ov.Description, '') AS description
+FROM     Operation op
+JOIN     OperationVersion ov ON ov.OperationID = op.OperationID
+JOIN     OperationScope os ON os.OperationVID = ov.OperationVID
+JOIN     OperationScopeComposition osc ON osc.OperationScopeID = os.OperationScopeID
+JOIN     ModuleVersion mv ON mv.ModuleVID = osc.ModuleVID
+WHERE    trim(lower(op.Code)) = trim(lower(?))
+ORDER BY mv.Code, mv.VersionNumber
+"""
+
+# Which cells one version of the rule names. The DPM has already resolved every leaf of
+# the expression to a location, so this is a join rather than a parse of the DPM-XL.
+RULE_CELLS_SQL = """
+SELECT DISTINCT l."Table" AS table_code, coalesce(l."Row", '*') AS row_code,
+         coalesce(l."Column", '*') AS column_code, coalesce(l.Sheet, '') AS sheet_code
+FROM     OperationNode n
+JOIN     OperandReference r ON r.NodeID = n.NodeID
+JOIN     OperandReferenceLocation l USING (OperandReferenceID)
+WHERE    n.OperationVID = ?
+ORDER BY 1, 2, 3
+"""
+
+
+def lookup_dpm_rule(rule_code: str) -> dict[str, Any]:
+    """What a validation rule code means: the check, where it applies, and how severely.
+
+    A validation report names a code and a failing cell; this is the way back to what was
+    checked. One code is one rule *per module version*: v0174_m reads
+    `{r0070} = {r0080} + {r0090} + {r0091}` on C_01.00 column 0010 in every version of
+    COREP_OF that has it, but it is an error in 3.1.0 and 4.0.0 and a warning in 4.1.0.
+    So the answer is a row per version with its own severity, submission date and cells,
+    and a caller that needs one verdict has to say which version it is reporting under.
+    """
+    if not available():
+        return {"found": False, "rule_code": rule_code, "message": BUILD_IT}
+    with _connect() as con:
+        scopes = _rows(con, RULE_SCOPES_SQL, rule_code)
+        if not scopes:
+            return {
+                "found": False,
+                "rule_code": rule_code,
+                "message": (
+                    f"No rule {rule_code!r} in this copy of the DPM. Codes look like v0174_m, "
+                    "v23845_h or e23677_e. A rule retired before this release, or added after it, "
+                    "is not here - check the release before the code."
+                ),
+            }
+        cells = {scope["operation_vid"]: _rows(con, RULE_CELLS_SQL, scope["operation_vid"]) for scope in scopes}
+    severities = {scope["severity"] for scope in scopes}
+    return {
+        "found": True,
+        "rule_code": rule_code,
+        "scopes": [
+            {k: v for k, v in scope.items() if k != "operation_vid"} | {"cells": cells[scope["operation_vid"]]}
+            for scope in scopes
+        ],
+        "tables": sorted({cell["table_code"] for rows in cells.values() for cell in rows}),
+        "message": (
+            "One row per module version, because that is what a rule code is. "
+            + (
+                f"The severity is not the same in all of them ({', '.join(sorted(severities))}), so an "
+                "outcome means nothing until the module version it was raised under is known."
+                if len(severities) > 1
+                else f"The severity is {severities.pop()} in every version here."
+            )
+            + " from_submission_date is the first reporting date each version applies to."
+        ),
+    }
+
+
+LOOKUP_DPM_RULE_TOOL_NAME = "lookup_dpm_rule"
+
+LOOKUP_DPM_RULE_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": LOOKUP_DPM_RULE_TOOL_NAME,
+        "description": (
+            "What a validation rule code means - v0174_m, v23845_h, e23677_e. Use it to read a "
+            "validation outcome, which names a code and a failing cell and nothing else: this "
+            "returns the check itself, the cells it names, and one row per module version, each "
+            "with its own severity and the first submission date it applies to. A code is not one "
+            "rule: v0174_m is an error in COREP_OF 3.1.0 and a warning in 4.1.0, so an outcome "
+            "means nothing until the module version it was raised under is known."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "rule_code": {"type": "string", "description": "The rule code, e.g. v0174_m."},
+            },
+            "required": ["rule_code"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
 LOOKUP_DPM_DATAPOINT_TOOL_NAME = "lookup_dpm_datapoint"
 LOOKUP_DPM_PROPERTY_TOOL_NAME = "lookup_dpm_property"
 
@@ -952,6 +1058,7 @@ DPM_TOOL_DEFINITIONS = (
     LOOKUP_DPM_CELL_TOOL_DEFINITION,
     LOOKUP_DPM_DATAPOINT_TOOL_DEFINITION,
     LOOKUP_DPM_PROPERTY_TOOL_DEFINITION,
+    LOOKUP_DPM_RULE_TOOL_DEFINITION,
     LOOKUP_DPM_DIMENSIONS_TOOL_DEFINITION,
     LOOKUP_DPM_CELLS_TOOL_DEFINITION,
     LOOKUP_DPM_SUMS_TOOL_DEFINITION,

@@ -1681,7 +1681,7 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `07-agent-prompt.md` | The stanza to paste into an agent's system prompt, covering every framework | You are configuring an agent |
 | `describe_table.py` | Writes descriptions and glossary terms onto a table's columns, by name | You are describing a real table |
 | `pay42_lookup.py` | Deterministic datapoint lookup over DuckDB, and its tool definition | You are giving an agent a lookup tool |
-| `agent_tools.py` | All thirteen tool definitions, one dispatcher, and a shell front end for trying one | You are wiring the tools into an agent |
+| `agent_tools.py` | All fourteen tool definitions, one dispatcher, and a shell front end for trying one | You are wiring the tools into an agent |
 | `env.sh` | `source env.sh` reads `.env`, sets the two DuckDB stores and prints every variable the pack reads, with secrets counted rather than shown | A tool reads the wrong store, or a datapoint id will not resolve |
 | `dpm_lookup.py` | Five lookups over the whole DPM 2.0 database: a template, a cell, what a template breaks down by, the cells one dimension member covers, and which rows add up to which | A warehouse table is COREP, FINREP or anything but PAY and DORA, or you need the codes behind a business aggregate |
 | `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file, as a CLI and as the `check_report` tool | You want to know whether a report adds up before you send it, or want an agent to check its own arithmetic |
@@ -1794,6 +1794,7 @@ uv run agent_tools.py lookup_dpm_cells table=F_04.04.1 dimension='Counterparty s
 uv run agent_tools.py check_report table=Y_01.01 module=PSD_FRP version=1.1.0 instance=report.csv
 uv run agent_tools.py explain_report instance=report.csv text=null limit=null
 uv run agent_tools.py lookup_dpm_datapoint datapoint=dp152217
+uv run agent_tools.py lookup_dpm_rule rule_code=v0174_m
 ```
 
 Arguments are `key=value`, and `null` is spelled out, because that is what the schemas
@@ -1986,6 +1987,28 @@ the whole thing under `validation_rules`.
 A rule can reach only some of a column's six variants — 186 of the 845 PAY rule-column
 pairs do — so the description says which, and a table that holds one variant does not
 list a rule belonging to another.
+
+### Reading a validation outcome
+
+A validation report names a rule code and a failing cell and nothing else. `lookup_dpm_rule`
+is the way back:
+
+```bash
+uv run agent_tools.py lookup_dpm_rule rule_code=v0174_m
+```
+
+```
+COREP_OF   3.1.0   error    from 2023-06-30   cells 4
+COREP_OF   4.0.0   error    from 2025-03-31   cells 4
+COREP_OF   4.1.0   warning  from 2026-03-31   cells 4
+
+{{r0070, c0010}} = the sum of {{r0080, c0010}}, {{r0090, c0010}} and {{r0091, c0010}}
+on C_01.00
+```
+
+One row per module version, each with its own severity, the first submission date it
+applies to, and the cells that version names — resolved by the model rather than parsed
+out of the DPM-XL in `expression`. Which is the point of the next section.
 
 ### A rule code is not one rule
 
