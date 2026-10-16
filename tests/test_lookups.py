@@ -13,6 +13,7 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import pytest
 
 import agent_tools
@@ -958,3 +959,79 @@ def test_an_unknown_code_with_a_number_is_still_unknown():
     answer = dpm_lookup.lookup_dpm_rule("v9999_x_7")
     assert answer["found"] is False
     assert "check the release before the code" in answer["message"]
+
+
+# --- what a hostile argument can reach --------------------------------------------------
+
+
+INJECTIONS = [
+    "'; DROP TABLE Operation; --",
+    "' OR 1=1 --",
+    "' UNION SELECT 1 --",
+    'x" OR "1"="1',
+    "\\'; DELETE FROM Cell; --",
+]
+
+
+@needs_dpm2
+@pytest.mark.parametrize("evil", INJECTIONS)
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("lookup_dpm_table", {"table": "EVIL"}),
+        ("lookup_dpm_cell", {"table": "EVIL", "row": "EVIL", "column": "EVIL", "sheet": "EVIL"}),
+        ("lookup_dpm_rule", {"rule_code": "EVIL"}),
+        ("lookup_dpm_rules", {"table": "C_01.00", "module": "EVIL", "version": "EVIL", "dpm_release": None}),
+        ("lookup_dpm_property", {"code": "EVIL"}),
+        ("lookup_dpm_datapoint", {"datapoint": "EVIL"}),
+        (
+            "lookup_dpm_cells",
+            {
+                "table": "C_01.00",
+                "dimension": "EVIL",
+                "member": "EVIL",
+                "module": None,
+                "version": None,
+                "dpm_release": None,
+            },
+        ),
+        ("lookup_dpm_sums", {"table": "C_01.00", "module": "EVIL", "version": None, "dpm_release": None}),
+        ("lookup_dpm_dimensions", {"table": "EVIL", "module": None, "version": None, "dpm_release": None}),
+    ],
+)
+def test_a_hostile_argument_is_a_value_and_never_statement_text(tool, args, evil):
+    """Every query is a module-level constant with `?` placeholders, run through _rows,
+    so an argument reaches DuckDB as a value. The tools are also opened read_only, which
+    is the second lock: the worst a leak could do is read, and these cannot do that."""
+    answer = agent_tools.dispatch(tool, {key: (evil if value == "EVIL" else value) for key, value in args.items()})
+    assert "error" not in answer, answer
+    assert answer["found"] is False
+
+
+@needs_dpm2
+def test_the_database_survives_every_injection():
+    """Read it after, not just during: a statement that ran would show up here."""
+    with dpm_lookup._connect() as con:
+        before = con.execute("SELECT count(*) FROM Operation").fetchone()
+    for evil in INJECTIONS:
+        agent_tools.dispatch("lookup_dpm_rule", {"rule_code": evil})
+        agent_tools.dispatch("lookup_dpm_table", {"table": evil})
+    with dpm_lookup._connect() as con:
+        assert con.execute("SELECT count(*) FROM Operation").fetchone() == before
+
+
+@needs_dpm2
+def test_the_lookups_hold_a_read_only_connection():
+    with dpm_lookup._connect() as con, pytest.raises(duckdb.Error):
+        con.execute("CREATE TABLE scribble (a INT)")
+
+
+def test_every_query_in_the_module_is_a_constant_with_placeholders():
+    """The property behind the tests above: no query is built by formatting. A new one
+    that interpolates an argument would pass its own test and fail this."""
+    source = Path(dpm_lookup.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "execute":
+            first = node.args[0] if node.args else None
+            assert isinstance(first, ast.Name), f"line {node.lineno}: execute() of a built string"

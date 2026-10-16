@@ -48,6 +48,16 @@ UPDATE = re.compile(
 )
 
 
+# list_contains over a parameter rather than an IN list spliced into the text: nothing
+# from the downloaded file reaches the statement as SQL.
+SCOPES_PRESENT = "SELECT count(*) FROM OperationScope WHERE list_contains(?, OperationScopeID)"
+
+SCOPES_SETTLED = (
+    "SELECT count(*) FROM OperationScope WHERE list_contains(?, OperationScopeID) "
+    "AND (IsActive <> 0) = ? AND lower(Severity) = lower(?)"
+)
+
+
 class Update(NamedTuple):
     """One statement: a state, and the scopes to put into it."""
 
@@ -112,12 +122,11 @@ def effect(con: duckdb.DuckDBPyConnection, update: Update) -> dict[str, int]:
     later releases as 1, so comparing to 1 reports every active scope in 4.2.1 as about
     to change.
     """
-    ids = ", ".join(str(scope) for scope in update.scope_ids)
-    present = con.execute(f"SELECT count(*) FROM OperationScope WHERE OperationScopeID IN ({ids})").fetchone()
-    settled = con.execute(
-        f"SELECT count(*) FROM OperationScope WHERE OperationScopeID IN ({ids}) "
-        f"AND (IsActive <> 0) = {update.active} AND lower(Severity) = '{update.severity}'"
-    ).fetchone()
+    # The id list is a parameter, not text spliced into the statement. The regex already
+    # limits it to digits, but a parser is a thing that can be loosened later and a
+    # parameter is not - and this is SQL that arrived over the internet.
+    present = con.execute(SCOPES_PRESENT, [list(update.scope_ids)]).fetchone()
+    settled = con.execute(SCOPES_SETTLED, [list(update.scope_ids), update.active, update.severity]).fetchone()
     return {
         "asked": len(update.scope_ids),
         "present": present[0] if present else 0,
@@ -126,13 +135,12 @@ def effect(con: duckdb.DuckDBPyConnection, update: Update) -> dict[str, int]:
 
 
 def apply(con: duckdb.DuckDBPyConnection, update: Update) -> int:
-    ids = ", ".join(str(scope) for scope in update.scope_ids)
     con.execute(
         "UPDATE OperationScope SET IsActive = ?, Severity = ?, FromSubmissionDate = ? "
-        f"WHERE OperationScopeID IN ({ids})",
-        [1 if update.active else 0, update.severity, update.from_submission_date],
+        "WHERE list_contains(?, OperationScopeID)",
+        [1 if update.active else 0, update.severity, update.from_submission_date, list(update.scope_ids)],
     )
-    changed = con.execute(f"SELECT count(*) FROM OperationScope WHERE OperationScopeID IN ({ids})").fetchone()
+    changed = con.execute(SCOPES_PRESENT, [list(update.scope_ids)]).fetchone()
     return changed[0] if changed else 0
 
 

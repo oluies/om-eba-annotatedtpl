@@ -111,3 +111,27 @@ def test_the_effect_is_measured_against_either_spelling_of_true():
     con.execute("INSERT INTO OperationScope VALUES (1, -1, 'warning'), (2, 1, 'warning'), (3, 0, 'warning')")
     update = apply_vr_updates.Update(True, "warning", date(2026, 9, 13), (1, 2, 3))
     assert apply_vr_updates.effect(con, update) == {"asked": 3, "present": 3, "already": 2}
+
+
+def test_the_scope_ids_reach_the_database_as_a_value():
+    """The parser limits them to digits, but a parser can be loosened later and a
+    parameter cannot. Nothing from the downloaded file is spliced into statement text."""
+    import ast
+
+    source = Path(apply_vr_updates.__file__).read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "execute":
+            first = node.args[0] if node.args else None
+            assert isinstance(first, ast.Name | ast.Constant), f"line {node.lineno}: execute() of a built string"
+
+
+def test_a_severity_that_is_not_a_word_is_refused_by_the_parser():
+    hostile = DEACTIVATION.replace("'warning'", "'warning'' OR 1=1 --'")
+    with pytest.raises(SystemExit, match="not a statement this applies"):
+        apply_vr_updates.parse(hostile)
+
+
+def test_an_id_list_that_is_not_digits_is_refused_by_the_parser():
+    hostile = DEACTIVATION.replace("(11637, 11657)", "(11637, (SELECT 1))")
+    with pytest.raises(SystemExit, match="not a statement this applies"):
+        apply_vr_updates.parse(hostile)
