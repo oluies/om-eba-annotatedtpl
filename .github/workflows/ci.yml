@@ -61,7 +61,7 @@ jobs:
       # The page is Scala.js and has no npm in its build: scala-cli emits ES modules and
       # the browser resolves the CDN import itself, so compiling is the whole check.
       # Driving it in a browser needs the DPM and a Chromium download, which is web/e2e.mjs.
-      - uses: VirtusLab/scala-cli-setup@v1.8.4
+      - uses: VirtusLab/scala-cli-setup@v1.18.0
         with:
           jvm: temurin:21
           # Pinned: the action's default was old enough to ship a bloop that cannot
