@@ -2175,9 +2175,11 @@ anything built from it is a draft too and should say so. And this is a reformatt
 the EBA's distribution: a reporting institution gets the database from the EBA, and the
 page says that as well.
 
-`.github/workflows/wasm-data.yml` still builds the tree on demand and uploads it as an
-artefact rather than deploying it. Turning it into a Pages deploy is a four-line change,
-and it stays a decision rather than a default.
+`.github/workflows/wasm-data.yml` publishes it, to
+**<https://oluies.github.io/om-eba-annotatedtpl/>**. It stays manual rather than running
+on push: each release is a 200 MB download and several minutes, and publishing is a
+decision each time rather than a consequence of a commit. Untick *deploy* to build the
+artefact and stop.
 
 ### The page over it
 

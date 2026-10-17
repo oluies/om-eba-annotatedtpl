@@ -1,51 +1,91 @@
-name: browser data
+name: the page
 
-# Manual only, and it does not publish. The parquet tree is derived from the EBA's DPM
-# database, and putting a derived copy on a public site is redistribution - that question
-# is open, so this builds the artefact and stops. Turning it into a Pages deploy is a
-# four-line change once the answer is yes.
+# Manual, and it publishes. The tree is derived from the EBA's DPM database, which the
+# EBA's legal notice permits reproducing "provided the source is acknowledged" - the
+# acknowledgement is in NOTICE, in every manifest.json, and in the page's own footer.
+# Manual rather than on push, because each release is a 200 MB download and several
+# minutes, and publishing is a decision each time rather than a consequence of a commit.
 on:
   workflow_dispatch:
     inputs:
-      dpm_release:
-        description: "Which DPM release to publish, e.g. 4.4. Empty means every release in the database."
+      releases:
+        description: "DPM releases to publish, space separated, newest last. 4.4 is a draft."
         required: false
-        default: ""
+        default: "4.2.1 4.3"
+      deploy:
+        description: "Publish to Pages. Unticked builds the artefact and stops."
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
 
 jobs:
   build:
-    name: build the parquet tree
+    name: build the page and its data
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
       - run: uv sync --locked
 
-      # mdbtools reads the Access file the EBA ships; the download is ~200 MB and the
-      # export takes a few minutes, which is why this is not part of CI.
+      # mdbtools reads the Access file the EBA ships; the download is ~200 MB per release
+      # and the export takes minutes, which is why this is not part of CI.
       - name: Install mdbtools
         run: sudo apt-get update && sudo apt-get install -y mdbtools
 
-      - name: Fetch the DPM
-        run: uv run source/fetch_dpm2.py ${{ inputs.dpm_release && format('--release {0}', inputs.dpm_release) || '' }}
-
-      # The rules change between releases and the EBA publishes the patches separately,
-      # so a tree built from the release alone can claim a deactivated rule is live.
-      # Left to a human for now: the batch to apply depends on the reporting date.
-      - name: Build the tree
+      - name: Fetch each release and write its tree
         run: |
-          uv run source/gen_wasm_data.py \
-            ${{ inputs.dpm_release && format('--dpm-release {0}', inputs.dpm_release) || '' }} \
-            --out web/public/data
-          cat web/public/data/manifest.json
+          for release in ${{ inputs.releases }}; do
+            echo "::group::DPM $release"
+            # Each release is generated from its own database: a later database's view of
+            # an earlier release carries deactivations that release never had.
+            uv run source/fetch_dpm2.py --release "$release"
+            tag=$(echo "$release" | tr . _)
+            db="source/dpm2/dpm2_$tag.duckdb"
+            [ -f "$db" ] || db=source/dpm2/dpm2.duckdb
+            uv run source/gen_wasm_data.py --db "$db" --out web/public/data --dpm-release "$release"
+            # The runner has less disk than the downloads want, so each release gives its
+            # back once its tree is written.
+            rm -rf source/dpm2/*.accdb source/dpm2/*.zip source/dpm2/csv*
+            echo "::endgroup::"
+          done
+          cat web/public/data/releases.json
 
-      - uses: actions/upload-artifact@v4
+      - uses: VirtusLab/scala-cli-setup@v1.8.4
         with:
-          name: dpm-parquet${{ inputs.dpm_release && format('-{0}', inputs.dpm_release) || '' }}
-          path: web/public/data
-          retention-days: 7
+          jvm: temurin:21
+          scala-cli-version: 1.18.0
+
+      - name: Build the page
+        run: cd web && ./build.sh --js-mode release
+
+      - name: What is being published
+        run: |
+          du -sh web/public
+          find web/public -maxdepth 2 -name manifest.json -exec sh -c 'echo "--- $1"; head -c 300 "$1"; echo' _ {} \;
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/public
+
+  deploy:
+    name: publish
+    if: ${{ inputs.deploy }}
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
