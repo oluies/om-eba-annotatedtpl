@@ -78,3 +78,42 @@ class AssistantSuite extends munit.FunSuite:
     assert(schema.contains("\"additionalProperties\": false"))
     assert(js.JSON.parse(schema) != null, "it has to parse as JSON, because the engine parses it")
   }
+
+  test("the prompt shows worked examples, because a refusal is the easiest instruction to follow") {
+    val prompt = Assistant.prompt()
+    assert(prompt.contains("Q: "), "no worked example")
+    assert(prompt.contains("""A: {"question": """"), "the example does not show the shape")
+    // Not the whole sentence: stripMargin keeps the wrap, so the phrase spans a newline.
+    assert(prompt.contains("about something else entirely"))
+  }
+
+  test("step one's grammar offers the ids and nothing else") {
+    val schema = Assistant.questionSchema()
+    Questions.all.foreach(question => assert(schema.contains(s""""${question.id}""""), question.id))
+    assert(!schema.contains("slots"), "the first step does not ask for slots")
+  }
+
+  test("step two's grammar is one question's own slots") {
+    val sums = Questions.byId("sums")
+    val schema = Assistant.slotSchema(sums)
+    sums.slots.foreach(slot => assert(schema.contains(s""""${slot.name}""""), slot.name))
+    assert(!schema.contains("\"dimension\""), "a slot of another question must not be allowed")
+    assert(schema.contains("\"additionalProperties\": false"))
+  }
+
+  test("step two's answer is checked against that question") {
+    val rule = Questions.byId("rule")
+    assertEquals(Assistant.pickSlots("""{"slots": {"rule_code": "v0174_m"}}""", rule), Right(Map("rule_code" -> "v0174_m")))
+    assert(Assistant.pickSlots("""{"slots": {"framework": "FINREP"}}""", rule).isLeft, "a foreign slot is refused")
+  }
+
+  test("step two tolerates the slots being sent unwrapped, which small models do") {
+    val rule = Questions.byId("rule")
+    assertEquals(Assistant.pickSlots("""{"rule_code": "v0174_m"}""", rule), Right(Map("rule_code" -> "v0174_m")))
+  }
+
+  test("a question's other wordings reach the prompt") {
+    val prompt = Assistant.prompt()
+    assert(prompt.contains("also asked as:"))
+    assert(prompt.contains("totals, subtotals"), "the sums question's hints are missing")
+  }

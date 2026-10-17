@@ -204,18 +204,29 @@ object Main:
     if words.isEmpty then ()
     else
       assistantStatus.set("checking whether this browser can run a model…")
-      val request = js.Dynamic
+      // Two calls, because one schema cannot say "these slots, for that question" - it is
+      // fixed before the model answers. A single call let 0.5B pick `rule` and fill in
+      // `framework` and `table`, which the catalogue then had to refuse; asking for the
+      // id, then for that question's own slots, makes each step one a small model can get
+      // right.
+      def request(instruction: String, schema: String) = js.Dynamic
         .literal(
           "messages" -> js.Array(
-            js.Dynamic.literal("role" -> "system", "content" -> Assistant.prompt()),
+            js.Dynamic.literal("role" -> "system", "content" -> instruction),
             js.Dynamic.literal("role" -> "user", "content" -> words),
           ),
           "temperature" -> 0,
           // The schema has to be a string, and has to be there: without it the engine
           // fails with "Cannot pass non-string to std::string" rather than ignoring it.
-          "response_format" -> js.Dynamic.literal("type" -> "json_object", "schema" -> Assistant.schema()),
+          "response_format" -> js.Dynamic.literal("type" -> "json_object", "schema" -> schema),
         )
         .asInstanceOf[js.Object]
+
+      def say(engine: Engine, instruction: String, schema: String): scala.concurrent.Future[String] =
+        engine.chat.completions
+          .create(request(instruction, schema))
+          .toFuture
+          .map(completion => completion.choices.asInstanceOf[js.Array[js.Dynamic]](0).message.content.toString)
       val chosen = for
         able <- Assistant.gpuReady()
         _ =
@@ -225,14 +236,18 @@ object Main:
                 + "above work without one - that is what they are for."
             )
         ready <- loadAssistant()
-        completion <- ready.chat.completions.create(request).toFuture
-      yield completion.choices.asInstanceOf[js.Array[js.Dynamic]](0).message.content.toString
+        first <- say(ready, Assistant.prompt(), Assistant.questionSchema())
+        picked = Assistant.pickQuestion(first)
+        second <- picked match
+          case Right(found) => say(ready, Assistant.slotPrompt(found), Assistant.slotSchema(found)).map(Some(_))
+          case Left(_) => scala.concurrent.Future.successful(None)
+      yield (picked, second)
       chosen.onComplete:
-        case Success(text) =>
-          Assistant.parse(text) match
-            case Left(problem) =>
-              assistantStatus.set(problem)
-            case Right((picked, filled)) =>
+        case Success((Left(problem), _)) => assistantStatus.set(problem)
+        case Success((Right(picked), filledIn)) =>
+          Assistant.pickSlots(filledIn.getOrElse(""), picked) match
+            case Left(problem) => assistantStatus.set(s"${picked.ask} — but $problem")
+            case Right(filled) =>
               assistantStatus.set(s"the assistant read that as: ${picked.ask}")
               question.set(picked)
               slots.set(filled)
@@ -325,7 +340,13 @@ object Main:
           label(
             "Model",
             select(
-              onChange.mapToValue --> (id => assistantModel.set(id)),
+              // Dropping the engine as well as the name: it is loaded once and kept, so
+              // choosing another model without this changes the label and nothing else.
+              onChange.mapToValue --> { id =>
+                assistantModel.set(id)
+                assistant.set(None)
+                assistantStatus.set("")
+              },
               Assistant.models.map((id, shown) => option(value := id, shown)),
             ),
           ),

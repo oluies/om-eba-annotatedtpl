@@ -2233,6 +2233,27 @@ nothing. What it chose is shown before the answer, so a wrong reading is visible
 than silent, and a question id or slot name it invents is refused rather than rounded to
 the nearest one.
 
+It asks in two steps — which question, then that question's slots — because one grammar
+cannot say "these slots, for that question": the schema is fixed before the model
+answers, so a single call let 0.5B pick the rule question and fill in `framework` and
+`table`, which the catalogue then had to refuse.
+
+Run against Safari, which has the WebGPU that a headless Chromium does not:
+
+| asked in these words | SmolLM2 360M | Qwen2.5 0.5B |
+|---|---|---|
+| what does v0174_m mean? | the rule, 1 row | the rule, 1 row |
+| which rows add up to which in F 12.01.a under FINREP9? | the sums, 6 rows | the sums, 6 rows |
+| what does a report column called qCDF mean? | the property, 6 rows | — |
+| which cells of F_04.04.1 are credit institutions…? | the whole grid, wrong | the whole grid, wrong |
+| which rules are deactivated in COREP_OF? | every rule on a template, wrong | the module versions, wrong |
+
+So: a convenience with a visible failure mode, not a replacement for the list above it.
+Both models needed the same two things to get the first three right — the two steps, and
+`hints` on each question, which are the words someone might actually use. Without the
+hints both read "which rows add up to which" as the rules question, because both are
+about rules and a template and the id `sums` says nothing on its own.
+
 ### What is cached, and what is not
 
 Measured rather than assumed. With `Cache-Control: max-age=600` — what GitHub Pages sends

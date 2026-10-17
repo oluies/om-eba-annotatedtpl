@@ -34,6 +34,12 @@ final case class Question(
     slots: List[Slot],
     sql: (String => String) => String,
     reads: String => String,
+    /** The words someone might use for this instead of the ones in `ask`. They exist for
+      * the assistant: 0.5B and 1.5B both read "which rows add up to which" as the rules
+      * question, because both are about rules and a template, and the id `sums` says
+      * nothing on its own.
+      */
+    hints: String = "",
 ):
   /** Where the answer comes from, for the line under the results. */
   def source(filled: String => String): String = reads(filled("framework"))
@@ -89,6 +95,7 @@ object Questions:
     Question(
       id = "cells",
       ask = "Which cells does a template have?",
+      hints = "the whole grid, every cell, all rows and columns of a template",
       slots = List(framework, template, Slot("module", "Module", "FINREP9", "FINREP9")),
       sql = filled => s"""
         |SELECT row_code, row_label, column_code, column_label, datapoint, cell_code
@@ -101,6 +108,7 @@ object Questions:
     Question(
       id = "dimensions",
       ask = "What does a template break down by?",
+      hints = "which dimensions, what members exist, the wording of a dimension",
       slots = List(framework, template),
       sql = filled => s"""
         |SELECT   dimension, count(DISTINCT member) AS members,
@@ -114,6 +122,7 @@ object Questions:
     Question(
       id = "rule",
       ask = "What does a validation code mean?",
+      hints = "one rule code, v0174_m, what does this outcome mean, severity of a code",
       slots = List(Slot("rule_code", "Rule code", "v0174_m", "v0174_m")),
       // The engine's occurrence number is stripped here as the lookup strips it: v3775_s_62
       // is the 62nd application of v3775_s, and the model has the rule, never the occurrence.
@@ -139,6 +148,8 @@ object Questions:
     Question(
       id = "aggregate",
       ask = "Which cells make up an aggregate? (one dimension, one member)",
+      hints = "the codes behind a figure, cells where a dimension takes one member, "
+        + "which cells are <member>, cells for counterparty sector = credit institutions",
       slots = List(
         framework,
         Slot("table", "Template", "F_04.04.1", "F_04.04.1", Some(templatesOf)),
@@ -163,6 +174,7 @@ object Questions:
     Question(
       id = "sums",
       ask = "Which rows add up to which?",
+      hints = "totals, subtotals, which rows sum to which, what adds up, arithmetic between rows",
       // 1780 edges for every framework and every module version: 17 kB, so no partition.
       // Offered from the sums table itself, so the list is the templates that have any -
       // which is a better answer than every template, and costs nothing: it is preloaded.
@@ -182,6 +194,7 @@ object Questions:
     Question(
       id = "rules",
       ask = "Which validation rules reach a template?",
+      hints = "every rule on a template, what is checked, the list of checks",
       slots = List(
         framework,
         Slot("table", "Template", "C_01.00", "C_01.00", Some(templatesOf)),
@@ -207,6 +220,7 @@ object Questions:
     Question(
       id = "datapoint",
       ask = "What is this reported datapoint id?",
+      hints = "dp152217, what is this id in a report, which cell is this datapoint",
       slots = List(framework, Slot("datapoint", "Datapoint", "152217 or dp152217", "152217")),
       // A report writes dp<N>; the model stores the number. Strip the prefix here rather
       // than ask the reader to.
@@ -232,6 +246,7 @@ object Questions:
     Question(
       id = "deactivated",
       ask = "Which rules has the EBA switched off?",
+      hints = "deactivated rules, turned off, no longer run, inactive checks",
       slots = List(module),
       // active is false for a rule that is published and not run. A description that
       // names one tells a reader to satisfy a check nobody runs.
