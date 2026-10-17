@@ -74,7 +74,7 @@ jobs:
           du -sh web/public
           find web/public -maxdepth 2 -name manifest.json -exec sh -c 'echo "--- $1"; head -c 300 "$1"; echo' _ {} \;
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: web/public
 
@@ -88,4 +88,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
