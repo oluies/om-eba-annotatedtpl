@@ -33,10 +33,13 @@ class Ranged(http.server.BaseHTTPRequestHandler):
         ".wasm": "application/wasm",
     }
 
-    def _cache(self) -> None:
-        # What GitHub Pages sends. Worth mimicking: whether a second visit refetches the
-        # parquet is the whole question behind caching it in OPFS by hand.
-        self.send_header("Cache-Control", "max-age=600")
+    def _cache(self, target: Path) -> None:
+        # What GitHub Pages sends, for the data: whether a second visit refetches the
+        # parquet is the whole question behind caching it in OPFS by hand. The page and
+        # its bundle are not cached, because during development a cached bundle means
+        # testing the previous build and believing a fix did not work.
+        served = "max-age=600" if target.suffix == ".parquet" else "no-store"
+        self.send_header("Cache-Control", served)
 
     def _type(self, target: Path) -> None:
         # A module script with no Content-Type is refused outright: "Expected a
@@ -86,7 +89,7 @@ class Ranged(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self._cors()
         self._type(target)
-        self._cache()
+        self._cache(target)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

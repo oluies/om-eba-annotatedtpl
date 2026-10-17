@@ -11,7 +11,22 @@ package dpm
   * slots. The page shows it next to the answer, because a number without the query that
   * produced it is a number nobody can check.
   */
-final case class Slot(name: String, label: String, placeholder: String, example: String)
+/** One blank in a question.
+  *
+  * `options` is a query returning a single column of values to offer. It exists because
+  * the model's own wording is unguessable: a dimension is "Counterparty sector" and its
+  * member is "Credit institutions", trailing space and all, and a near miss matches
+  * nothing rather than erroring. Offering what is there turns that from a trap into a
+  * list. The field stays typeable - the values are many, and a code pasted from a report
+  * should go straight in.
+  */
+final case class Slot(
+    name: String,
+    label: String,
+    placeholder: String,
+    example: String,
+    options: Option[(String => String) => String] = None,
+)
 
 final case class Question(
     id: String,
@@ -36,9 +51,34 @@ object Questions:
   private def whole(table: String)(framework: String): String =
     if Data.cached.contains(table) then table else Data.url(s"$table.parquet")
 
-  private val framework = Slot("framework", "Framework", "FINREP, COREP, DORA…", "FINREP")
-  private val template = Slot("table", "Template", "F_12.01.a", "F_12.01.a")
-  private val module = Slot("module", "Module", "FINREP9", "FINREP9")
+  /** The lists behind the slots. Every one of these reads a table that is already in the
+    * engine - modules and headers are preloaded per release - so offering them costs
+    * nothing over the wire except where the dimension and member lists read the same
+    * partition the question itself will read.
+    */
+  private val frameworks = (_: String => String) => s"SELECT DISTINCT framework AS value FROM modules ORDER BY 1"
+
+  private val templatesOf = (filled: String => String) =>
+    s"""SELECT DISTINCT table_code AS value FROM headers
+       |WHERE framework = '${filled("framework")}' ORDER BY 1""".stripMargin
+
+  private val modulesOf = (filled: String => String) =>
+    s"""SELECT DISTINCT module AS value FROM modules
+       |WHERE framework = '${filled("framework")}' ORDER BY 1""".stripMargin
+
+  private val dimensionsOf = (filled: String => String) =>
+    s"""SELECT DISTINCT dimension AS value FROM '${partition("cell_members")(filled("framework"))}'
+       |WHERE table_code = '${filled("table")}' ORDER BY 1""".stripMargin
+
+  private val membersOf = (filled: String => String) =>
+    s"""SELECT DISTINCT member AS value FROM '${partition("cell_members")(filled("framework"))}'
+       |WHERE table_code = '${filled("table")}'
+       |  AND trim(lower(dimension)) = trim(lower('${filled("dimension")}')) ORDER BY 1""".stripMargin
+
+  private val framework =
+    Slot("framework", "Framework", "FINREP, COREP, DORA…", "FINREP", Some(frameworks))
+  private val template = Slot("table", "Template", "F_12.01.a", "F_12.01.a", Some(templatesOf))
+  private val module = Slot("module", "Module", "FINREP9", "FINREP9", Some(modulesOf))
 
   /** Enough rows to read, few enough to render. The page says when it is reached, because
     * a table that stops at 200 without saying so reads as the whole answer.
@@ -101,9 +141,9 @@ object Questions:
       ask = "Which cells make up an aggregate? (one dimension, one member)",
       slots = List(
         framework,
-        Slot("table", "Template", "F_04.04.1", "F_04.04.1"),
-        Slot("dimension", "Dimension", "Counterparty sector", "Counterparty sector"),
-        Slot("member", "Member", "Credit institutions", "Credit institutions"),
+        Slot("table", "Template", "F_04.04.1", "F_04.04.1", Some(templatesOf)),
+        Slot("dimension", "Dimension", "Counterparty sector", "Counterparty sector", Some(dimensionsOf)),
+        Slot("member", "Member", "Credit institutions", "Credit institutions", Some(membersOf)),
       ),
       // The wording has to come from the dimensions question: a near miss matches
       // nothing, and "Credit institutions " with a trailing space is a real item in the
@@ -124,7 +164,14 @@ object Questions:
       id = "sums",
       ask = "Which rows add up to which?",
       // 1780 edges for every framework and every module version: 17 kB, so no partition.
-      slots = List(template, module),
+      // Offered from the sums table itself, so the list is the templates that have any -
+      // which is a better answer than every template, and costs nothing: it is preloaded.
+      slots = List(
+        template.copy(options = Some(_ => "SELECT DISTINCT table_code AS value FROM sums ORDER BY 1")),
+        module.copy(options =
+          Some(filled => s"SELECT DISTINCT module AS value FROM sums WHERE table_code = '${filled("table")}' ORDER BY 1")
+        ),
+      ),
       sql = filled => s"""
         |SELECT total_row, addend_rows, columns, sheets, rule_code, severity
         |FROM   ${whole("sums")("")}
@@ -135,7 +182,11 @@ object Questions:
     Question(
       id = "rules",
       ask = "Which validation rules reach a template?",
-      slots = List(framework, Slot("table", "Template", "C_01.00", "C_01.00"), Slot("module", "Module", "COREP_OF", "COREP_OF")),
+      slots = List(
+        framework,
+        Slot("table", "Template", "C_01.00", "C_01.00", Some(templatesOf)),
+        Slot("module", "Module", "COREP_OF", "COREP_OF", Some(modulesOf)),
+      ),
       // MATERIALIZED, not just a CTE: DuckDB inlines a plain one, so naming the
       // partition twice reads it twice - 1.9 MB for COREP where the file is 0.5.
       sql = filled => s"""

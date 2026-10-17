@@ -43,6 +43,29 @@ object Assistant:
        |they are written - F_12.01.a, v0174_m, dp152217, qCDF. If no question fits, answer
        |{"question": null}.""".stripMargin
 
+  /** The grammar the answer must fit, as the string WebLLM wants.
+    *
+    * Not decoration: without a schema, `response_format: {"type": "json_object"}` fails
+    * in the engine with "Cannot pass non-string to std::string" - it reads the schema
+    * field and finds nothing. Constraining `question` to the ids that exist also means a
+    * model cannot invent one, though `parse` still checks, because the schema is only
+    * enforced where the grammar matcher runs.
+    */
+  def schema(questions: List[Question] = Questions.all): String =
+    val ids = questions.map(question => s""""${question.id}"""").mkString(", ")
+    val slots = questions
+      .flatMap(_.slots)
+      .map(_.name)
+      .distinct
+      .map(name => s""""$name": {"type": "string"}""")
+      .mkString(", ")
+    s"""{"type": "object",
+       | "properties": {
+       |   "question": {"type": ["string", "null"], "enum": [$ids, null]},
+       |   "slots": {"type": "object", "properties": {$slots}, "additionalProperties": false}
+       | },
+       | "required": ["question"]}""".stripMargin
+
   /** The model's answer, checked against the catalogue.
     *
     * A model that invents a question id or a slot name is refused rather than coerced

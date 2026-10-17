@@ -2205,6 +2205,15 @@ Eleven questions, which are data rather than code:
 | What are a template's key dimensions? | the columns a report of an open table carries |
 | Which module versions…? | taxonomy version, DPM version, and `do_not_use` |
 
+The slots offer what is there. Framework, template, module, dimension and member each
+come with a list read out of the published data, and each one narrows the next: 21
+frameworks, 153 templates in FINREP, nine dimensions on F_04.04.1, six members of
+*Counterparty sector*. That is the near miss turned into a list — the member is
+"Financial corporations other than credit institutions", and nobody was going to type
+that from memory. The fields stay typeable, because a code pasted out of a report should
+go straight in whether or not it is on the list, and the lists are filled when a field is
+first reached for rather than on load, since filling them needs the engine.
+
 The question and its slots live in the URL, so an answer can be sent to someone. A table
 that stops at its limit says so, because one that does not reads as the whole answer.
 

@@ -39,6 +39,7 @@ object Main:
   private val assistantStatus = Var("")
   private val inOwnWords = Var("")
   private val releases = Var(List.empty[String])
+  private val choices = Var(Map.empty[String, List[String]])
   private val status = Var("")
   private val running = Var(false)
   private val answer = Var(Option.empty[Answer])
@@ -106,9 +107,43 @@ object Main:
     )
     new dom.Worker(dom.URL.createObjectURL(blob))
 
+  /** Fill the lists behind this question's slots.
+    *
+    * Run in order, because they depend on each other: the templates depend on the
+    * framework, the members on the dimension. A slot whose query fails - usually because
+    * the slot it depends on is empty or misspelt - simply has no list, and the field
+    * stays typeable.
+    */
+  private def loadChoices(): Unit =
+    val current = question.now()
+    val filled = filledSlots(current)
+    val wanted = current.slots.flatMap(slot => slot.options.map(slot.name -> _))
+    connection().foreach: con =>
+      wanted.foldLeft(scala.concurrent.Future.successful(())): (before, slot) =>
+        val (name, forSlot) = slot
+        before.flatMap: _ =>
+          con
+            .query(forSlot(filled))
+            .toFuture
+            .map: table =>
+              // entries, not values: the Scala.js facade has the first and not the
+              // second, and the query returns one column called value either way.
+              val values = table
+                .toArray()
+                .toList
+                .flatMap(row => js.Object.entries(row.toJSON()).headOption)
+                .flatMap(entry => Option(entry._2))
+                .map(_.toString)
+              choices.update(_ + (name -> values))
+            .recover { case _ => choices.update(_ - name) }
+
+  /** The slots as they stand, with each question's own example standing in for a blank. */
+  private def filledSlots(current: Question): String => String =
+    slots.now().withDefault(name => current.slots.find(_.name == name).map(_.example).getOrElse(""))
+
   private def ask(): Unit =
     val current = question.now()
-    val filled = slots.now().withDefault(name => current.slots.find(_.name == name).map(_.example).getOrElse(""))
+    val filled = filledSlots(current)
     val sql = current.sql(filled)
     toLocation(current, current.slots.map(slot => slot.name -> filled(slot.name)).toMap)
     running.set(true)
@@ -136,6 +171,7 @@ object Main:
           )
         )
         running.set(false)
+        loadChoices()
       case Failure(problem) =>
         // The message the engine gives is the useful part - a missing partition reads as
         // "No files found that match the pattern", which names the framework that is wrong.
@@ -175,7 +211,9 @@ object Main:
             js.Dynamic.literal("role" -> "user", "content" -> words),
           ),
           "temperature" -> 0,
-          "response_format" -> js.Dynamic.literal("type" -> "json_object"),
+          // The schema has to be a string, and has to be there: without it the engine
+          // fails with "Cannot pass non-string to std::string" rather than ignoring it.
+          "response_format" -> js.Dynamic.literal("type" -> "json_object", "schema" -> Assistant.schema()),
         )
         .asInstanceOf[js.Object]
       val chosen = for
@@ -239,6 +277,8 @@ object Main:
               question.set(Questions.byId(id))
               slots.set(Map.empty)
               answer.set(None)
+              choices.set(Map.empty)
+              loadChoices()
             },
             Questions.all.map(q => option(value := q.id, q.ask)),
           ),
@@ -247,10 +287,26 @@ object Main:
           current.slots.map: slot =>
             label(
               slot.label,
+              // An input with a datalist rather than a select: the lists run to hundreds
+              // - 1052 templates, every member of a dimension - so they have to be
+              // typeable and searchable, and a code pasted from a report has to go
+              // straight in whether or not it is on the list.
               input(
                 placeholder := slot.placeholder,
+                listId := s"choices-${slot.name}",
                 value <-- slots.signal.map(_.getOrElse(slot.name, slot.example)),
-                onInput.mapToValue --> (text => slots.update(_ + (slot.name -> text))),
+                onInput.mapToValue --> { text =>
+                  slots.update(_ + (slot.name -> text))
+                  loadChoices()
+                },
+                // On focus rather than on load: filling the lists needs the engine, and
+                // the engine is 8 MB. Reaching for a field is the first sign that someone
+                // means to ask something, which is when paying for it is right.
+                onFocus --> (_ => loadChoices()),
+              ),
+              dataList(
+                idAttr := s"choices-${slot.name}",
+                children <-- choices.signal.map(_.getOrElse(slot.name, Nil).map(choice => option(value := choice))),
               ),
             )
         ,

@@ -1,5 +1,7 @@
 package dpm
 
+import scala.scalajs.js
+
 /** The half of the assistant that can be checked without a GPU.
   *
   * The model itself cannot run in a headless browser - Playwright's Chromium has no
@@ -66,4 +68,13 @@ class AssistantSuite extends munit.FunSuite:
 
   test("every model offered says what it costs to download") {
     Assistant.models.foreach((id, shown) => assert(shown.contains("MB") || shown.contains("GB"), id))
+  }
+
+  test("the schema is a string, names every question id, and allows no other slot") {
+    val schema = Assistant.schema()
+    assert(schema.contains("\"question\""))
+    Questions.all.foreach(question => assert(schema.contains(s""""${question.id}""""), question.id))
+    Questions.all.flatMap(_.slots).map(_.name).distinct.foreach(name => assert(schema.contains(s""""$name"""")))
+    assert(schema.contains("\"additionalProperties\": false"))
+    assert(js.JSON.parse(schema) != null, "it has to parse as JSON, because the engine parses it")
   }
