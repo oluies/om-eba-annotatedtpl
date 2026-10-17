@@ -1,0 +1,19 @@
+:root { color-scheme: light dark; --edge: color-mix(in oklab, currentColor 18%, transparent); }
+body { font: 15px/1.5 "IBM Plex Sans", system-ui, sans-serif; margin: 0; padding: 2rem 1rem; }
+.page { max-width: 68rem; margin: 0 auto; }
+h1 { font-size: 1.6rem; margin: 0 0 .4rem; }
+.lede { margin: 0 0 1.4rem; opacity: .75; max-width: 46rem; }
+.controls { display: flex; flex-wrap: wrap; gap: .8rem; align-items: end; margin-bottom: 1rem; }
+label { display: flex; flex-direction: column; gap: .25rem; font-size: .82rem; opacity: .8; }
+select, input, button { font: inherit; padding: .4rem .55rem; border: 1px solid var(--edge); border-radius: 6px;
+  background: transparent; color: inherit; }
+button { cursor: pointer; font-weight: 600; }
+button[disabled] { opacity: .5; cursor: progress; }
+.status { min-height: 1.4em; color: #b3261e; white-space: pre-wrap; }
+.meta { font-size: .82rem; opacity: .7; margin: .2rem 0 .6rem; }
+table { border-collapse: collapse; width: 100%; font-size: .86rem; }
+th, td { text-align: left; padding: .3rem .5rem; border-bottom: 1px solid var(--edge); vertical-align: top; }
+th { position: sticky; top: 0; background: Canvas; }
+.answer { overflow: auto; max-height: 60vh; }
+details { margin-top: .8rem; font-size: .85rem; }
+pre { overflow: auto; padding: .6rem; border: 1px solid var(--edge); border-radius: 6px; }

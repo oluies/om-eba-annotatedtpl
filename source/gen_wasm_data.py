@@ -1,6 +1,6 @@
 """Publish the DPM as parquet a browser can query with DuckDB-WASM.
 
-    uv run source/gen_wasm_data.py                       # every release, into site/data
+    uv run source/gen_wasm_data.py                       # every release, into web/public/data
     uv run source/gen_wasm_data.py --dpm-release 4.4     # only what that release ships
     uv run source/gen_wasm_data.py --out /tmp/data --db source/dpm2/dpm2_4_4.duckdb
 
@@ -33,7 +33,7 @@ import duckdb
 REPO = Path(__file__).resolve().parent.parent
 DIR = Path(os.environ.get("DPM2_DIR") or REPO / "source" / "dpm2")
 DB = Path(os.environ.get("DPM2_DB") or DIR / "dpm2.duckdb")
-OUT = REPO / "site" / "data"
+OUT = REPO / "web" / "public" / "data"
 
 # Sorted, because statistics can only prune what is clustered; 50k rows per group,
 # measured in the browser rather than guessed.

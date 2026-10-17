@@ -15,4 +15,9 @@ pay42.duckdb
 source/dpm2/
 
 # The parquet tree for a browser; rebuild with source/gen_wasm_data.py
-site/
+web/public/data/
+
+# Scala.js output and its caches
+web/public/app.js
+web/public/app.js.map
+web/.scala-build/

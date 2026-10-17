@@ -53,6 +53,19 @@ jobs:
 
       - run: uv run pytest -rs
 
+  web:
+    name: the browser page compiles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The page is Scala.js and has no npm in its build: scala-cli emits ES modules and
+      # the browser resolves the CDN import itself, so compiling is the whole check.
+      # Driving it in a browser needs the DPM and a Chromium download, which is web/e2e.mjs.
+      - uses: VirtusLab/scala-cli-setup@v1.8.4
+        with:
+          jvm: temurin:21
+      - run: scala-cli compile web/src/dpm
+
   artefacts:
     name: the generated pack is up to date
     runs-on: ubuntu-latest
