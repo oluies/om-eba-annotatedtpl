@@ -17,7 +17,11 @@ source/dpm2/
 # The parquet tree for a browser; rebuild with source/gen_wasm_data.py
 web/public/data/
 
-# Scala.js output and its caches
-web/public/app.js
-web/public/app.js.map
-web/.scala-build/
+# Scala.js output and its caches. The cache lands next to the sources scala-cli was
+# pointed at - web/src/dpm/.scala-build - not at the project root, so this matches it
+# anywhere rather than in the one place it was expected.
+web/public/main.js
+web/public/main.js.map
+.scala-build/
+.bsp/
+web/server.log
