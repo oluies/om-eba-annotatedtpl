@@ -54,7 +54,7 @@ jobs:
       - run: uv run pytest -rs
 
   web:
-    name: the browser page compiles
+    name: the browser page compiles and its tests pass
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -71,7 +71,9 @@ jobs:
       # --server=false compiles in-process instead of starting bloop. One file, once,
       # in a container that is thrown away: the build server is pure overhead here, and
       # it is the part that broke.
-      - run: scala-cli --power compile web/src/dpm --server=false
+      # Tests as well as compile: the assistant's prompt and its answer-checking are
+      # pure, which is the half that can be verified without a GPU.
+      - run: scala-cli --power test web --server=false
 
   artefacts:
     name: the generated pack is up to date

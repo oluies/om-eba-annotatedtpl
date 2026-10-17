@@ -475,6 +475,29 @@ Eleven questions, which are data rather than code:
 
 The question and its slots live in the URL, so an answer can be sent to someone. A table
 that stops at its limit says so, because one that does not reads as the whole answer.
+
+### Asking in your own words
+
+Behind a fold, because it costs a download: a small model (SmolLM2 360M, ~376 MB, or
+Qwen2.5 in 0.5B and 1.5B) loaded with WebLLM only when someone asks for it. **It never
+writes SQL.** Its whole job is to pick one of the eleven questions and fill in its slots,
+and the page then runs that question's own statement:
+
+```json
+{"question": "sums", "slots": {"table": "F_12.01.a", "module": "FINREP9"}}
+```
+
+That is the same argument as the rest of the pack, applied to the model: a 360M model can
+choose among eleven questions, and it cannot write correct SQL over a schema where a
+plausible-looking cell code is wrong and a near miss in a dimension's wording matches
+nothing. What it chose is shown before the answer, so a wrong reading is visible rather
+than silent, and a question id or slot name it invents is refused rather than rounded to
+the nearest one.
+
+Without WebGPU the page says so and the questions keep working — which is most of why
+they exist. Checking `navigator.gpu` is not enough: Chromium exposes the object and then
+returns null from `requestAdapter()` when there is no GPU to drive, so the page asks for
+the adapter before sending anyone to fetch 376 MB that cannot run.
 Measured in a browser: eleven questions, 15–46 ms each, 4.0 MB pulled in total including
 the page itself.
 

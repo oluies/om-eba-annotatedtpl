@@ -1,9 +1,3 @@
-//> using scala 3.9.0
-//> using platform js
-//> using jsModuleKind es
-//> using jsModuleSplitStyleStr fewestmodules
-//> using dep com.raquo::laminar::17.2.1
-
 package dpm
 
 import com.raquo.laminar.api.L.{*, given}
@@ -39,6 +33,10 @@ object Main:
     dom.window.history.replaceState((), "", s"?${params.toString}")
 
   private val engine = Var[Option[Connection]](None)
+  private val assistant = Var[Option[Engine]](None)
+  private val assistantModel = Var(Assistant.models.head._1)
+  private val assistantStatus = Var("")
+  private val inOwnWords = Var("")
   private val status = Var("")
   private val running = Var(false)
   private val answer = Var(Option.empty[Answer])
@@ -114,6 +112,69 @@ object Main:
         answer.set(None)
         running.set(false)
 
+  /** Load the model, once, and only when asked. It is 376 MB at the smallest, so a page
+    * that fetched it on load would cost every reader a download most of them do not want.
+    */
+  private def loadAssistant(): scala.concurrent.Future[Engine] =
+    assistant.now() match
+      case Some(ready) => scala.concurrent.Future.successful(ready)
+      case None =>
+        val progress = (report: js.Dynamic) => assistantStatus.set(s"loading the assistant… ${report.text}")
+        val options = js.Dynamic.literal("initProgressCallback" -> progress).asInstanceOf[js.Object]
+        WebLlm.CreateMLCEngine(assistantModel.now(), options).toFuture.map: ready =>
+          assistant.set(Some(ready))
+          assistantStatus.set("")
+          ready
+
+  /** Ask the model which question was meant, then run that question's own SQL.
+    *
+    * The model never sees the schema and never writes a statement: it picks an id and
+    * fills slots, and anything it invents is refused rather than rounded to the nearest
+    * question.
+    */
+  private def askInOwnWords(): Unit =
+    val words = inOwnWords.now().trim
+    if words.isEmpty then ()
+    else
+      assistantStatus.set("checking whether this browser can run a model…")
+      val request = js.Dynamic
+        .literal(
+          "messages" -> js.Array(
+            js.Dynamic.literal("role" -> "system", "content" -> Assistant.prompt()),
+            js.Dynamic.literal("role" -> "user", "content" -> words),
+          ),
+          "temperature" -> 0,
+          "response_format" -> js.Dynamic.literal("type" -> "json_object"),
+        )
+        .asInstanceOf[js.Object]
+      val chosen = for
+        able <- Assistant.gpuReady()
+        _ =
+          if !able then
+            throw js.JavaScriptException(
+              "This browser cannot run a model: WebGPU has no adapter here. The questions "
+                + "above work without one - that is what they are for."
+            )
+        ready <- loadAssistant()
+        completion <- ready.chat.completions.create(request).toFuture
+      yield completion.choices.asInstanceOf[js.Array[js.Dynamic]](0).message.content.toString
+      chosen.onComplete:
+        case Success(text) =>
+          Assistant.parse(text) match
+            case Left(problem) =>
+              assistantStatus.set(problem)
+            case Right((picked, filled)) =>
+              assistantStatus.set(s"the assistant read that as: ${picked.ask}")
+              question.set(picked)
+              slots.set(filled)
+              ask()
+        case Failure(problem) =>
+          // js.JavaScriptException carries the message as the thrown value, not as
+          // getMessage, which would otherwise read as "JavaScriptException".
+          assistantStatus.set(problem match
+            case js.JavaScriptException(value) => value.toString
+            case other => other.getMessage)
+
   private def page: HtmlElement =
     div(
       cls := "page",
@@ -154,6 +215,38 @@ object Main:
         ),
       ),
       p(cls := "status", child.text <-- status.signal),
+      detailsTag(
+        cls := "assistant",
+        summaryTag("…or ask in your own words (needs a model, 376 MB, loaded only if you ask)"),
+        div(
+          cls := "controls",
+          label(
+            "Model",
+            select(
+              onChange.mapToValue --> (id => assistantModel.set(id)),
+              Assistant.models.map((id, shown) => option(value := id, shown)),
+            ),
+          ),
+          label(
+            "Question",
+            input(
+              cls := "words",
+              placeholder := "which rows add up to which in F 12.01.a under FINREP9?",
+              value <-- inOwnWords.signal,
+              onInput.mapToValue --> (text => inOwnWords.set(text)),
+              onKeyPress.filter(_.key == "Enter") --> (_ => askInOwnWords()),
+            ),
+          ),
+          button("Ask the assistant", onClick --> (_ => askInOwnWords())),
+        ),
+        p(
+          cls := "note",
+          "It picks one of the questions above and fills it in - it never writes SQL. ",
+          "What it chose is shown before the answer, so a wrong reading is visible rather ",
+          "than silent.",
+        ),
+        p(cls := "status", child.text <-- assistantStatus.signal),
+      ),
       child <-- answer.signal.map:
         case None => emptyNode
         case Some(result) =>

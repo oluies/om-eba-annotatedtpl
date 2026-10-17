@@ -17,3 +17,8 @@ th { position: sticky; top: 0; background: Canvas; }
 .answer { overflow: auto; max-height: 60vh; }
 details { margin-top: .8rem; font-size: .85rem; }
 pre { overflow: auto; padding: .6rem; border: 1px solid var(--edge); border-radius: 6px; }
+.assistant { margin: 1.2rem 0; border: 1px solid var(--edge); border-radius: 8px; padding: .6rem .8rem; }
+.assistant summary { cursor: pointer; font-weight: 600; font-size: .9rem; }
+.assistant .note { font-size: .8rem; opacity: .7; max-width: 46rem; }
+.assistant input.words { min-width: 26rem; }
+.limit { opacity: .9; }

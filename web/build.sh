@@ -3,5 +3,7 @@
 # browser resolves the CDN import itself.
 set -euo pipefail
 cd "$(dirname "$0")"
-scala-cli --power package src/dpm -o public/main.js --js -f "$@"
+# The whole directory, not src/dpm: the directives live in project.scala and the tests
+# in test/, and scala-cli wants one root to see both.
+scala-cli --power package . -o public/main.js --js -f "$@"
 ls -la public/*.js | awk '{printf "  %-28s %6.1f kB\n", $NF, $5/1000}'
