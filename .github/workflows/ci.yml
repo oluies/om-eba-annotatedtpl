@@ -64,7 +64,14 @@ jobs:
       - uses: VirtusLab/scala-cli-setup@v1.8.4
         with:
           jvm: temurin:21
-      - run: scala-cli compile web/src/dpm
+          # Pinned: the action's default was old enough to ship a bloop that cannot
+          # resolve the compiler bridge for Scala 3.9, which fails as
+          # "InvalidComponent: Expected single file for component ...scala3-sbt-bridge".
+          scala-cli-version: 1.18.0
+      # --server=false compiles in-process instead of starting bloop. One file, once,
+      # in a container that is thrown away: the build server is pure overhead here, and
+      # it is the part that broke.
+      - run: scala-cli --power compile web/src/dpm --server=false
 
   artefacts:
     name: the generated pack is up to date
