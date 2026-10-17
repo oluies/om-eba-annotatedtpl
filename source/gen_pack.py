@@ -2179,8 +2179,28 @@ A question is a template and the slots a reader fills, never free SQL, and the a
 shows the statement that produced it. That is the same argument as everywhere else in
 this pack: `F04041_r0070_c0015` looks exactly as plausible as a real cell code, so a page
 that invites anyone — or any model — to write their own SQL over this schema invites the
-mistake back in. Measured in a browser: five questions, 16–23 ms each, 1.9 MB pulled in
-total including the page itself.
+mistake back in.
+
+Eleven questions, which are data rather than code:
+
+| | |
+|---|---|
+| Which cells does a template have? | the grid, with labels and datapoint ids |
+| What does a template break down by? | dimensions and the exact wording of their members |
+| Which cells make up an aggregate? | one dimension, one member — the hand-maintained spreadsheet, answered |
+| Which rows add up to which? | from the rules, not from reading a grid |
+| Which rules reach a template? | with the rows each names here, and how many templates it spans |
+| What does a validation code mean? | per module version, with severity and whether it is still run |
+| Which rules has the EBA switched off? | `active` is false: published and not run |
+| What is this reported datapoint id? | `dp152217` back to its cell |
+| What does a report's column header mean? | `qCDF` is *Name of entity*, and where it is a key |
+| What are a template's key dimensions? | the columns a report of an open table carries |
+| Which module versions…? | taxonomy version, DPM version, and `do_not_use` |
+
+The question and its slots live in the URL, so an answer can be sent to someone. A table
+that stops at its limit says so, because one that does not reads as the whole answer.
+Measured in a browser: eleven questions, 15–46 ms each, 4.0 MB pulled in total including
+the page itself.
 
 ### A rule code is not one rule
 

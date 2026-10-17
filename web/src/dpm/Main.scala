@@ -22,12 +22,28 @@ import scala.util.{Failure, Success}
   */
 object Main:
 
+  /** A question and its slots live in the URL, so an answer can be sent to someone.
+    * Read once at startup; written on every ask with replaceState, which leaves the
+    * back button meaning what it meant before the page was opened.
+    */
+  private def fromLocation(): (Question, Map[String, String]) =
+    val params = new dom.URLSearchParams(dom.window.location.search)
+    val question = Questions.byId(Option(params.get("q")).getOrElse(""))
+    val filled = question.slots.flatMap(slot => Option(params.get(slot.name)).map(slot.name -> _)).toMap
+    (question, filled)
+
+  private def toLocation(question: Question, filled: Map[String, String]): Unit =
+    val params = new dom.URLSearchParams()
+    params.set("q", question.id)
+    question.slots.foreach(slot => params.set(slot.name, filled.getOrElse(slot.name, slot.example)))
+    dom.window.history.replaceState((), "", s"?${params.toString}")
+
   private val engine = Var[Option[Connection]](None)
   private val status = Var("")
   private val running = Var(false)
   private val answer = Var(Option.empty[Answer])
-  private val question = Var(Questions.all.head)
-  private val slots = Var(Map.empty[String, String])
+  private val question = Var(fromLocation()._1)
+  private val slots = Var(fromLocation()._2)
 
   final case class Answer(columns: List[String], rows: List[List[String]], millis: Long, sql: String, source: String)
 
@@ -65,6 +81,7 @@ object Main:
     val current = question.now()
     val filled = slots.now().withDefault(name => current.slots.find(_.name == name).map(_.example).getOrElse(""))
     val sql = current.sql(filled)
+    toLocation(current, current.slots.map(slot => slot.name -> filled(slot.name)).toMap)
     running.set(true)
     status.set("")
     val started = System.currentTimeMillis()
@@ -145,6 +162,11 @@ object Main:
             p(
               cls := "meta",
               s"${result.rows.size} row(s) in ${result.millis} ms, read from ${result.source}",
+              // A table that stops at the limit without saying so reads as the whole
+              // answer, which is the one way this page could mislead on its own.
+              if result.rows.size == Questions.limit then
+                span(cls := "limit", s" — the query's limit of ${Questions.limit}; narrow it to see the rest")
+              else emptyNode,
             ),
             table(
               thead(tr(result.columns.map(th(_)))),

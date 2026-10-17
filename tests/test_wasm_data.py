@@ -99,3 +99,44 @@ def test_a_release_the_database_does_not_have_is_refused(tmp_path):
     sys.argv = ["gen_wasm_data.py", "--db", str(dpm_lookup.DB), "--out", str(tmp_path), "--dpm-release", "9.9"]
     with pytest.raises(SystemExit, match="no release"):
         gen.main()
+
+
+def test_the_sums_recursion_is_prefiltered_and_version_free():
+    """Two things make it finish. Only rules that can be sums enter the recursion - a
+    root `=` with a `+` under it - and the shape is resolved per operation version with
+    the module versions joined on afterwards. Carrying module and version through the
+    recursion multiplies 48k nodes by the versions each rule belongs to, which is the
+    difference between 0.1s and not finishing inside ten minutes."""
+    sums = next(table for table in gen.TABLES if table.name == "sums")
+    recursion = sums.sql[: sums.sql.index("), edges AS (")]
+    assert "arith AS (" in sums.sql, "the prefilter"
+    assert "Symbol = '='" in sums.sql and "Symbol = '+'" in sums.sql
+    assert "ModuleVersion" not in recursion, "module versions must not enter the recursion"
+    assert "ModuleVersion" in sums.sql, "they are joined on after it"
+
+
+@needs_dpm2
+def test_the_sums_match_what_the_lookup_says(tmp_path):
+    """The page's answer has to be the tool's answer: F_12.01.a row 0010 is rows 0020 and
+    0080 added together, under rule v23845_h."""
+    import duckdb
+
+    import dpm_lookup
+
+    sys.argv = ["gen_wasm_data.py", "--db", str(dpm_lookup.DB), "--out", str(tmp_path), "--dpm-release", "4.2"]
+    gen.main()
+
+    con = duckdb.connect()
+    published = con.execute(
+        f"""SELECT total_row, addend_rows, rule_code FROM '{tmp_path}/sums.parquet'
+            WHERE table_code = 'F_12.01.a' AND module = 'FINREP9' AND total_row = '0010'"""
+    ).fetchall()
+    con.close()
+    assert published, "the lookup finds sums for this template"
+    (total, addends, rule) = published[0]
+    assert (total, list(addends)) == ("0010", ["0020", "0080"])
+    assert rule == "v23845_h"
+
+    from_tool = dpm_lookup.lookup_dpm_sums("F 12.01.a", "FINREP9")
+    matching = [row for row in from_tool["sums"] if row["total_row"] == "0010"]
+    assert matching and matching[0]["addend_rows"] == ["0020", "0080"]

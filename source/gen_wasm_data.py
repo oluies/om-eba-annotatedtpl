@@ -201,6 +201,74 @@ TABLES = [
         partition_by="framework",
     ),
     Published(
+        # Which rows add up to which, taken from the rules rather than from reading a
+        # grid. The browser cannot do this itself: the expression tree is 151k nodes, and
+        # publishing it to re-walk there would cost more than the answer.
+        #
+        # The shape of a rule is resolved once per operation version and the module
+        # versions are joined on at the end. Carrying module and version through the
+        # recursion instead multiplies 48k nodes by the versions each rule belongs to,
+        # which is the difference between seconds and not finishing.
+        "sums",
+        f"""
+        WITH RECURSIVE arith AS (
+            -- Only rules that can be sums enter the recursion: a root `=` with a `+`
+            -- under it. 4972 of 19789 operation versions, 47890 of 151240 nodes.
+            SELECT ov.OperationVID
+            FROM   OperationVersion ov
+            WHERE  EXISTS (
+                     SELECT 1 FROM OperationNode r
+                     LEFT JOIN Operator o ON o.OperatorID = r.OperatorID
+                     WHERE r.OperationVID = ov.OperationVID AND r.ParentNodeID IS NULL AND o.Symbol = '=')
+               AND EXISTS (
+                     SELECT 1 FROM OperationNode p
+                     LEFT JOIN Operator o2 ON o2.OperatorID = p.OperatorID
+                     WHERE p.OperationVID = ov.OperationVID AND o2.Symbol = '+')
+        ), node AS (
+            SELECT n.OperationVID, n.NodeID, n.ParentNodeID, n.IsLeaf, o.Symbol
+            FROM   arith
+            JOIN   OperationNode n ON n.OperationVID = arith.OperationVID
+            LEFT JOIN Operator o ON o.OperatorID = n.OperatorID
+        ), child AS (
+            SELECT r.OperationVID, r.NodeID AS eq, c.NodeID, c.Symbol, c.IsLeaf
+            FROM   node r JOIN node c ON c.ParentNodeID = r.NodeID
+            WHERE  r.ParentNodeID IS NULL AND r.Symbol = '='
+        ), addends AS (
+            SELECT eq, NodeID AS node, IsLeaf FROM child WHERE Symbol = '+'
+            UNION ALL
+            SELECT a.eq, n.NodeID, n.IsLeaf FROM addends a JOIN node n ON n.ParentNodeID = a.node
+        ), located AS (
+            SELECT r.NodeID, l."Table" AS tbl, coalesce(l."Row", '*') AS row_code,
+                   coalesce(l."Column", '*') AS col, coalesce(l.Sheet, '') AS sheet
+            FROM   OperandReference r JOIN OperandReferenceLocation l USING (OperandReferenceID)
+        ), edges AS (
+            SELECT   eqs.OperationVID, tc.tbl AS table_code, tc.row_code AS total_row,
+                     list_sort(list(DISTINCT ac.row_code)) AS addend_rows,
+                     list_sort(list(DISTINCT tc.col))      AS columns,
+                     list_sort(list(DISTINCT tc.sheet))    AS sheets
+            FROM     child eqs
+            JOIN     located tc ON tc.NodeID = eqs.NodeID AND eqs.IsLeaf <> 0
+            JOIN     addends a ON a.eq = eqs.eq AND a.IsLeaf <> 0
+            JOIN     located ac ON ac.NodeID = a.node
+                               AND ac.tbl = tc.tbl AND ac.col = tc.col AND ac.sheet = tc.sheet
+            GROUP BY eqs.OperationVID, tc.tbl, tc.row_code
+        )
+        SELECT   fw.framework, e.table_code, mv.Code AS module,
+                 mv.VersionNumber AS taxonomy_version, op.Code AS rule_code,
+                 os.Severity AS severity, os.IsActive <> 0 AS active,
+                 e.total_row, e.addend_rows, e.columns, e.sheets
+        FROM     edges e
+        JOIN     OperationVersion ov ON ov.OperationVID = e.OperationVID
+        JOIN     Operation op ON op.OperationID = ov.OperationID
+        JOIN     OperationScope os ON os.OperationVID = ov.OperationVID
+        JOIN     OperationScopeComposition osc ON osc.OperationScopeID = os.OperationScopeID
+        JOIN     ModuleVersion mv ON mv.ModuleVID = osc.ModuleVID
+        JOIN     ({FRAMEWORK_OF_TABLE}) fw ON fw.table_code = e.table_code
+        WHERE    1 = 1 {IN_RELEASE}
+        """,
+        "table_code, module, total_row, rule_code",
+    ),
+    Published(
         "properties",
         """
         SELECT ic.Code AS code, i.Name AS property, ic.StartReleaseID AS from_release_id,
