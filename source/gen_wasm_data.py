@@ -1,8 +1,13 @@
 """Publish the DPM as parquet a browser can query with DuckDB-WASM.
 
     uv run source/gen_wasm_data.py                       # every release, into web/public/data
-    uv run source/gen_wasm_data.py --dpm-release 4.4     # only what that release ships
+    uv run source/gen_wasm_data.py --dpm-release 4.4     # into web/public/data/4.4
     uv run source/gen_wasm_data.py --out /tmp/data --db source/dpm2/dpm2_4_4.duckdb
+
+A named release lands in its own directory and `releases.json` beside them lists what is
+there, so the page can offer them. Releases are separate answers to the same question -
+FINREP9 is taxonomy 3.2.0 in DPM 4.0 and 3.3.0 from 4.2 - and merging them would make
+"which release says this" unanswerable, here as in the database.
 
 Seven tables, pre-joined, answer every question the agent tools answer. Publishing the
 model's own tables instead would be 71.6 MB, of which ContextComposition alone is 38.
@@ -309,6 +314,12 @@ def published_files(out: Path) -> list[Path]:
     return sorted(path for path in out.rglob("*.parquet") if path.is_file())
 
 
+def releases_published(root: Path) -> list[str]:
+    """The release directories under `root`, newest last, by scanning rather than by
+    remembering: a release deleted by hand should disappear from the page too."""
+    return sorted(path.name for path in root.iterdir() if path.is_dir() and (path / "manifest.json").is_file())
+
+
 def manifest(out: Path, db: Path, dpm_release: str | None, releases: list[str], counts: dict[str, int]) -> dict:
     """What was published, from what, and when - the page shows it, and a stale copy is
     otherwise indistinguishable from a current one."""
@@ -346,6 +357,13 @@ def main() -> None:
         raise SystemExit(f"{args.db} does not exist - run source/fetch_dpm2.py first")
     args.out.mkdir(parents=True, exist_ok=True)
 
+    # A named release gets its own directory; without one, everything goes in the root,
+    # which is what a single-release site wants.
+    root = args.out
+    if args.dpm_release:
+        args.out = args.out / args.dpm_release
+        args.out.mkdir(parents=True, exist_ok=True)
+
     con = duckdb.connect(str(args.db), read_only=True)
     try:
         releases = [row[0] for row in con.execute("SELECT Code FROM Release ORDER BY ReleaseID").fetchall()]
@@ -363,6 +381,8 @@ def main() -> None:
 
     written = manifest(args.out, args.db, args.dpm_release, releases, counts)
     (args.out / "manifest.json").write_text(json.dumps(written, indent=2) + "\n", encoding="utf-8")
+    if args.dpm_release:
+        (root / "releases.json").write_text(json.dumps(releases_published(root), indent=2) + "\n", encoding="utf-8")
     print(f"\n{written['files']} file(s), {written['total_bytes'] / 1e6:.2f} MB in {args.out}")
 
 

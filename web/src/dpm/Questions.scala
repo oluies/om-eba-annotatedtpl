@@ -30,7 +30,11 @@ object Questions:
   private def partition(table: String)(framework: String): String =
     Data.url(s"$table/framework=$framework/data_0.parquet")
 
-  private def whole(table: String)(framework: String): String = Data.url(s"$table.parquet")
+  /** An unpartitioned table is read into the engine once per release, so a question names
+    * the table rather than the file. `Data.cached` is what that covers.
+    */
+  private def whole(table: String)(framework: String): String =
+    if Data.cached.contains(table) then table else Data.url(s"$table.parquet")
 
   private val framework = Slot("framework", "Framework", "FINREP, COREP, DORA…", "FINREP")
   private val template = Slot("table", "Template", "F_12.01.a", "F_12.01.a")
@@ -76,7 +80,7 @@ object Questions:
       sql = filled => s"""
         |SELECT module, taxonomy_version, dpm_release, severity, active,
         |       from_submission_date, expression
-        |FROM   '${whole("rules")("")}'
+        |FROM   ${whole("rules")("")}
         |WHERE  rule_code = regexp_replace('${filled("rule_code")}', '_[0-9]+$$', '')
         |ORDER  BY module, taxonomy_version""".stripMargin.trim,
       reads = whole("rules"),
@@ -87,7 +91,7 @@ object Questions:
       slots = List(framework, template),
       sql = filled => s"""
         |SELECT code, label, property_code, property
-        |FROM   '${whole("headers")("")}'
+        |FROM   ${whole("headers")("")}
         |WHERE  table_code = '${filled("table")}' AND is_key
         |ORDER  BY code""".stripMargin.trim,
       reads = whole("headers"),
@@ -123,7 +127,7 @@ object Questions:
       slots = List(template, module),
       sql = filled => s"""
         |SELECT total_row, addend_rows, columns, sheets, rule_code, severity
-        |FROM   '${whole("sums")("")}'
+        |FROM   ${whole("sums")("")}
         |WHERE  table_code = '${filled("table")}' AND module = '${filled("module")}'
         |ORDER  BY total_row, rule_code""".stripMargin.trim,
       reads = whole("sums"),
@@ -140,7 +144,7 @@ object Questions:
         |SELECT   r.rule_code, r.severity, r.active, r.taxonomy_version, r.dpm_release,
         |         list_sort(list(DISTINCT rc.row_code)) AS rows_here,
         |         count(DISTINCT rc.table_code) AS templates_named
-        |FROM     '${whole("rules")("")}' r
+        |FROM     ${whole("rules")("")} r
         |JOIN     here USING (operation_vid)
         |JOIN     cells rc USING (operation_vid)
         |WHERE    r.module = '${filled("module")}'
@@ -168,8 +172,8 @@ object Questions:
       slots = List(Slot("code", "Header", "qCDF, qBBE, ei1452", "qCDF")),
       sql = filled => s"""
         |SELECT p.code, p.property, h.table_code, h.label AS used_as
-        |FROM   '${whole("properties")("")}' p
-        |LEFT JOIN '${whole("headers")("")}' h ON h.property_code = p.code AND h.is_key
+        |FROM   ${whole("properties")("")} p
+        |LEFT JOIN ${whole("headers")("")} h ON h.property_code = p.code AND h.is_key
         |WHERE  p.code = '${filled("code")}'
         |ORDER  BY h.table_code""".stripMargin.trim,
       reads = whole("properties"),
@@ -182,7 +186,7 @@ object Questions:
       // names one tells a reader to satisfy a check nobody runs.
       sql = filled => s"""
         |SELECT rule_code, severity, taxonomy_version, dpm_release, from_submission_date
-        |FROM   '${whole("rules")("")}'
+        |FROM   ${whole("rules")("")}
         |WHERE  module = '${filled("module")}' AND NOT active
         |ORDER  BY rule_code
         |LIMIT  $limit""".stripMargin.trim,
@@ -195,7 +199,7 @@ object Questions:
       sql = filled => s"""
         |SELECT module, taxonomy_version, dpm_release, from_reference_date,
         |       to_reference_date, do_not_use
-        |FROM   '${whole("modules")("")}'
+        |FROM   ${whole("modules")("")}
         |WHERE  framework = '${filled("framework")}'
         |ORDER  BY module, taxonomy_version""".stripMargin.trim,
       reads = whole("modules"),

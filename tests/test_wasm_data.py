@@ -78,7 +78,7 @@ def test_a_generated_tree_answers_and_carries_a_manifest(tmp_path):
     sys.argv = ["gen_wasm_data.py", "--db", str(dpm_lookup.DB), "--out", str(tmp_path), "--dpm-release", "4.2"]
     gen.main()
 
-    written = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    written = json.loads((tmp_path / "4.2" / "manifest.json").read_text(encoding="utf-8"))
     assert written["dpm_release"] == "4.2"
     assert written["source"] == dpm_lookup.DB.name
     assert written["total_bytes"] > 0
@@ -86,7 +86,8 @@ def test_a_generated_tree_answers_and_carries_a_manifest(tmp_path):
 
     con = duckdb.connect()
     answer = con.execute(
-        f"SELECT severity, active FROM '{tmp_path}/rules.parquet' WHERE rule_code = 'v0174_m' AND module = 'COREP_OF'"
+        f"SELECT severity, active FROM '{tmp_path}/4.2/rules.parquet' "
+        "WHERE rule_code = 'v0174_m' AND module = 'COREP_OF'"
     ).fetchall()
     assert answer, "the rule is in release 4.2"
     con.close()
@@ -128,7 +129,7 @@ def test_the_sums_match_what_the_lookup_says(tmp_path):
 
     con = duckdb.connect()
     published = con.execute(
-        f"""SELECT total_row, addend_rows, rule_code FROM '{tmp_path}/sums.parquet'
+        f"""SELECT total_row, addend_rows, rule_code FROM '{tmp_path}/4.2/sums.parquet'
             WHERE table_code = 'F_12.01.a' AND module = 'FINREP9' AND total_row = '0010'"""
     ).fetchall()
     con.close()
@@ -140,3 +141,44 @@ def test_the_sums_match_what_the_lookup_says(tmp_path):
     from_tool = dpm_lookup.lookup_dpm_sums("F 12.01.a", "FINREP9")
     matching = [row for row in from_tool["sums"] if row["total_row"] == "0010"]
     assert matching and matching[0]["addend_rows"] == ["0020", "0080"]
+
+
+# --- one directory per release ----------------------------------------------------------
+
+
+def test_the_release_index_is_scanned_rather_than_remembered(tmp_path):
+    """A release deleted by hand should disappear from the page, and a directory without
+    a manifest is a half-written one rather than a release."""
+    for name in ("4.2.1", "4.4"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "manifest.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "half-written").mkdir()
+    (tmp_path / "notes.txt").write_text("not a release", encoding="utf-8")
+    assert gen.releases_published(tmp_path) == ["4.2.1", "4.4"]
+
+
+@needs_dpm2
+def test_a_named_release_lands_in_its_own_directory_and_is_indexed(tmp_path):
+    """Releases are separate answers to the same question - v0491_m is active in what
+    4.2.1 published and deactivated in what 4.4 does - so they do not share a tree."""
+    import dpm_lookup
+
+    sys.argv = ["gen_wasm_data.py", "--db", str(dpm_lookup.DB), "--out", str(tmp_path), "--dpm-release", "4.2"]
+    gen.main()
+
+    assert (tmp_path / "4.2" / "manifest.json").is_file()
+    assert (tmp_path / "4.2" / "rules.parquet").is_file()
+    assert not (tmp_path / "rules.parquet").exists(), "nothing is written to the root"
+    assert json.loads((tmp_path / "releases.json").read_text(encoding="utf-8")) == ["4.2"]
+
+
+@needs_dpm2
+def test_without_a_release_everything_goes_in_the_root(tmp_path):
+    """A site with one release wants no directory in its paths."""
+    import dpm_lookup
+
+    sys.argv = ["gen_wasm_data.py", "--db", str(dpm_lookup.DB), "--out", str(tmp_path)]
+    gen.main()
+
+    assert (tmp_path / "manifest.json").is_file()
+    assert not (tmp_path / "releases.json").exists()

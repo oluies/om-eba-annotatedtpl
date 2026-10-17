@@ -29,6 +29,7 @@ object Main:
   private def toLocation(question: Question, filled: Map[String, String]): Unit =
     val params = new dom.URLSearchParams()
     params.set("q", question.id)
+    if Data.release.nonEmpty then params.set("release", Data.release)
     question.slots.foreach(slot => params.set(slot.name, filled.getOrElse(slot.name, slot.example)))
     dom.window.history.replaceState((), "", s"?${params.toString}")
 
@@ -37,6 +38,7 @@ object Main:
   private val assistantModel = Var(Assistant.models.head._1)
   private val assistantStatus = Var("")
   private val inOwnWords = Var("")
+  private val releases = Var(List.empty[String])
   private val status = Var("")
   private val running = Var(false)
   private val answer = Var(Option.empty[Answer])
@@ -46,12 +48,26 @@ object Main:
   final case class Answer(columns: List[String], rows: List[List[String]], millis: Long, sql: String, source: String)
 
   def main(args: Array[String]): Unit =
+    // The release comes from the URL when there is one, so a shared link answers under
+    // the release it was asked under rather than under whatever is newest today.
+    val asked = Option(new dom.URLSearchParams(dom.window.location.search).get("release"))
+    Data.published().foreach: found =>
+      releases.set(found)
+      found.lastOption.foreach(newest => Data.use(asked.filter(found.contains).getOrElse(newest)))
     renderOnDomContentLoaded(dom.document.getElementById("app"), page)
 
-  /** One connection, opened on demand and kept. */
+  /** One connection, opened on demand and kept, with the small tables read in.
+    *
+    * Reopened when the release changes rather than reused: the tables are the release,
+    * and keeping them while the paths move underneath is how a page answers under one
+    * release and labels it another.
+    */
   private def connection(): scala.concurrent.Future[Connection] =
     engine.now() match
-      case Some(con) => scala.concurrent.Future.successful(con)
+      case Some(con) if loadedFor == Data.release => scala.concurrent.Future.successful(con)
+      case Some(con) =>
+        status.set(s"reading DPM ${Data.release}…")
+        preload(con).map { ready => status.set(""); ready }
       case None =>
         status.set("loading the engine (8 MB, once)…")
         for
@@ -60,10 +76,25 @@ object Main:
           db = new DuckDbModule.AsyncDuckDB(new DuckDbModule.VoidLogger(), worker)
           _ <- db.instantiate(bundle.mainModule, bundle.pthreadWorker).toFuture
           con <- db.connect().toFuture
+          ready <- preload(con)
         yield
-          engine.set(Some(con))
+          engine.set(Some(ready))
           status.set("")
-          con
+          ready
+
+  /** The release the tables in the engine were read for. */
+  private var loadedFor: String = ""
+
+  /** Read the small tables in, for whichever release is current. 450 kB once, against
+    * every question re-reading the files it names - measured, not assumed.
+    */
+  private def preload(con: Connection): scala.concurrent.Future[Connection] =
+    Data.cached
+      .foldLeft(scala.concurrent.Future.successful(())): (before, name) =>
+        before.flatMap(_ => con.query(Data.preload(name)).toFuture.map(_ => ()))
+      .map: _ =>
+        loadedFor = Data.release
+        con
 
   /** The worker has to come from this origin, so it is a blob that imports the CDN one -
     * a cross-origin script cannot be a worker directly.
@@ -186,6 +217,21 @@ object Main:
       ),
       div(
         cls := "controls",
+        child <-- releases.signal.map: found =>
+          if found.sizeIs < 2 then emptyNode
+          else
+            label(
+              "DPM release",
+              select(
+                onChange.mapToValue --> { release =>
+                  Data.use(release)
+                  answer.set(None)
+                  status.set("")
+                },
+                found.map(release => option(value := release, selected := release == Data.release, release)),
+              ),
+            )
+        ,
         label(
           "Question",
           select(
@@ -254,7 +300,8 @@ object Main:
             cls := "answer",
             p(
               cls := "meta",
-              s"${result.rows.size} row(s) in ${result.millis} ms, read from ${result.source}",
+              s"${result.rows.size} row(s) in ${result.millis} ms, read from ${result.source}"
+                + (if result.source.contains("/") then "" else s" (read into the engine once for DPM ${Data.release})"),
               // A table that stops at the limit without saying so reads as the whole
               // answer, which is the one way this page could mislead on its own.
               if result.rows.size == Questions.limit then

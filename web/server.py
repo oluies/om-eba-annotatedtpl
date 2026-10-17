@@ -33,6 +33,11 @@ class Ranged(http.server.BaseHTTPRequestHandler):
         ".wasm": "application/wasm",
     }
 
+    def _cache(self) -> None:
+        # What GitHub Pages sends. Worth mimicking: whether a second visit refetches the
+        # parquet is the whole question behind caching it in OPFS by hand.
+        self.send_header("Cache-Control", "max-age=600")
+
     def _type(self, target: Path) -> None:
         # A module script with no Content-Type is refused outright: "Expected a
         # JavaScript-or-Wasm module script but the server responded with a MIME type
@@ -81,6 +86,7 @@ class Ranged(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self._cors()
         self._type(target)
+        self._cache()
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

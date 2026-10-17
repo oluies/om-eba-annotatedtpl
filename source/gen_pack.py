@@ -2167,9 +2167,17 @@ human rather than a workflow.
 ### The page over it
 
 ```bash
-cd web && ./build.sh --js-mode release     # public/main.js, 752 kB (118 kB gzipped)
-python3 server.py public 8097              # any static server that speaks byte ranges
+uv run source/gen_wasm_data.py --dpm-release 4.4   # into web/public/data/4.4
+cd web && ./build.sh --js-mode release             # public/main.js, 118 kB gzipped
+python3 server.py public 8097                      # any static server that speaks byte ranges
 ```
+
+Each release lands in its own directory and the page offers them, because releases are
+separate answers to the same question rather than versions of one. Between what 4.2.1
+published and what 4.4 does, **408 rules changed severity or activity**, 1738 rules are
+new and 829 are gone: `v0491_m` is active under 4.2.1 and deactivated under 4.4, which
+the page shows by switching the release and asking again. The release is in the URL, so
+a shared answer stays the answer it was.
 
 Scala.js and Laminar, no npm and no bundler: Scala.js emits ES modules and the browser
 resolves the DuckDB-WASM import from the CDN itself. `web/src/dpm/DuckDb.scala` is the
@@ -2200,8 +2208,6 @@ Eleven questions, which are data rather than code:
 The question and its slots live in the URL, so an answer can be sent to someone. A table
 that stops at its limit says so, because one that does not reads as the whole answer.
 
-### Asking in your own words
-
 Behind a fold, because it costs a download: a small model (SmolLM2 360M, ~376 MB, or
 Qwen2.5 in 0.5B and 1.5B) loaded with WebLLM only when someone asks for it. **It never
 writes SQL.** Its whole job is to pick one of the eleven questions and fill in its slots,
@@ -2217,6 +2223,18 @@ plausible-looking cell code is wrong and a near miss in a dimension's wording ma
 nothing. What it chose is shown before the answer, so a wrong reading is visible rather
 than silent, and a question id or slot name it invents is refused rather than rounded to
 the nearest one.
+
+### What is cached, and what is not
+
+Measured rather than assumed. With `Cache-Control: max-age=600` — what GitHub Pages sends
+— a second visit refetched every range, and within one session each question re-read the
+files it named. So the five small tables (modules, rules, sums, headers, properties, 450
+kB together) are read into the engine once per release, and the questions that use them
+pull **nothing** over the wire afterwards. The partitioned tables stay on HTTP: they are
+per framework, only the needed one is ever touched, and copying them into OPFS by hand
+would buy less than it costs to keep correct across a release switch.
+
+### Asking in your own words
 
 Without WebGPU the page says so and the questions keep working — which is most of why
 they exist. Checking `navigator.gpu` is not enough: Chromium exposes the object and then
