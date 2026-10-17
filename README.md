@@ -435,10 +435,25 @@ Against those, the codec is noise — zstd 3.26 MB, zstd 22 3.14 MB, brotli 3.01
 3.25 MB, snappy 3.84 MB — so this writes zstd at level 22 and leaves brotli's extra 4%
 alone rather than find out whether the WASM build reads it.
 
-`.github/workflows/wasm-data.yml` builds the tree on demand and uploads it as an
-artefact. It does **not** publish: the tree is derived from the EBA's DPM database, and
-putting a derived copy on a public site is redistribution, which is a question for a
-human rather than a workflow.
+### Publishing it
+
+The EBA's legal notice says: *"Reproduction of all EBA material on this site is
+authorised, provided the source is acknowledged, save where otherwise stated."* The DPM
+database is on that site, neither its download pages nor the database itself states
+otherwise, and the published tree is a reformatting of codes, labels and rules rather
+than a copy of the database. So the condition is the acknowledgement, and it is carried
+in three places rather than one: `NOTICE`, the `source_notice` field in every
+`manifest.json`, and the footer of the page, because a published copy is read where this
+repository is not.
+
+Two things that are not about copyright. Release 4.4 is a **draft** technical package, so
+anything built from it is a draft too and should say so. And this is a reformatting, not
+the EBA's distribution: a reporting institution gets the database from the EBA, and the
+page says that as well.
+
+`.github/workflows/wasm-data.yml` still builds the tree on demand and uploads it as an
+artefact rather than deploying it. Turning it into a Pages deploy is a four-line change,
+and it stays a decision rather than a default.
 
 ### The page over it
 

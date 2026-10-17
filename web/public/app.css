@@ -22,3 +22,6 @@ pre { overflow: auto; padding: .6rem; border: 1px solid var(--edge); border-radi
 .assistant .note { font-size: .8rem; opacity: .7; max-width: 46rem; }
 .assistant input.words { min-width: 26rem; }
 .limit { opacity: .9; }
+.source { margin-top: 2rem; padding-top: .8rem; border-top: 1px solid var(--edge);
+  font-size: .78rem; opacity: .7; max-width: 46rem; }
+.source a { color: inherit; }

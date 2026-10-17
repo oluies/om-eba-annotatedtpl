@@ -392,4 +392,16 @@ object Main:
             detailsTag(summaryTag("the SQL that answered it"), pre(code(result.sql))),
           )
       ,
+      footerTag(
+        cls := "source",
+        // The permission is conditional on this, so it is part of the page rather than
+        // a line in a repository the reader of a published copy will never see.
+        "Derived from the EBA DPM 2.0 database. Reproduction of EBA material is authorised ",
+        "provided the source is acknowledged (",
+        a(href := "https://www.eba.europa.eu/legal-notice", "eba.europa.eu/legal-notice"),
+        "). This page is not published by the EBA and is not endorsed by it; for the ",
+        "database itself, and for anything a report is filed against, go to ",
+        a(href := "https://www.eba.europa.eu/risk-and-data-analysis/reporting/dpm-data-dictionary", "the EBA"),
+        ".",
+      ),
     )

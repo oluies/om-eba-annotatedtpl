@@ -39,6 +39,38 @@ relicenses it.
 
 Source: EBA PAY 4.2 (FRPPAY 4.2) annotated table layout, 2026-01-06.
 
+
+3. EBA DPM 2.0 database and anything derived from it — same terms
+------------------------------------------------------------------
+
+    source/dpm2/          (downloaded, gitignored)
+    09-validation-rules.csv
+    README_DPM2.md
+    web/public/data/      (generated, gitignored)
+
+The same clause covers these: the DPM database is published on the same site,
+and neither its download pages nor the database itself states otherwise - the
+only "copyright" in the model is a NACE activity label.
+
+web/public/data is a reformatting rather than a copy. It holds template, row,
+column, dimension, member, property and rule codes with their labels, the
+datapoint identifiers, and which rows add up to which, written as parquet for a
+browser to query. It is not the EBA's distribution and must not be presented as
+one: the EBA publishes the database itself, and that is where a reporting
+institution should get it.
+
+Sources, by release:
+
+    DPM 2.0 release 4.2.1   https://www.eba.europa.eu/sites/default/files/2026-02/
+                            ad0d2577-a1eb-4826-a249-a1f7701c6796/DPM2%20Database_v_4_2_1.zip
+    DPM 2.0 release 4.3     reporting framework 4.3, "DPM2 Database_v 4_3.zip"
+    DPM 2.0 release 4.4     reporting framework 4.4, "DPM2 Database_v 4_4.zip" - a DRAFT
+                            technical package, and anything built from it is a draft too
+
+Between-release validation rule updates come from the validation rules packages
+page and are applied with source/apply_vr_updates.py; a published copy says in
+its manifest which release it was built from and when.
+
 This repository is not affiliated with, endorsed by, or published by the EBA.
 The labels are transcribed verbatim and carry no interpretation; for the
 regulatory definitions and the validation rules see the EBA Guidelines on

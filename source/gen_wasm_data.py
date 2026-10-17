@@ -326,6 +326,16 @@ def manifest(out: Path, db: Path, dpm_release: str | None, releases: list[str], 
     files = published_files(out)
     return {
         "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        # Travels with the data, because a published copy is read where this repository
+        # is not: the EBA authorises reproduction provided the source is acknowledged,
+        # and a file that does not carry the acknowledgement cannot be reproduced further
+        # without someone going to look it up.
+        "source_notice": (
+            "Derived from the EBA DPM 2.0 database. Reproduction of EBA material is "
+            "authorised provided the source is acknowledged "
+            "(https://www.eba.europa.eu/legal-notice). Not published by or endorsed by "
+            "the EBA; for the database itself, see eba.europa.eu."
+        ),
         "source": db.name,
         "dpm_release": dpm_release or "all",
         "releases_in_source": releases,
