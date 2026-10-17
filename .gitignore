@@ -13,3 +13,6 @@ pay42.duckdb
 
 # Local copy of the EBA DPM 2.0 database; download with source/fetch_dpm2.py
 source/dpm2/
+
+# The parquet tree for a browser; rebuild with source/gen_wasm_data.py
+site/

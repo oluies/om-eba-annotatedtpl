@@ -1746,6 +1746,7 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `env.sh` | `source env.sh` reads `.env`, sets the two DuckDB stores and prints every variable the pack reads, with secrets counted rather than shown | A tool reads the wrong store, or a datapoint id will not resolve |
 | `dpm_lookup.py` | Nine lookups over the whole DPM 2.0 database: a template, a cell, a reported datapoint id, a report's column header, a validation code, every rule reaching a template, what a template breaks down by, the cells one dimension member covers, and which rows add up to which | A warehouse table is COREP, FINREP or anything but PAY and DORA, you need the codes behind a business aggregate, or you are reading a report or a validation outcome |
 | `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file, as a CLI and as the `check_report` tool | You want to know whether a report adds up before you send it, or want an agent to check its own arithmetic |
+| `source/gen_wasm_data.py` | Writes the model as partitioned parquet a browser can query with DuckDB-WASM | You are building a web page over the DPM |
 | `source/apply_vr_updates.py` | Applies the EBA's between-release validation rule updates (deactivations, reactivations, severity changes) to a local DPM database | A rule's severity or activity changed since the release you downloaded |
 | `source/load_to_mssql.py` | Loads the DPM database into SQL Server over TDS, authenticating with your Kerberos ticket | You want the dictionary in the same database as the reported figures |
 | `display_names.py` | The rule for what a table and its columns are called | You are setting display names |
@@ -2135,6 +2136,32 @@ handing that to a database is how a dictionary acquires a statement nobody read 
 `UPDATE OperationScope SET IsActive, Severity, FromSubmissionDate WHERE OperationScopeID
 IN (...)` is recognised, and a file with anything else in it is refused rather than
 partly applied. Without `--commit` it reports and changes nothing.
+
+### The model as parquet, for a browser
+
+```bash
+uv run source/gen_wasm_data.py --dpm-release 4.4 --out site/data
+```
+
+Seven tables, pre-joined, answer every question the lookups answer — **3.05 MB for
+everything DPM 4.4 ships**, in 67 files. Publishing the model's own tables instead would
+be 71.6 MB, of which `ContextComposition` alone is 38.
+
+Two things decide that, and neither is the codec. Sorting each table on the column its
+questions filter by, with 50k row groups, took the dimension table from 7.58 MB to 3.26
+MB — and the bytes a browser pulls for six questions from 32.9 MB to 8.3 MB, because
+unsorted parquet statistics prune nothing. Splitting the three big tables by framework
+takes it further: one question reads one partition. Seven questions against the published
+tree pull **1.8 MB** in total, each answering in 4–17 ms.
+
+Against those, the codec is noise — zstd 3.26 MB, zstd 22 3.14 MB, brotli 3.01 MB, gzip
+3.25 MB, snappy 3.84 MB — so this writes zstd at level 22 and leaves brotli's extra 4%
+alone rather than find out whether the WASM build reads it.
+
+`.github/workflows/wasm-data.yml` builds the tree on demand and uploads it as an
+artefact. It does **not** publish: the tree is derived from the EBA's DPM database, and
+putting a derived copy on a public site is redistribution, which is a question for a
+human rather than a workflow.
 
 ### A rule code is not one rule
 
