@@ -64,11 +64,16 @@ SOURCES = {
         sha256="f2d802f1430879cf085d21e2279630d7a10e1207e2a100ab01188136cf0b2cac",
     ),
     # The 4.4 draft technical package. A draft is republished as it is revised, so this
-    # hash will go stale; when it does, the file has moved on and the recorded one is the
+    # hash goes stale; when it does, the file has moved on and the recorded one is the
     # thing to update, deliberately, rather than to drop.
+    #
+    # It went stale once already, which is the pin earning its keep: the copy taken on
+    # 2026-10-17 was 189936198 bytes, and the one published on 2026-10-15 and served from
+    # 2026-10-18 is 189939275. Same URL, different file, and nothing but the hash would
+    # have said so.
     "4.4": Source(
         url="https://ebprstaewspublic01.blob.core.windows.net/public/tools-prod/assets/Reporting%20Framework/DPM2%20Database_v%204_4.zip",
-        sha256="477dc96f4ff1324b537a526268f084b35b4e980d8cb47e464084475a9213b5b9",
+        sha256="76cffcfe7430ff8fc66c6566bcaf8feb7bf02e48501525212061fcb0eabd96e5",
     ),
 }
 
