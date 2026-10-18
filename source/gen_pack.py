@@ -2188,9 +2188,11 @@ in three places rather than one: `NOTICE`, the `source_notice` field in every
 repository is not.
 
 Two things that are not about copyright. Release 4.4 is a **draft** technical package, so
-anything built from it is a draft too and should say so. And this is a reformatting, not
-the EBA's distribution: a reporting institution gets the database from the EBA, and the
-page says that as well.
+anything built from it is a draft too — the generator takes `--draft`, the manifest
+carries it, and the page says so when that release is picked, because a reader should not
+have to open a NOTICE to learn that the EBA is still changing it. And this is a
+reformatting, not the EBA's distribution: a reporting institution gets the database from
+the EBA, and the page says that as well.
 
 `.github/workflows/wasm-data.yml` publishes it, to
 **<https://oluies.github.io/om-eba-annotatedtpl/>**. It stays manual rather than running

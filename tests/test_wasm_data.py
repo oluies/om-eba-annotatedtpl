@@ -211,3 +211,32 @@ def test_a_rule_is_clustered_under_itself():
     every other rule's. 499 kB to 172."""
     rule_cells = next(table for table in gen.TABLES if table.name == "rule_cells")
     assert rule_cells.order_by == "table_code, operation_vid, row_code, column_code"
+
+
+@needs_dpm2
+def test_a_draft_release_says_so_in_its_manifest(tmp_path):
+    """4.4 is a draft technical package - the EBA is still changing it - so an answer
+    from it is a draft answer, and the page says so where the release is chosen."""
+    import dpm_lookup
+
+    sys.argv = [
+        "gen_wasm_data.py",
+        "--db",
+        str(dpm_lookup.DB),
+        "--out",
+        str(tmp_path),
+        "--dpm-release",
+        "4.2",
+        "--draft",
+    ]
+    gen.main()
+    assert json.loads((tmp_path / "4.2" / "manifest.json").read_text(encoding="utf-8"))["draft"] is True
+
+
+@needs_dpm2
+def test_a_release_is_not_a_draft_unless_it_is_said_to_be(tmp_path):
+    import dpm_lookup
+
+    sys.argv = ["gen_wasm_data.py", "--db", str(dpm_lookup.DB), "--out", str(tmp_path), "--dpm-release", "4.2"]
+    gen.main()
+    assert json.loads((tmp_path / "4.2" / "manifest.json").read_text(encoding="utf-8"))["draft"] is False

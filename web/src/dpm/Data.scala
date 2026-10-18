@@ -45,6 +45,26 @@ object Data:
 
   def preload(name: String): String = s"CREATE OR REPLACE TABLE $name AS SELECT * FROM '${url(s"$name.parquet")}'"
 
+  /** What a release says about itself: which database it was built from, when, and
+    * whether that release is a draft. One small request, and the page shows the answer
+    * where the release is chosen - a reader picking 4.4 should not have to read a NOTICE
+    * to learn that the EBA is still changing it.
+    */
+  final case class About(draft: Boolean, generated: String, source: String)
+
+  def about(release: String): Future[About] =
+    dom.fetch(s"$root$release/manifest.json")
+      .toFuture
+      .flatMap(response => if response.ok then response.text().toFuture else Future.successful("{}"))
+      .map: text =>
+        val parsed = js.JSON.parse(text)
+        About(
+          draft = parsed.draft.asInstanceOf[js.UndefOr[Boolean]].getOrElse(false),
+          generated = Option(parsed.generated_at).map(_.toString).getOrElse(""),
+          source = Option(parsed.source).map(_.toString).getOrElse(""),
+        )
+      .recover { case _ => About(draft = false, generated = "", source = "") }
+
   /** What was published, newest last. A site with one release and no index still works:
     * the list is empty and the paths have no release in them.
     */

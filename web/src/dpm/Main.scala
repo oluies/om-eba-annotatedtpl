@@ -40,6 +40,7 @@ object Main:
   private val inOwnWords = Var("")
   private val releases = Var(List.empty[String])
   private val choices = Var(Map.empty[String, List[String]])
+  private val about = Var(Option.empty[Data.About])
   private val status = Var("")
   private val running = Var(false)
   private val answer = Var(Option.empty[Answer])
@@ -54,7 +55,9 @@ object Main:
     val asked = Option(new dom.URLSearchParams(dom.window.location.search).get("release"))
     Data.published().foreach: found =>
       releases.set(found)
-      found.lastOption.foreach(newest => Data.use(asked.filter(found.contains).getOrElse(newest)))
+      found.lastOption.foreach: newest =>
+        Data.use(asked.filter(found.contains).getOrElse(newest))
+        Data.about(Data.release).foreach(found => about.set(Some(found)))
     renderOnDomContentLoaded(dom.document.getElementById("app"), page)
 
   /** One connection, opened on demand and kept, with the small tables read in.
@@ -288,6 +291,8 @@ object Main:
                   Data.use(release)
                   answer.set(None)
                   status.set("")
+                  about.set(None)
+                  Data.about(release).foreach(found => about.set(Some(found)))
                 },
                 found.map(release => option(value := release, selected := release == Data.release, release)),
               ),
@@ -339,6 +344,15 @@ object Main:
           onClick --> (_ => ask()),
         ),
       ),
+      child <-- about.signal.map:
+        case Some(found) if found.draft =>
+          p(
+            cls := "draft",
+            s"DPM ${Data.release} is a draft technical package: the EBA is still changing it, ",
+            "so an answer from it is a draft answer too.",
+          )
+        case _ => emptyNode
+      ,
       p(cls := "status", child.text <-- status.signal),
       detailsTag(
         cls := "assistant",

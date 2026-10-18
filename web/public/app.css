@@ -25,3 +25,5 @@ pre { overflow: auto; padding: .6rem; border: 1px solid var(--edge); border-radi
 .source { margin-top: 2rem; padding-top: .8rem; border-top: 1px solid var(--edge);
   font-size: .78rem; opacity: .7; max-width: 46rem; }
 .source a { color: inherit; }
+.draft { margin: .4rem 0 .2rem; padding: .4rem .6rem; border-left: 3px solid #b26a00;
+  font-size: .85rem; opacity: .9; }

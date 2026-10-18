@@ -9,9 +9,13 @@ on:
   workflow_dispatch:
     inputs:
       releases:
-        description: "DPM releases to publish, space separated, newest last. 4.4 is a draft."
+        description: "DPM releases to publish, space separated, newest last."
         required: false
-        default: "4.2.1 4.3"
+        default: "4.2.1 4.3 4.4"
+      drafts:
+        description: "Which of them are draft technical packages. The page says so when one is picked."
+        required: false
+        default: "4.4"
       deploy:
         description: "Publish to Pages. Unticked builds the artefact and stops."
         type: boolean
@@ -53,7 +57,9 @@ jobs:
             tag=$(echo "$release" | tr . _)
             db="source/dpm2/dpm2_$tag.duckdb"
             [ -f "$db" ] || db=source/dpm2/dpm2.duckdb
-            uv run source/gen_wasm_data.py --db "$db" --out web/public/data --dpm-release "$release"
+            draft=""
+            case " ${{ inputs.drafts }} " in *" $release "*) draft="--draft" ;; esac
+            uv run source/gen_wasm_data.py --db "$db" --out web/public/data --dpm-release "$release" $draft
             # The runner has less disk than the downloads want, so each release gives its
             # back once its tree is written.
             rm -rf source/dpm2/*.accdb source/dpm2/*.zip source/dpm2/csv*

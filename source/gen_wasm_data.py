@@ -338,7 +338,14 @@ def releases_published(root: Path) -> list[str]:
     return sorted(path.name for path in root.iterdir() if path.is_dir() and (path / "manifest.json").is_file())
 
 
-def manifest(out: Path, db: Path, dpm_release: str | None, releases: list[str], counts: dict[str, int]) -> dict:
+def manifest(
+    out: Path,
+    db: Path,
+    dpm_release: str | None,
+    releases: list[str],
+    counts: dict[str, int],
+    draft: bool = False,
+) -> dict:
     """What was published, from what, and when - the page shows it, and a stale copy is
     otherwise indistinguishable from a current one."""
     files = published_files(out)
@@ -356,6 +363,9 @@ def manifest(out: Path, db: Path, dpm_release: str | None, releases: list[str], 
         ),
         "source": db.name,
         "dpm_release": dpm_release or "all",
+        # A draft technical package is still being changed, so an answer from it is a
+        # draft answer. The page says so where the release is chosen, not only here.
+        "draft": draft,
         "releases_in_source": releases,
         "row_group_size": ROW_GROUP_SIZE,
         "compression": COMPRESSION,
@@ -379,6 +389,11 @@ def main() -> None:
     parser.add_argument("--db", type=Path, default=DB, help=f"the DPM database to read (default {DB})")
     parser.add_argument("--out", type=Path, default=OUT, help=f"where to write (default {OUT})")
     parser.add_argument("--dpm-release", default=None, help="only what this release ships, e.g. 4.4")
+    parser.add_argument(
+        "--draft",
+        action="store_true",
+        help="this release is a draft technical package, so anything built from it is a draft too",
+    )
     args = parser.parse_args()
 
     if not args.db.exists():
@@ -407,7 +422,7 @@ def main() -> None:
     finally:
         con.close()
 
-    written = manifest(args.out, args.db, args.dpm_release, releases, counts)
+    written = manifest(args.out, args.db, args.dpm_release, releases, counts, args.draft)
     (args.out / "manifest.json").write_text(json.dumps(written, indent=2) + "\n", encoding="utf-8")
     if args.dpm_release:
         (root / "releases.json").write_text(json.dumps(releases_published(root), indent=2) + "\n", encoding="utf-8")
