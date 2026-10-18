@@ -182,3 +182,32 @@ def test_without_a_release_everything_goes_in_the_root(tmp_path):
 
     assert (tmp_path / "manifest.json").is_file()
     assert not (tmp_path / "releases.json").exists()
+
+
+# --- what the layout costs --------------------------------------------------------------
+
+
+def test_the_dimension_table_stores_coordinates_rather_than_the_datapoint_id():
+    """The id is unique per cell, so inside a (template, dimension, member) group it is a
+    random int64 that compresses to nothing - 336 kB of COREP's 455. The row and column
+    codes are short, sorted, and what the answer shows; the id comes back from the join
+    to `cells`. 455 kB to 122."""
+    members = next(table for table in gen.TABLES if table.name == "cell_members")
+    assert "row_code" in members.order_by and "column_code" in members.order_by
+    assert "VariableID AS datapoint" not in members.sql
+
+
+def test_the_cell_code_is_composed_where_it_is_shown():
+    """It is the three columns beside it with punctuation: 46 kB per framework to store
+    what a concatenation produces."""
+    cells = next(table for table in gen.TABLES if table.name == "cells")
+    # The comment says CellCode, so look for it being selected rather than mentioned.
+    assert "AS cell_code" not in cells.sql
+    assert "c.CellCode" not in cells.sql
+
+
+def test_a_rule_is_clustered_under_itself():
+    """Sorting by the template alone leaves each rule's rows and columns interleaved with
+    every other rule's. 499 kB to 172."""
+    rule_cells = next(table for table in gen.TABLES if table.name == "rule_cells")
+    assert rule_cells.order_by == "table_code, operation_vid, row_code, column_code"

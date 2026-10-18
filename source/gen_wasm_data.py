@@ -104,7 +104,11 @@ TABLES = [
         f"""
         SELECT fw.framework, tv.Code AS table_code, mv.Code AS module,
                mv.VersionNumber AS taxonomy_version, rel.Code AS dpm_release,
-               vv.VariableID AS datapoint, c.CellCode AS cell_code,
+               -- No CellCode: it is the three columns next to it with punctuation
+               -- around them, and composing it where it is shown costs 46 kB less per
+               -- framework than storing it. (Written without the braces, because this
+               -- query is inside an f-string and a brace here is an expression.)
+               vv.VariableID AS datapoint,
                coalesce(hr.Code, '*') AS row_code, left(hr.Label, 120) AS row_label,
                coalesce(hc.Code, '*') AS column_code, left(hc.Label, 120) AS column_label,
                coalesce(hs.Code, '') AS sheet_code
@@ -132,9 +136,20 @@ TABLES = [
     Published(
         "cell_members",
         f"""
-        SELECT DISTINCT fw.framework, tv.Code AS table_code, vv.VariableID AS datapoint,
+        -- The coordinates, not the datapoint id. The id is unique per cell, so inside
+        -- a (template, dimension, member) group it is a random int64 that compresses to
+        -- nothing: 336 kB of the COREP partition's 455. The row and column codes are
+        -- short, sorted and already what the answer shows, and the id comes back from
+        -- the join to `cells` for anyone who wants it. 455 kB to 122.
+        SELECT DISTINCT fw.framework, tv.Code AS table_code,
+               coalesce(hr.Code, '*') AS row_code, coalesce(hc.Code, '*') AS column_code,
                trim(dim.Name) AS dimension, trim(i.Name) AS member
         FROM   TableVersionCell c
+        JOIN   Cell cc ON cc.CellID = c.CellID
+        LEFT JOIN TableVersionHeader tr ON tr.TableVID = c.TableVID AND tr.HeaderID = cc.RowID
+        LEFT JOIN HeaderVersion hr ON hr.HeaderVID = tr.HeaderVID
+        LEFT JOIN TableVersionHeader tc2 ON tc2.TableVID = c.TableVID AND tc2.HeaderID = cc.ColumnID
+        LEFT JOIN HeaderVersion hc ON hc.HeaderVID = tc2.HeaderVID
         JOIN   TableVersion tv ON tv.TableVID = c.TableVID
         JOIN   VariableVersion vv ON vv.VariableVID = c.VariableVID
         JOIN   ContextComposition x ON x.ContextID = vv.ContextID
@@ -145,7 +160,7 @@ TABLES = [
         JOIN   ({FRAMEWORK_OF_TABLE}) fw ON fw.table_code = tv.Code
         WHERE  c.IsExcluded = 0 {IN_RELEASE}
         """,
-        "table_code, dimension, member, datapoint",
+        "table_code, dimension, member, row_code, column_code",
         partition_by="framework",
     ),
     Published(
@@ -202,7 +217,10 @@ TABLES = [
         JOIN   OperandReferenceLocation l USING (OperandReferenceID)
         JOIN   ({FRAMEWORK_OF_TABLE}) fw ON fw.table_code = l."Table"
         """,
-        "table_code, operation_vid",
+        # Within the rule, not only within the template: a rule's own rows and columns
+        # are a run, and sorting by the table alone leaves them interleaved with every
+        # other rule's. 499 kB to 172.
+        "table_code, operation_vid, row_code, column_code",
         partition_by="framework",
     ),
     Published(

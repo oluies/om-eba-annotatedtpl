@@ -64,27 +64,37 @@ object Main:
     * release and labels it another.
     */
   private def connection(): scala.concurrent.Future[Connection] =
-    engine.now() match
-      case Some(con) if loadedFor == Data.release => scala.concurrent.Future.successful(con)
-      case Some(con) =>
-        status.set(s"reading DPM ${Data.release}…")
-        preload(con).map { ready => status.set(""); ready }
-      case None =>
-        status.set("loading the engine (8 MB, once)…")
-        for
-          bundle <- DuckDbModule.selectBundle(DuckDbModule.getJsDelivrBundles()).toFuture
-          worker = makeWorker(bundle.mainWorker)
-          db = new DuckDbModule.AsyncDuckDB(new DuckDbModule.VoidLogger(), worker)
-          _ <- db.instantiate(bundle.mainModule, bundle.pthreadWorker).toFuture
-          con <- db.connect().toFuture
-          ready <- preload(con)
-        yield
-          engine.set(Some(ready))
-          status.set("")
-          ready
+    opening match
+      case Some((release, pending)) if release == Data.release => pending
+      case _ =>
+        val pending = engine.now() match
+          case Some(con) =>
+            status.set(s"reading DPM ${Data.release}…")
+            preload(con).map { ready => status.set(""); ready }
+          case None =>
+            status.set("loading the engine (8 MB, once)…")
+            for
+              bundle <- DuckDbModule.selectBundle(DuckDbModule.getJsDelivrBundles()).toFuture
+              worker = makeWorker(bundle.mainWorker)
+              db = new DuckDbModule.AsyncDuckDB(new DuckDbModule.VoidLogger(), worker)
+              _ <- db.instantiate(bundle.mainModule, bundle.pthreadWorker).toFuture
+              con <- db.connect().toFuture
+              ready <- preload(con)
+            yield
+              engine.set(Some(ready))
+              status.set("")
+              ready
+        opening = Some(Data.release -> pending)
+        pending
 
-  /** The release the tables in the engine were read for. */
-  private var loadedFor: String = ""
+  /** The release being opened for, and the work in flight.
+    *
+    * The future rather than the connection, because every keystroke in a slot asks for
+    * the connection to fill its list: with only the finished connection remembered, two
+    * callers before the first finished both read the five tables in again. That was
+    * 3.7 MB of the 5.2 a session cost - headers read nine times over.
+    */
+  private var opening: Option[(String, scala.concurrent.Future[Connection])] = None
 
   /** Read the small tables in, for whichever release is current. 450 kB once, against
     * every question re-reading the files it names - measured, not assumed.
@@ -93,9 +103,7 @@ object Main:
     Data.cached
       .foldLeft(scala.concurrent.Future.successful(())): (before, name) =>
         before.flatMap(_ => con.query(Data.preload(name)).toFuture.map(_ => ()))
-      .map: _ =>
-        loadedFor = Data.release
-        con
+      .map(_ => con)
 
   /** The worker has to come from this origin, so it is a blob that imports the CDN one -
     * a cross-origin script cannot be a worker directly.

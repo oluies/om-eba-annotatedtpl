@@ -98,7 +98,8 @@ object Questions:
       hints = "the whole grid, every cell, all rows and columns of a template",
       slots = List(framework, template, Slot("module", "Module", "FINREP9", "FINREP9")),
       sql = filled => s"""
-        |SELECT row_code, row_label, column_code, column_label, datapoint, cell_code
+        |SELECT row_code, row_label, column_code, column_label, datapoint,
+        |       '{' || table_code || ', r' || row_code || ', c' || column_code || '}' AS cell_code
         |FROM   '${partition("cells")(filled("framework"))}'
         |WHERE  table_code = '${filled("table")}' AND module = '${filled("module")}'
         |ORDER  BY row_code, column_code
@@ -160,14 +161,15 @@ object Questions:
       // nothing, and "Credit institutions " with a trailing space is a real item in the
       // model next to a clean one. trim on both sides is what the lookup does too.
       sql = filled => s"""
-        |SELECT   m.table_code, m.datapoint, c.row_code, c.row_label, c.column_code, c.column_label
+        |SELECT   m.table_code, c.datapoint, m.row_code, c.row_label, m.column_code, c.column_label
         |FROM     '${partition("cell_members")(filled("framework"))}' m
-        |JOIN     '${partition("cells")(filled("framework"))}' c USING (table_code, datapoint)
+        |JOIN     '${partition("cells")(filled("framework"))}' c
+        |         USING (table_code, row_code, column_code)
         |WHERE    m.table_code = '${filled("table")}'
         |     AND trim(lower(m.dimension)) = trim(lower('${filled("dimension")}'))
         |     AND trim(lower(m.member)) = trim(lower('${filled("member")}'))
         |GROUP BY ALL
-        |ORDER BY c.row_code, c.column_code
+        |ORDER BY m.row_code, m.column_code
         |LIMIT    $limit""".stripMargin.trim,
       reads = partition("cell_members"),
     ),
@@ -225,7 +227,9 @@ object Questions:
       // A report writes dp<N>; the model stores the number. Strip the prefix here rather
       // than ask the reader to.
       sql = filled => s"""
-        |SELECT DISTINCT table_code, module, taxonomy_version, cell_code, row_label, column_label
+        |SELECT DISTINCT table_code, module, taxonomy_version,
+        |       '{' || table_code || ', r' || row_code || ', c' || column_code || '}' AS cell_code,
+        |       row_label, column_label
         |FROM   '${partition("cells")(filled("framework"))}'
         |WHERE  datapoint = TRY_CAST(regexp_replace('${filled("datapoint")}', '^[dD][pP]?', '') AS BIGINT)
         |ORDER  BY module, taxonomy_version""".stripMargin.trim,

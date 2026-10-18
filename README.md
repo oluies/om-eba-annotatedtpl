@@ -435,6 +435,23 @@ Against those, the codec is noise — zstd 3.26 MB, zstd 22 3.14 MB, brotli 3.01
 3.25 MB, snappy 3.84 MB — so this writes zstd at level 22 and leaves brotli's extra 4%
 alone rather than find out whether the WASM build reads it.
 
+**What is stored decides more than how it is compressed.** Three changes took a release
+from 3.06 MB to 1.62:
+
+| | before | after |
+|---|---:|---:|
+| `cell_members`, COREP | 455 kB | 122 kB |
+| `rule_cells`, COREP | 499 kB | 172 kB |
+| `cells`, COREP | 184 kB | 138 kB |
+
+The dimension table stored the datapoint id, which is unique per cell and therefore a
+random int64 inside a (template, dimension, member) group: 336 kB of that 455, compressing
+to nothing. It stores the row and column codes instead — short, sorted, and what the
+answer shows anyway — and the id comes back from the join to `cells`. The rule-cell table
+was sorted by template alone, leaving each rule's rows interleaved with every other
+rule's; sorting within the rule clusters them. And the cell code is the three columns
+beside it with punctuation, so it is composed where it is shown rather than stored.
+
 ### Publishing it
 
 The EBA's legal notice says: *"Reproduction of all EBA material on this site is
@@ -553,7 +570,10 @@ Measured rather than assumed. With `Cache-Control: max-age=600` — what GitHub 
 — a second visit refetched every range, and within one session each question re-read the
 files it named. So the five small tables (modules, rules, sums, headers, properties, 450
 kB together) are read into the engine once per release, and the questions that use them
-pull **nothing** over the wire afterwards. The partitioned tables stay on HTTP: they are
+pull **nothing** over the wire afterwards. Once, and shared: the first version remembered
+the finished connection rather than the work in flight, so every keystroke in a slot —
+each one asks for the connection to fill its list — started another read of all five.
+That was 3.7 MB of the 5.2 a session cost, with `headers.parquet` read nine times. The partitioned tables stay on HTTP: they are
 per framework, only the needed one is ever touched, and copying them into OPFS by hand
 would buy less than it costs to keep correct across a release switch.
 
