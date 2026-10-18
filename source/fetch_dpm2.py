@@ -94,6 +94,7 @@ class Paths(NamedTuple):
     accdb: Path
     csv_dir: Path
     db: Path
+    stamp: Path
 
 
 def paths_for(release: str, directory: Path = DIR) -> Paths:
@@ -102,6 +103,11 @@ def paths_for(release: str, directory: Path = DIR) -> Paths:
     return Paths(
         zip=directory / f"DPM2_Database_v_{tag}.zip",
         accdb=directory / f"dpm2_{tag}.accdb",
+        # What the derived files were derived from. Every other step keys on a file
+        # existing, so without this a changed download is unpacked and exported past:
+        # the zip is new, the .accdb and the CSVs are the old draft's, and the database
+        # comes out labelled 4.4 holding the draft before it.
+        stamp=directory / f"dpm2_{tag}.accdb.sha256",
         csv_dir=directory / ("csv" if default else f"csv_{tag}"),
         db=Path(os.environ["DPM2_DB"])
         if os.environ.get("DPM2_DB")
@@ -246,21 +252,38 @@ def main() -> None:
         # silently, so the next run of the same release is checked like every other.
         print(f"{here.zip.name}: sha256 {found} - record it in SOURCES[{release!r}]", file=sys.stderr)
     elif found != source.sha256:
-        raise SystemExit(f"{here.zip.name}: sha256 {found}, expected {source.sha256} - upstream file has changed")
+        raise SystemExit(
+            f"{here.zip.name}: sha256 {found}, expected {source.sha256}.\n"
+            f"  The file at that URL is not the one recorded. Either the EBA republished it - a\n"
+            f"  draft is revised in place - in which case record {found} in SOURCES[{release!r}],\n"
+            f"  or the download is damaged, in which case delete {here.zip.name} and run again."
+        )
 
-    if args.force or not here.accdb.exists():
+    # The derived files are only as current as the download they came from. Everything
+    # else here keys on a file existing, so a zip that changed under them has to say so.
+    was = here.stamp.read_text(encoding="utf-8").strip() if here.stamp.exists() else ""
+    stale = was != found
+    if stale and was:
+        print(f"the download changed since these were made ({was[:12]} -> {found[:12]}); redoing them", file=sys.stderr)
+    here.stamp.unlink(missing_ok=True)
+
+    if args.force or stale or not here.accdb.exists():
         print("unpacking", file=sys.stderr)
         unpack(here.zip, here.accdb)
 
     names = table_names(here.accdb)
+    redo = args.force or stale
     if missing := missing_csvs(names, here.csv_dir):
         print(f"exporting {len(missing)} of {len(names)} tables", file=sys.stderr)
-        export(here.accdb, missing if not args.force else names, here.csv_dir)
-    elif args.force:
+        export(here.accdb, names if redo else missing, here.csv_dir)
+    elif redo:
         print(f"re-exporting all {len(names)} tables", file=sys.stderr)
         export(here.accdb, names, here.csv_dir)
 
     counts = load(here.csv_dir, names, here.db)
+    # Written last: a stamp beside half an export would say the derived files are current
+    # when they are not, which is the thing it exists to prevent.
+    here.stamp.write_text(found + "\n", encoding="utf-8")
     size = here.db.stat().st_size / 1e6
     print(f"{here.db}: {len(counts)} tables, {sum(counts.values())} rows ({size:.0f} MB)")
 

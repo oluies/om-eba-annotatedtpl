@@ -5,6 +5,8 @@ whether the export inside it finished, so an empty or partial one was read as "a
 done" and DuckDB was then told to read a file that was never written.
 """
 
+import sys
+
 import pytest
 
 import fetch_dpm2
@@ -76,3 +78,89 @@ def test_every_source_has_a_url_and_the_default_is_one_of_them():
     assert fetch_dpm2.DEFAULT_RELEASE in fetch_dpm2.SOURCES
     assert all(source.url.startswith("https://") for source in fetch_dpm2.SOURCES.values())
     assert fetch_dpm2.SOURCES[fetch_dpm2.DEFAULT_RELEASE].sha256, "the default release is pinned"
+
+
+# --- a download that changed under the files made from it --------------------------------
+
+
+def test_each_release_records_what_its_derived_files_came_from(tmp_path, monkeypatch):
+    monkeypatch.delenv("DPM2_DB", raising=False)
+    here = fetch_dpm2.paths_for("4.4", tmp_path)
+    assert here.stamp == tmp_path / "dpm2_4_4.accdb.sha256"
+    assert here.stamp != here.accdb
+
+
+def test_the_stamp_is_distinct_per_release(tmp_path, monkeypatch):
+    monkeypatch.delenv("DPM2_DB", raising=False)
+    stamps = {fetch_dpm2.paths_for(release, tmp_path).stamp for release in ("4.2.1", "4.3", "4.4")}
+    assert len(stamps) == 3
+
+
+def test_a_changed_download_redoes_the_unpack_and_the_export(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("DPM2_DB", raising=False)
+    """The failure this prevents: the EBA revises a draft in place, the recorded hash is
+    updated, the stale zip is deleted, and the next run downloads the new file and then
+    reuses the old draft's .accdb and CSVs - a database labelled 4.4 holding the draft
+    before it. Every step here keys on a file existing, so only the digest can say."""
+    redone = []
+    here = fetch_dpm2.paths_for("4.4", tmp_path)
+    tmp_path.mkdir(exist_ok=True)
+    here.zip.write_bytes(b"the new draft")
+    here.accdb.write_bytes(b"the old draft")
+    here.csv_dir.mkdir(parents=True)
+    (here.csv_dir / "Cell.csv").write_text("CellID\n1\n", encoding="utf-8")
+    here.stamp.write_text("a-hash-from-the-draft-before-this-one\n", encoding="utf-8")
+
+    monkeypatch.setattr(fetch_dpm2, "paths_for", lambda release, directory=tmp_path: here)
+    monkeypatch.setattr(fetch_dpm2, "DIR", tmp_path)
+    monkeypatch.setattr(fetch_dpm2, "unpack", lambda archive, target: redone.append("unpack"))
+    monkeypatch.setattr(fetch_dpm2, "table_names", lambda accdb: ("Cell",))
+    monkeypatch.setattr(fetch_dpm2, "export", lambda accdb, names, out: redone.append(("export", tuple(names))))
+    monkeypatch.setattr(fetch_dpm2, "load", lambda csv_dir, names, db: {"Cell": 1})
+    monkeypatch.setattr(fetch_dpm2, "SOURCES", {"4.4": fetch_dpm2.Source(url="https://example/x.zip", sha256="")})
+    monkeypatch.setattr(sys, "argv", ["fetch_dpm2.py", "--release", "4.4"])
+    here.db.write_bytes(b"")
+
+    fetch_dpm2.main()
+
+    assert "unpack" in redone, "the new download was not unpacked"
+    assert ("export", ("Cell",)) in redone, "the old draft's CSVs were reused"
+    assert here.stamp.read_text(encoding="utf-8").strip() == fetch_dpm2.digest(here.zip)
+
+
+def test_an_unchanged_download_leaves_the_derived_files_alone(tmp_path, monkeypatch):
+    monkeypatch.delenv("DPM2_DB", raising=False)
+    """The other half: re-running must not re-export 72 tables for nothing."""
+    redone = []
+    here = fetch_dpm2.paths_for("4.4", tmp_path)
+    here.zip.write_bytes(b"the same draft")
+    here.accdb.write_bytes(b"unpacked already")
+    here.csv_dir.mkdir(parents=True)
+    (here.csv_dir / "Cell.csv").write_text("CellID\n1\n", encoding="utf-8")
+    here.stamp.write_text(fetch_dpm2.digest(here.zip) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(fetch_dpm2, "paths_for", lambda release, directory=tmp_path: here)
+    monkeypatch.setattr(fetch_dpm2, "DIR", tmp_path)
+    monkeypatch.setattr(fetch_dpm2, "unpack", lambda archive, target: redone.append("unpack"))
+    monkeypatch.setattr(fetch_dpm2, "table_names", lambda accdb: ("Cell",))
+    monkeypatch.setattr(fetch_dpm2, "export", lambda accdb, names, out: redone.append("export"))
+    monkeypatch.setattr(fetch_dpm2, "load", lambda csv_dir, names, db: {"Cell": 1})
+    monkeypatch.setattr(fetch_dpm2, "SOURCES", {"4.4": fetch_dpm2.Source(url="https://example/x.zip", sha256="")})
+    monkeypatch.setattr(sys, "argv", ["fetch_dpm2.py", "--release", "4.4"])
+    here.db.write_bytes(b"")
+
+    fetch_dpm2.main()
+    assert redone == [], f"nothing had changed, but it redid {redone}"
+
+
+def test_a_hash_that_does_not_match_says_what_to_do(tmp_path, monkeypatch):
+    monkeypatch.delenv("DPM2_DB", raising=False)
+    here = fetch_dpm2.paths_for("4.4", tmp_path)
+    here.zip.write_bytes(b"not what was recorded")
+    monkeypatch.setattr(fetch_dpm2, "paths_for", lambda release, directory=tmp_path: here)
+    monkeypatch.setattr(fetch_dpm2, "DIR", tmp_path)
+    monkeypatch.setattr(fetch_dpm2, "SOURCES", {"4.4": fetch_dpm2.Source(url="https://example/x.zip", sha256="0" * 64)})
+    monkeypatch.setattr(sys, "argv", ["fetch_dpm2.py", "--release", "4.4"])
+    with pytest.raises(SystemExit, match="record") as refused:
+        fetch_dpm2.main()
+    assert "delete" in str(refused.value), "the other remedy is not named"
