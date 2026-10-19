@@ -33,6 +33,15 @@ object Main:
     question.slots.foreach(slot => params.set(slot.name, filled.getOrElse(slot.name, slot.example)))
     dom.window.history.replaceState((), "", s"?${params.toString}")
 
+  /** A link into the code that does what the paragraph just described.
+    *
+    * `main` rather than a tag: the published page and the branch it was built from are
+    * the same thing here, and a reader following a link wants the file as it is now.
+    */
+  private val repo = "https://github.com/oluies/om-eba-annotatedtpl"
+
+  private def srcLink(path: String, shown: String) = a(href := s"$repo/blob/main/$path", shown)
+
   private val engine = Var[Option[Connection]](None)
   private val assistant = Var[Option[Engine]](None)
   private val assistantModel = Var(Assistant.models.head._1)
@@ -58,7 +67,11 @@ object Main:
       found.lastOption.foreach: newest =>
         Data.use(asked.filter(found.contains).getOrElse(newest))
         Data.about(Data.release).foreach(found => about.set(Some(found)))
-    renderOnDomContentLoaded(dom.document.getElementById("app"), page)
+    val mount = dom.document.getElementById("app")
+    // index.html says "loading…" so a reader looking at a blank page knows the bundle is
+    // still coming. Laminar appends, so without this the word stays above the page.
+    mount.textContent = ""
+    renderOnDomContentLoaded(mount, page)
 
   /** One connection, opened on demand and kept, with the small tables read in.
     *
@@ -388,7 +401,9 @@ object Main:
           cls := "note",
           "It picks one of the questions above and fills it in - it never writes SQL. ",
           "What it chose is shown before the answer, so a wrong reading is visible rather ",
-          "than silent.",
+          "than silent. ",
+          a(href := "#what-it-does", "What it does, and why so little"),
+          ".",
         ),
         p(cls := "status", child.text <-- assistantStatus.signal),
       ),
@@ -414,6 +429,67 @@ object Main:
             detailsTag(summaryTag("the SQL that answered it"), pre(code(result.sql))),
           )
       ,
+      detailsTag(
+        cls := "about",
+        idAttr := "what-it-does",
+        summaryTag("What does this assistant do?"),
+        p(
+          "It chooses. The page has ",
+          b(s"${Questions.all.size} questions"),
+          ", each one a SQL statement that is known to be right and whose only variables are ",
+          "the blanks you fill; the model's whole job is to say which of them you asked and ",
+          "what goes in the blanks. It never writes SQL, and there is no generated SQL to ",
+          "check, because none is generated. ",
+          srcLink("web/src/dpm/Questions.scala", "Questions.scala"),
+          " is that catalogue, statements and all.",
+        ),
+        p(
+          "It does it in two steps. First: which question - answered against a JSON schema ",
+          "whose enum is exactly those ids, so a twelfth cannot be invented. Then, with the ",
+          "question settled: that question's own slots, against a schema that admits no ",
+          "other names. One step let a 0.5B model pick ",
+          em("what does a validation code mean"),
+          " and then fill in a template and a framework, which the catalogue had to refuse. ",
+          "Temperature is zero, there are no tool calls, no retries and no second guess. ",
+          srcLink("web/src/dpm/Assistant.scala", "Assistant.scala"),
+          " holds the prompts, the schemas and the parsing - all pure, so they are tested ",
+          "without a GPU in ",
+          srcLink("web/test/dpm/AssistantSuite.scala", "AssistantSuite.scala"),
+          "; ",
+          srcLink("web/src/dpm/Main.scala", "Main.scala"),
+          " is the two calls and what happens to the answers.",
+        ),
+        p(
+          "Both answers are then checked against the catalogue again, and an id or a slot ",
+          "name that is not in it is refused rather than bent into the nearest one: guessing ",
+          s"which of ${Questions.all.size} questions was meant is how a reader gets a confident answer to ",
+          "something they did not ask. What it settled on is printed before the answer, and ",
+          "the statement it ran is under it.",
+        ),
+        p(
+          "Why so little is left to the model: a 360M model can pick one of ",
+          s"${Questions.all.size} ",
+          "and copy F_12.01.a out of your sentence. What it cannot do is write correct SQL ",
+          "over this schema, where F04041_r0070_c0015 looks exactly as plausible as a real ",
+          "cell code, where qGDF is a real property that is the wrong one, and where a near ",
+          "miss in a dimension's wording matches nothing rather than erroring. The dropdowns ",
+          "exist for the same reason - a member is \"Credit institutions\", trailing space ",
+          "and all.",
+        ),
+        p(
+          "It runs in your browser, on WebGPU, through ",
+          a(href := "https://github.com/mlc-ai/web-llm", "MLC WebLLM"),
+          ", and is downloaded only once you ask for it. Nothing you type leaves the tab, ",
+          "and neither does anything you query: the data is parquet read over HTTP range ",
+          "requests by DuckDB-WASM, built by ",
+          srcLink("source/gen_wasm_data.py", "gen_wasm_data.py"),
+          " and read through ",
+          srcLink("web/src/dpm/DuckDb.scala", "DuckDb.scala"),
+          ". The whole page is ",
+          a(href := repo, "oluies/om-eba-annotatedtpl"),
+          ", MIT.",
+        ),
+      ),
       footerTag(
         cls := "source",
         // The permission is conditional on this, so it is part of the page rather than
