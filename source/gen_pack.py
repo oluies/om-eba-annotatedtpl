@@ -1731,6 +1731,10 @@ when describing tables, columns and glossary terms in OpenMetadata.
 **{len(DPS)} datapoints · {len(TEMPLATES)} templates · {len(VOCAB["dimensions"])} dimensions over
 {len(VOCAB["domains"])} domains · {sum(len(m) for m in VOCAB["domains"].values())} controlled values.**
 
+Ask the model a question without installing anything:
+**<https://oluies.github.io/om-eba-annotatedtpl/>** — DPM 4.2.1, 4.3 and 4.4 (draft),
+queried in the browser with DuckDB-WASM.
+
 ![The pack loaded as Knowledge Pages in OpenMetadata](docs/knowledge-pages.png)
 
 ## What is in here
@@ -1746,7 +1750,7 @@ when describing tables, columns and glossary terms in OpenMetadata.
 | `env.sh` | `source env.sh` reads `.env`, sets the two DuckDB stores and prints every variable the pack reads, with secrets counted rather than shown | A tool reads the wrong store, or a datapoint id will not resolve |
 | `dpm_lookup.py` | Nine lookups over the whole DPM 2.0 database: a template, a cell, a reported datapoint id, a report's column header, a validation code, every rule reaching a template, what a template breaks down by, the cells one dimension member covers, and which rows add up to which | A warehouse table is COREP, FINREP or anything but PAY and DORA, you need the codes behind a business aggregate, or you are reading a report or a validation outcome |
 | `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file, as a CLI and as the `check_report` tool | You want to know whether a report adds up before you send it, or want an agent to check its own arithmetic |
-| `web/` | A query page in Scala.js over that tree: pick a question, fill it in, see the answer and the SQL | You want the model without installing anything |
+| `web/` | A query page in Scala.js over that tree: pick a question, fill it in, see the answer and the SQL — published at [oluies.github.io/om-eba-annotatedtpl](https://oluies.github.io/om-eba-annotatedtpl/) | You want the model without installing anything |
 | `source/gen_wasm_data.py` | Writes the model as partitioned parquet a browser can query with DuckDB-WASM | You are building a web page over the DPM |
 | `source/apply_vr_updates.py` | Applies the EBA's between-release validation rule updates (deactivations, reactivations, severity changes) to a local DPM database | A rule's severity or activity changed since the release you downloaded |
 | `source/load_to_mssql.py` | Loads the DPM database into SQL Server over TDS, authenticating with your Kerberos ticket | You want the dictionary in the same database as the reported figures |
@@ -2218,6 +2222,13 @@ a shared answer stays the answer it was.
 Scala.js and Laminar, no npm and no bundler: Scala.js emits ES modules and the browser
 resolves the DuckDB-WASM import from the CDN itself. `web/src/dpm/DuckDb.scala` is the
 facade — six calls, because no Scala.js facade for DuckDB-WASM exists.
+
+The row cap is a control rather than a constant: a question that carries a `LIMIT` offers
+*Rows*, starting at 200 and going to 5000, and the number travels in the URL with the
+question, so a link worth sending because it has 900 rows arrives with 900. Visits are
+counted by [GoatCounter](https://www.goatcounter.com/help/privacy) — no cookies, no
+cross-site identifier, and the path is cut down by hand so what leaves the tab is which of
+the eleven questions was opened, never a slot.
 
 A question is a template and the slots a reader fills, never free SQL, and the answer
 shows the statement that produced it. That is the same argument as everywhere else in
