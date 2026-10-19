@@ -17,7 +17,7 @@ class AssistantSuite extends munit.FunSuite:
   }
 
   test("the prompt is built from the catalogue, so a new question is one it knows") {
-    val invented = Question("invented", "Does this reach the prompt?", Nil, _ => "SELECT 1", _ => "nowhere")
+    val invented = Question("invented", "Does this reach the prompt?", Nil, (_, _) => "SELECT 1", _ => "nowhere")
     assert(Assistant.prompt(List(invented)).contains("invented"))
   }
 
@@ -116,4 +116,25 @@ class AssistantSuite extends munit.FunSuite:
     val prompt = Assistant.prompt()
     assert(prompt.contains("also asked as:"))
     assert(prompt.contains("totals, subtotals"), "the sums question's hints are missing")
+  }
+
+  test("the row cap the page asks for is the one in the statement") {
+    val cells = Questions.byId("cells")
+    val filled = (name: String) => cells.slots.find(_.name == name).map(_.example).getOrElse("")
+    assert(cells.sql(filled, 900).contains("LIMIT  900"), cells.sql(filled, 900))
+    assert(!cells.sql(filled, 900).contains("200"), "the old constant is still in the statement")
+  }
+
+  test("a question says whether it has a cap to change") {
+    // The page offers the Rows box on the strength of this, so a question that carries
+    // no LIMIT must not claim one - the box would change nothing and say otherwise.
+    assertEquals(Questions.all.filter(_.limited).map(_.id).sorted, List("aggregate", "cells", "deactivated", "rules"))
+    Questions.all.filterNot(_.limited).foreach: question =>
+      assert(!question.sql(_ => "", 7).contains("LIMIT"), s"${question.id} limits without saying so")
+  }
+
+  test("every question's statement is read without a slot filled") {
+    // What `limited` does, and what a prompt or a catalogue check would do: a question
+    // whose statement needs a real slot to be built at all cannot be asked about.
+    Questions.all.foreach(question => assert(question.sql(_ => "", Questions.limit).nonEmpty, question.id))
   }

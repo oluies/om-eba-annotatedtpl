@@ -499,6 +499,13 @@ Scala.js and Laminar, no npm and no bundler: Scala.js emits ES modules and the b
 resolves the DuckDB-WASM import from the CDN itself. `web/src/dpm/DuckDb.scala` is the
 facade — six calls, because no Scala.js facade for DuckDB-WASM exists.
 
+The row cap is a control rather than a constant: a question that carries a `LIMIT` offers
+*Rows*, starting at 200 and going to 5000, and the number travels in the URL with the
+question, so a link worth sending because it has 900 rows arrives with 900. Visits are
+counted by [GoatCounter](https://www.goatcounter.com/help/privacy) — no cookies, no
+cross-site identifier, and the path is cut down by hand so what leaves the tab is which of
+the eleven questions was opened, never a slot.
+
 A question is a template and the slots a reader fills, never free SQL, and the answer
 shows the statement that produced it. That is the same argument as everywhere else in
 this pack: `F04041_r0070_c0015` looks exactly as plausible as a real cell code, so a page

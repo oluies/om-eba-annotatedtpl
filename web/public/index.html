@@ -6,3 +6,19 @@
 <link rel="stylesheet" href="app.css">
 <div id="app">loading…</div>
 <script type="module" src="main.js"></script>
+<!-- GoatCounter: a hit count, no cookies and no cross-site identifier.
+     https://www.goatcounter.com/help/privacy
+
+     The path is cut down by hand because the page keeps the question and its slots in
+     the URL, and the default would send all of it. What goes out is the path and, when
+     it is one of the catalogue's ids, the question - never a slot, never anything typed
+     into one. -->
+<script>
+  window.goatcounter = {
+    path: function () {
+      var asked = new URLSearchParams(location.search).get('q') || ''
+      return location.pathname + (/^[a-z_]{1,20}$/.test(asked) ? '?q=' + asked : '')
+    },
+  }
+</script>
+<script data-goatcounter="https://oluies.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>

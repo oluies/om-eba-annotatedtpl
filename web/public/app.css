@@ -30,3 +30,4 @@ pre { overflow: auto; padding: .6rem; border: 1px solid var(--edge); border-radi
 .about { margin: 1.4rem 0 0; border: 1px solid var(--edge); border-radius: 8px; padding: .6rem .8rem; }
 .about summary { cursor: pointer; font-weight: 600; font-size: .9rem; }
 .about p { max-width: 46rem; opacity: .85; }
+input.rows { width: 5rem; }

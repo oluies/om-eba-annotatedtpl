@@ -26,9 +26,19 @@ object Main:
     val filled = question.slots.flatMap(slot => Option(params.get(slot.name)).map(slot.name -> _)).toMap
     (question, filled)
 
+  /** The row cap from the URL, so a link that was worth sending because it has 900 rows
+    * arrives with 900 rather than with 200 and a note saying there are more.
+    */
+  private def limitFromLocation(): Int =
+    Option(new dom.URLSearchParams(dom.window.location.search).get("rows"))
+      .flatMap(_.toIntOption)
+      .map(asked => asked.max(1).min(Questions.mostRows))
+      .getOrElse(Questions.limit)
+
   private def toLocation(question: Question, filled: Map[String, String]): Unit =
     val params = new dom.URLSearchParams()
     params.set("q", question.id)
+    if rowLimit.now() != Questions.limit then params.set("rows", rowLimit.now().toString)
     if Data.release.nonEmpty then params.set("release", Data.release)
     question.slots.foreach(slot => params.set(slot.name, filled.getOrElse(slot.name, slot.example)))
     dom.window.history.replaceState((), "", s"?${params.toString}")
@@ -47,6 +57,7 @@ object Main:
   private val assistantModel = Var(Assistant.models.head._1)
   private val assistantStatus = Var("")
   private val inOwnWords = Var("")
+  private val rowLimit = Var(Questions.limit)
   private val releases = Var(List.empty[String])
   private val choices = Var(Map.empty[String, List[String]])
   private val about = Var(Option.empty[Data.About])
@@ -56,7 +67,14 @@ object Main:
   private val question = Var(fromLocation()._1)
   private val slots = Var(fromLocation()._2)
 
-  final case class Answer(columns: List[String], rows: List[List[String]], millis: Long, sql: String, source: String)
+  final case class Answer(
+      columns: List[String],
+      rows: List[List[String]],
+      millis: Long,
+      sql: String,
+      source: String,
+      limit: Int,
+  )
 
   def main(args: Array[String]): Unit =
     // The release comes from the URL when there is one, so a shared link answers under
@@ -67,6 +85,7 @@ object Main:
       found.lastOption.foreach: newest =>
         Data.use(asked.filter(found.contains).getOrElse(newest))
         Data.about(Data.release).foreach(found => about.set(Some(found)))
+    rowLimit.set(limitFromLocation())
     val mount = dom.document.getElementById("app")
     // index.html says "loading…" so a reader looking at a blank page knows the bundle is
     // still coming. Laminar appends, so without this the word stays above the page.
@@ -168,7 +187,8 @@ object Main:
   private def ask(): Unit =
     val current = question.now()
     val filled = filledSlots(current)
-    val sql = current.sql(filled)
+    val rows = rowLimit.now()
+    val sql = current.sql(filled, rows)
     toLocation(current, current.slots.map(slot => slot.name -> filled(slot.name)).toMap)
     running.set(true)
     status.set("")
@@ -179,18 +199,19 @@ object Main:
     yield table
     result.onComplete:
       case Success(table) =>
-        val rows = table.toArray().toList.map(row => js.Object.entries(row.toJSON()).toList)
-        val columns = rows.headOption.map(_.map(entry => entry._1.toString)).getOrElse(Nil)
+        val answered = table.toArray().toList.map(row => js.Object.entries(row.toJSON()).toList)
+        val columns = answered.headOption.map(_.map(entry => entry._1.toString)).getOrElse(Nil)
         answer.set(
           Some(
             Answer(
               columns = columns,
               // A datapoint id is an int64 and arrives as a BigInt, which has no JSON
               // representation at all - toString is the only honest conversion.
-              rows = rows.map(_.map(entry => Option(entry._2).map(_.toString).getOrElse(""))),
+              rows = answered.map(_.map(entry => Option(entry._2).map(_.toString).getOrElse(""))),
               millis = System.currentTimeMillis() - started,
               sql = sql,
               source = current.source(filled),
+              limit = rows,
             )
           )
         )
@@ -314,6 +335,10 @@ object Main:
         label(
           "Question",
           select(
+            // Bound rather than set once: a link carries its question, and a dropdown
+            // reading "Which cells does a template have?" over an answer about
+            // deactivated rules is a page disagreeing with itself.
+            value <-- question.signal.map(_.id),
             onChange.mapToValue --> { id =>
               question.set(Questions.byId(id))
               slots.set(Map.empty)
@@ -348,6 +373,27 @@ object Main:
               dataList(
                 idAttr := s"choices-${slot.name}",
                 children <-- choices.signal.map(_.getOrElse(slot.name, Nil).map(choice => option(value := choice))),
+              ),
+            )
+        ,
+        child <-- question.signal.map: current =>
+          if !current.limited then emptyNode
+          else
+            label(
+              "Rows",
+              input(
+                cls := "rows",
+                tpe := "number",
+                minAttr := "1",
+                maxAttr := Questions.mostRows.toString,
+                stepAttr := "100",
+                value <-- rowLimit.signal.map(_.toString),
+                // Clamped rather than refused: a reader who means "all of it" types a
+                // large number, and the honest answer is the most the page will render,
+                // not an error about a field.
+                onInput.mapToValue --> { text =>
+                  text.toIntOption.foreach(asked => rowLimit.set(asked.max(1).min(Questions.mostRows)))
+                },
               ),
             )
         ,
@@ -418,13 +464,13 @@ object Main:
                 + (if result.source.contains("/") then "" else s" (read into the engine once for DPM ${Data.release})"),
               // A table that stops at the limit without saying so reads as the whole
               // answer, which is the one way this page could mislead on its own.
-              if result.rows.size == Questions.limit then
-                span(cls := "limit", s" — the query's limit of ${Questions.limit}; narrow it to see the rest")
+              if result.rows.size == result.limit then
+                span(cls := "limit", s" — the query's limit of ${result.limit}; raise Rows, or narrow the question")
               else emptyNode,
             ),
             table(
               thead(tr(result.columns.map(th(_)))),
-              tbody(result.rows.take(200).map(row => tr(row.map(td(_))))),
+              tbody(result.rows.map(row => tr(row.map(td(_))))),
             ),
             detailsTag(summaryTag("the SQL that answered it"), pre(code(result.sql))),
           )
@@ -500,6 +546,9 @@ object Main:
         "). This page is not published by the EBA and is not endorsed by it; for the ",
         "database itself, and for anything a report is filed against, go to ",
         a(href := "https://www.eba.europa.eu/risk-and-data-analysis/reporting/dpm-data-dictionary", "the EBA"),
-        ".",
+        ". Visits are counted by ",
+        a(href := "https://www.goatcounter.com/help/privacy", "GoatCounter"),
+        ": no cookies, no cross-site identifier, and nothing from the question you asked ",
+        "beyond which of the eleven it was.",
       ),
     )

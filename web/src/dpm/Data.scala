@@ -19,7 +19,13 @@ import scala.scalajs.js.Thenable.Implicits.*
   * error in one and a warning in another. Switching release re-asks, it does not merge.
   */
 object Data:
-  private lazy val root: String = new dom.URL("data/", dom.document.baseURI).href
+  // The fallback is for the tests, which build statements to read them and run in node
+  // with no document. A relative path is useless to httpfs, which is the whole point of
+  // this object - but in a browser there is always a document, so it is never the one in
+  // a query that runs.
+  private lazy val root: String =
+    if js.typeOf(js.Dynamic.global.document) == "undefined" then "data/"
+    else new dom.URL("data/", dom.document.baseURI).href
 
   /** Mutable, once, at startup: the page cannot know which releases were published until
     * it has read releases.json, and every query needs the answer. Set before the first

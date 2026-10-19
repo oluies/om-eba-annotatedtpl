@@ -32,7 +32,7 @@ final case class Question(
     id: String,
     ask: String,
     slots: List[Slot],
-    sql: (String => String) => String,
+    sql: (String => String, Int) => String,
     reads: String => String,
     /** The words someone might use for this instead of the ones in `ask`. They exist for
       * the assistant: 0.5B and 1.5B both read "which rows add up to which" as the rules
@@ -43,6 +43,12 @@ final case class Question(
 ):
   /** Where the answer comes from, for the line under the results. */
   def source(filled: String => String): String = reads(filled("framework"))
+
+  /** Whether this question's statement carries the row cap. Read off the statement
+    * rather than declared beside it, so a LIMIT added to a question later is offered
+    * without a second edit remembering to say so.
+    */
+  def limited: Boolean = sql(_ => "", Questions.limit).contains("LIMIT")
 
 object Questions:
   /** Parquet is split by framework, so a question names the partition it reads. One
@@ -86,10 +92,18 @@ object Questions:
   private val template = Slot("table", "Template", "F_12.01.a", "F_12.01.a", Some(templatesOf))
   private val module = Slot("module", "Module", "FINREP9", "FINREP9", Some(modulesOf))
 
-  /** Enough rows to read, few enough to render. The page says when it is reached, because
-    * a table that stops at 200 without saying so reads as the whole answer.
+  /** Enough rows to read, few enough to render, and where the page starts. The page says
+    * when it is reached, because a table that stops at 200 without saying so reads as the
+    * whole answer - and it lets the number be changed, because "narrow it" is no answer
+    * when the 201st row is the one you came for.
     */
   val limit = 200
+
+  /** The most the page will ask for. Not a database limit - every one of these files is
+    * small - but the rows are rendered into one table, and a browser asked for a hundred
+    * thousand rows stops answering.
+    */
+  val mostRows = 5000
 
   val all: List[Question] = List(
     Question(
@@ -97,13 +111,13 @@ object Questions:
       ask = "Which cells does a template have?",
       hints = "the whole grid, every cell, all rows and columns of a template",
       slots = List(framework, template, Slot("module", "Module", "FINREP9", "FINREP9")),
-      sql = filled => s"""
+      sql = (filled, rows) => s"""
         |SELECT row_code, row_label, column_code, column_label, datapoint,
         |       '{' || table_code || ', r' || row_code || ', c' || column_code || '}' AS cell_code
         |FROM   '${partition("cells")(filled("framework"))}'
         |WHERE  table_code = '${filled("table")}' AND module = '${filled("module")}'
         |ORDER  BY row_code, column_code
-        |LIMIT  $limit""".stripMargin.trim,
+        |LIMIT  $rows""".stripMargin.trim,
       reads = partition("cells"),
     ),
     Question(
@@ -111,7 +125,7 @@ object Questions:
       ask = "What does a template break down by?",
       hints = "which dimensions, what members exist, the wording of a dimension",
       slots = List(framework, template),
-      sql = filled => s"""
+      sql = (filled, rows) => s"""
         |SELECT   dimension, count(DISTINCT member) AS members,
         |         string_agg(DISTINCT member, ', ' ORDER BY member) AS wording
         |FROM     '${partition("cell_members")(filled("framework"))}'
@@ -127,7 +141,7 @@ object Questions:
       slots = List(Slot("rule_code", "Rule code", "v0174_m", "v0174_m")),
       // The engine's occurrence number is stripped here as the lookup strips it: v3775_s_62
       // is the 62nd application of v3775_s, and the model has the rule, never the occurrence.
-      sql = filled => s"""
+      sql = (filled, rows) => s"""
         |SELECT module, taxonomy_version, dpm_release, severity, active,
         |       from_submission_date, expression
         |FROM   ${whole("rules")("")}
@@ -139,7 +153,7 @@ object Questions:
       id = "keys",
       ask = "What are a template's key dimensions?",
       slots = List(framework, template),
-      sql = filled => s"""
+      sql = (filled, rows) => s"""
         |SELECT code, label, property_code, property
         |FROM   ${whole("headers")("")}
         |WHERE  table_code = '${filled("table")}' AND is_key
@@ -160,7 +174,7 @@ object Questions:
       // The wording has to come from the dimensions question: a near miss matches
       // nothing, and "Credit institutions " with a trailing space is a real item in the
       // model next to a clean one. trim on both sides is what the lookup does too.
-      sql = filled => s"""
+      sql = (filled, rows) => s"""
         |SELECT   m.table_code, c.datapoint, m.row_code, c.row_label, m.column_code, c.column_label
         |FROM     '${partition("cell_members")(filled("framework"))}' m
         |JOIN     '${partition("cells")(filled("framework"))}' c
@@ -170,7 +184,7 @@ object Questions:
         |     AND trim(lower(m.member)) = trim(lower('${filled("member")}'))
         |GROUP BY ALL
         |ORDER BY m.row_code, m.column_code
-        |LIMIT    $limit""".stripMargin.trim,
+        |LIMIT    $rows""".stripMargin.trim,
       reads = partition("cell_members"),
     ),
     Question(
@@ -186,7 +200,7 @@ object Questions:
           Some(filled => s"SELECT DISTINCT module AS value FROM sums WHERE table_code = '${filled("table")}' ORDER BY 1")
         ),
       ),
-      sql = filled => s"""
+      sql = (filled, rows) => s"""
         |SELECT total_row, addend_rows, columns, sheets, rule_code, severity
         |FROM   ${whole("sums")("")}
         |WHERE  table_code = '${filled("table")}' AND module = '${filled("module")}'
@@ -204,7 +218,7 @@ object Questions:
       ),
       // MATERIALIZED, not just a CTE: DuckDB inlines a plain one, so naming the
       // partition twice reads it twice - 1.9 MB for COREP where the file is 0.5.
-      sql = filled => s"""
+      sql = (filled, rows) => s"""
         |WITH cells AS MATERIALIZED (SELECT * FROM '${partition("rule_cells")(filled("framework"))}'),
         |     here AS (SELECT DISTINCT operation_vid FROM cells WHERE table_code = '${filled("table")}')
         |SELECT   r.rule_code, r.severity, r.active, r.taxonomy_version, r.dpm_release,
@@ -216,7 +230,7 @@ object Questions:
         |WHERE    r.module = '${filled("module")}'
         |GROUP BY ALL
         |ORDER BY r.rule_code
-        |LIMIT    $limit""".stripMargin.trim,
+        |LIMIT    $rows""".stripMargin.trim,
       reads = partition("rule_cells"),
     ),
     Question(
@@ -226,7 +240,7 @@ object Questions:
       slots = List(framework, Slot("datapoint", "Datapoint", "152217 or dp152217", "152217")),
       // A report writes dp<N>; the model stores the number. Strip the prefix here rather
       // than ask the reader to.
-      sql = filled => s"""
+      sql = (filled, rows) => s"""
         |SELECT DISTINCT table_code, module, taxonomy_version,
         |       '{' || table_code || ', r' || row_code || ', c' || column_code || '}' AS cell_code,
         |       row_label, column_label
@@ -239,7 +253,7 @@ object Questions:
       id = "property",
       ask = "What does a report's column header mean?",
       slots = List(Slot("code", "Header", "qCDF, qBBE, ei1452", "qCDF")),
-      sql = filled => s"""
+      sql = (filled, rows) => s"""
         |SELECT p.code, p.property, h.table_code, h.label AS used_as
         |FROM   ${whole("properties")("")} p
         |LEFT JOIN ${whole("headers")("")} h ON h.property_code = p.code AND h.is_key
@@ -254,19 +268,19 @@ object Questions:
       slots = List(module),
       // active is false for a rule that is published and not run. A description that
       // names one tells a reader to satisfy a check nobody runs.
-      sql = filled => s"""
+      sql = (filled, rows) => s"""
         |SELECT rule_code, severity, taxonomy_version, dpm_release, from_submission_date
         |FROM   ${whole("rules")("")}
         |WHERE  module = '${filled("module")}' AND NOT active
         |ORDER  BY rule_code
-        |LIMIT  $limit""".stripMargin.trim,
+        |LIMIT  $rows""".stripMargin.trim,
       reads = whole("rules"),
     ),
     Question(
       id = "modules",
       ask = "Which module versions is a framework reported under?",
       slots = List(framework),
-      sql = filled => s"""
+      sql = (filled, rows) => s"""
         |SELECT module, taxonomy_version, dpm_release, from_reference_date,
         |       to_reference_date, do_not_use
         |FROM   ${whole("modules")("")}
