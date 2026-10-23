@@ -1,0 +1,119 @@
+```{python}
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd()))
+import _dpm as dpm
+
+con = dpm.connect(db or None)
+history = dpm.versions(con, table_code)
+if not history:
+    raise SystemExit(f"{table_code} is not a template in this database.")
+current = history[-1]
+cells = dpm.cells(con, current["table_vid"])
+dimensions = dpm.dimensions(con, current["table_vid"])
+checks = dpm.rules(con, table_code)
+drift = dpm.moved(con, current["table_vid"])
+wording = dpm.relabelled(con, current["table_vid"])
+first, last = history[0]["from_release"], dpm.releases(con)[-1]["code"]
+```
+
+```{python}
+#| output: asis
+print(
+    f"{len(cells):,} reportable cells, {len(dimensions)} dimensions, "
+    f"{len(checks):,} validation rules reaching it, "
+    f"{sum(1 for check in checks if not check['active']):,} of them switched off. "
+    f"Current version in force since DPM {current['from_release']}; "
+    f"the template has existed since {first}, and this database goes to {last}.\n"
+)
+```
+
+## What a description is made of
+
+There is nothing to copy. `VariableVersion.Name` is NULL for every row in the DPM, so a
+datapoint has no sentence of its own: every description, here and in the supervisory
+portals, is composed from the template, the row and the column. That is why two tools can
+agree on the wording without either of them owning it.
+
+```{python}
+#| output: asis
+for cell in cells[:3]:
+    print(f"- `{cell['cell_code']}` — {dpm.described(cell, current['name'])}")
+print()
+```
+
+## What it breaks down by
+
+The members are given in the model's own wording, which is the wording a query has to
+match. A near miss matches nothing rather than erroring, and a trailing space is a real
+difference in this model.
+
+```{python}
+#| output: asis
+print(dpm.markdown_table(
+    [{**row, "wording": row["wording"][:160]} for row in dimensions],
+    ["dimension", "members", "wording"],
+))
+print()
+```
+
+## What has changed
+
+The EBA ships no account of this: the `ChangeLog` table is present and empty in every
+release. What follows is read off the version rows — `StartReleaseID` and `EndReleaseID`
+on the table, the variable and the header — rather than from a changelog.
+
+```{python}
+#| output: asis
+print(dpm.markdown_table(history, ["from_release", "to_release", "table_vid", "name"]))
+print()
+print(
+    f"\nOf the {drift['variables']:,} datapoints this version reports, "
+    f"**{drift['moved']:,} have sat at another row or column** at some point since "
+    f"{first}. The datapoint is the thing that persisted; the coordinate is where it "
+    "happened to be that release — which is why a time series keyed on the coordinate "
+    "is keyed on an address.\n"
+)
+print(
+    f"\nA further {drift['shared']:,} are reported by more than one template. That is "
+    "the layout, not a change: the variants of a template share datapoints.\n"
+)
+```
+
+```{python}
+#| output: asis
+if wording:
+    print("### Rows and columns whose wording changed\n")
+    print("The coordinate stayed, the datapoint stayed, the sentence shown to a reader did not.\n")
+    print(dpm.markdown_table(
+        [{**row, "label": row["label"][:90]} for row in wording],
+        ["code", "from_release", "to_release", "label"],
+    ))
+else:
+    print("No row or column of this template has been reworded since it was introduced.")
+print()
+```
+
+## What checks it
+
+`active` is the EBA's deactivated-rules list. A description that tells a reader to
+satisfy a rule nobody runs is worse than one that names no rule at all.
+
+```{python}
+#| output: asis
+print(dpm.markdown_table(checks[:25], ["rule_code", "severity", "active", "rows_here"]))
+if len(checks) > 25:
+    print(f"\n_{len(checks) - 25:,} more; the whole list is a query, not a page._")
+print()
+```
+
+---
+
+```{python}
+#| output: asis
+print(
+    f"_Generated from the DPM 2.0 database. Every number above is a query in "
+    f"`quarto/_dpm.py`, run when this page was built, not a figure typed into it._"
+)
+```

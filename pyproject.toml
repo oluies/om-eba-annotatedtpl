@@ -23,6 +23,14 @@ dev = [
     "sqlfluff>=4.4.0",
     "ty>=0.0.85",
 ]
+# Quarto's Python engine, for the quarto/ spike only. Its own group rather than dev,
+# because `uv sync` installs dev and nothing here is needed to run the pack, the tools or
+# the tests: `uv sync --group docs` when rendering.
+docs = [
+    "ipykernel>=7.1.1",
+    "nbclient>=0.10.2",
+    "nbformat>=5.10.4",
+]
 
 [tool.ruff]
 line-length = 120
@@ -33,12 +41,13 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.ty.environment]
 # The pack's modules are at the root and the generators in source/; conftest.py puts both
 # on sys.path at run time, and this is the same thing for the type checker.
-extra-paths = [".", "source", "tests"]
+extra-paths = [".", "source", "tests", "quarto"]
 
 [tool.ruff.lint.isort]
 # The pack's modules sit at the repository root rather than in a package, so without this
 # ruff sorts them in with httpx and duckdb and the import block stops saying anything.
 known-first-party = [
+    "_dpm",
     "agent_tools",
     "check_instance",
     "ba_form_cell",

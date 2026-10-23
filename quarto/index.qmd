@@ -1,0 +1,51 @@
+---
+title: "What this is"
+jupyter: python3
+---
+
+```{python}
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd()))
+import _dpm as dpm
+
+con = dpm.connect()
+known = dpm.releases(con)
+```
+
+```{python}
+#| output: asis
+print(
+    "One page per reporting template, generated from the EBA's DPM 2.0 database: what the "
+    "template is, what it breaks down by, what checks it, and what has changed about it "
+    f"since DPM {known[0]['code']}.\n"
+)
+print(
+    f"This build read a database carrying {len(known)} releases — "
+    + ", ".join(release["code"] for release in known)
+    + ".\n"
+)
+```
+
+It is for whoever has to fill a template in and wants to know what a cell means, whether
+the rule that will reject their file is still switched on, and whether the column they
+have been keying a time series on has always meant the same thing.
+
+## Two things worth knowing before you read a page
+
+**A datapoint is not its coordinate.** The DPM has two reference systems: `VariableID`,
+which is the identity of a datapoint, and the table coordinate — template, row, column,
+sheet — which is where that datapoint sits in one version of one template. Within a
+version the coordinate is unambiguous. Across releases it is not: coordinates have been
+reused for different datapoints. If you key a time series on `r0550_c0020`, you are
+keying on an address, not on a thing.
+
+**Nobody wrote the descriptions.** Every description you will see is composed from the
+template name, the row label and the column label, because the model holds no sentence
+for a datapoint. This is not a shortcut taken here; it is what the model contains.
+
+## Where the rest is
+
+- [Ask a question](https://oluies.github.io/om-eba-annotatedtpl/) — the same model, queried in your browser, with the SQL shown next to every answer. Three releases side by side.
+- [The source](https://github.com/oluies/om-eba-annotatedtpl) — the generators, the lookup tools and these pages.

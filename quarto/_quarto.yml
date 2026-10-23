@@ -1,0 +1,45 @@
+project:
+  type: website
+  output-dir: _site
+
+website:
+  title: "EBA DPM, by template"
+  description: "What one reporting template is, what it breaks down by, and what has changed."
+  search:
+    location: navbar
+    type: overlay
+  navbar:
+    left:
+      - href: index.qmd
+        text: What this is
+      - href: https://oluies.github.io/om-eba-annotatedtpl/
+        text: Ask a question
+      - href: https://github.com/oluies/om-eba-annotatedtpl
+        text: Source
+  page-footer:
+    center: |
+      Derived from the EBA DPM 2.0 database. Reproduction of EBA material is authorised
+      provided the source is acknowledged (<https://www.eba.europa.eu/legal-notice>).
+      Not published by the EBA and not endorsed by it.
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    code-tools: false
+    anchor-sections: true
+    # The "Other Formats" link points at the file the render wrote, and render.sh moves
+    # that file to the template's own name afterwards, so the link would be to a page
+    # that is not there. The markdown is for the catalogue, not for a reader here.
+    format-links: false
+  # The second destination: one source, rendered as GitHub-flavoured markdown for a
+  # catalogue that takes markdown and nothing else.
+  gfm:
+    toc: false
+
+# Nothing here needs a kernel the reader has; the pages are rendered once, by us.
+execute:
+  echo: false
+  warning: false
+  freeze: false
