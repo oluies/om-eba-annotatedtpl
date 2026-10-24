@@ -8,7 +8,7 @@ when describing tables, columns and glossary terms in OpenMetadata.
 4 domains · 54 controlled values.**
 
 Ask the model a question without installing anything:
-**<https://oluies.github.io/om-eba-annotatedtpl/>** — DPM 4.2.1, 4.3 and 4.4 (draft),
+**<https://oluies.github.io/om-eba-annotatedtpl/>** — DPM 4.2.1, 4.3 and 4.4,
 queried in the browser with DuckDB-WASM.
 
 ![The pack loaded as Knowledge Pages in OpenMetadata](docs/knowledge-pages.png)
@@ -219,7 +219,7 @@ headed by a property code. For the EBA's own sample file:
 Both halves fail in ways worth telling apart. A datapoint id above the highest this
 release has means the report was built against a newer one, which the answer says rather
 than leaving an empty result to interpret. That is not hypothetical: those three ids
-resolve to nothing in release 4.2.1, to nothing in 4.3, and in the 4.4 draft to columns
+resolve to nothing in release 4.2.1, to nothing in 4.3, and in 4.4 to columns
 `0040`, `0050` and `0060` of V_04.01, *Freedom to provide services*, in the
 `AML_ELIGIBILITY` module - customers, incoming transactions, outgoing transactions.
 
@@ -279,7 +279,7 @@ Point `DPM2_DB` at the one a lookup should read.
 The default stays the release the pack is built from, so `check_against_dpm2.py` keeps
 comparing like with like. What the others are for is a report that will not resolve:
 
-| | 4.2.1 | 4.3 | 4.4 draft |
+| | 4.2.1 | 4.3 | 4.4 |
 |---|---|---|---|
 | Templates | 1052 | 1120 | — |
 | Modules | 61 | 65 | — |

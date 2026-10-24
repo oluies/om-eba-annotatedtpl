@@ -64,8 +64,9 @@ Sources, by release:
     DPM 2.0 release 4.2.1   https://www.eba.europa.eu/sites/default/files/2026-02/
                             ad0d2577-a1eb-4826-a249-a1f7701c6796/DPM2%20Database_v_4_2_1.zip
     DPM 2.0 release 4.3     reporting framework 4.3, "DPM2 Database_v 4_3.zip"
-    DPM 2.0 release 4.4     reporting framework 4.4, "DPM2 Database_v 4_4.zip" - a DRAFT
-                            technical package, and anything built from it is a draft too
+    DPM 2.0 release 4.4     reporting framework 4.4, "DPM2 Database_v 4_4.zip" - the
+                            final technical package for 4.4 Phase 1, published by the
+                            EBA on 2026-10-12. Phase 2 is expected early 2027.
 
 Between-release validation rule updates come from the validation rules packages
 page and are applied with source/apply_vr_updates.py; a published copy says in

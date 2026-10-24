@@ -63,9 +63,11 @@ SOURCES = {
         url="https://ebprstaewspublic01.blob.core.windows.net/public/tools-prod/documents/Big_Files/files/Reporting%20framework%204.3/DPM2%20Database_v%204_3.zip",
         sha256="f2d802f1430879cf085d21e2279630d7a10e1207e2a100ab01188136cf0b2cac",
     ),
-    # The 4.4 draft technical package. A draft is republished as it is revised, so this
-    # hash goes stale; when it does, the file has moved on and the recorded one is the
-    # thing to update, deliberately, rather than to drop.
+    # Reporting framework 4.4, Phase 1. This was the draft technical package when it was
+    # first pinned here; the EBA published the final one on 2026-10-12, which is the file
+    # recorded below. A package is republished as it is revised, so this hash goes stale;
+    # when it does, the file has moved on and the recorded one is the thing to update,
+    # deliberately, rather than to drop.
     #
     # It went stale once already, which is the pin earning its keep: the copy taken on
     # 2026-10-17 was 189936198 bytes, and the one published on 2026-10-15 and served from

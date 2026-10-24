@@ -13,9 +13,9 @@ on:
         required: false
         default: "4.2.1 4.3 4.4"
       drafts:
-        description: "Which of them are draft technical packages. The page says so when one is picked."
+        description: "Which of them are draft technical packages. The page says so when one is picked. Empty when none are."
         required: false
-        default: "4.4"
+        default: ""
       framework:
         description: "Also render a page per template of this framework, under /templates/. Empty skips it."
         required: false
@@ -23,6 +23,9 @@ on:
       templates_release:
         description: "Which release those template pages are generated from. Must be one of the releases above."
         required: false
+        # 4.3, not the newest, because the newest is what will be reported and 4.3 is what
+        # is being reported. A page that reads like documentation should describe the
+        # framework in force unless someone asks for the one coming.
         default: "4.3"
       deploy:
         description: "Publish to Pages. Unticked builds the artefact and stops."
@@ -83,8 +86,9 @@ jobs:
 
       # The databases are still here - the loop only gives back the downloads and the
       # CSV - so the template pages are rendered from one of them rather than fetched
-      # again. Named rather than "the newest": 4.4 is a draft, and a page that reads
-      # like settled documentation should not be generated from one by default.
+      # again. Named rather than "the newest", so that a release which is still a draft
+      # technical package - as 4.4 was until 2026-10-12 - cannot become the source of
+      # pages that read like settled documentation without someone saying so.
       - name: Render a page per template
         if: ${{ inputs.framework != '' }}
         run: |
