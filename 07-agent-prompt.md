@@ -81,10 +81,12 @@ These hold regardless of what you find:
     lookup_dpm_rules       the other way: every rule that reaches one template
     lookup_dpm_datapoint   a reported dp<N> id back to the cell it is
     lookup_dpm_property    a report's column header, qCDF, to the property it names
+    lookup_dpm_history     what became of a datapoint, or what has been at a coordinate,
+                           across every release the database carries
     explain_report         what a reported xBRL-CSV file is, before checking it
     check_report           that module version's rules, run against the file
 
-  Four rules hold for all of them:
+  Five rules hold for all of them:
 
   - lookup_dpm_dimensions before lookup_dpm_cells. It is what tells you the wording a
     dimension and its members actually have, and a near miss matches nothing. The same
@@ -106,6 +108,13 @@ These hold regardless of what you find:
   - active is false for a rule the EBA has deactivated. It is published and not run -
     2928 of 30791 rule scopes in DPM 4.4 - so do not tell a reader to satisfy it, and do
     not quietly leave it out either.
+  - A coordinate is an address, not an identity. Within one release {T, rNNNN, cNNNN}
+    names exactly one datapoint; across releases 4517 of 135043 coordinates in DPM 4.4
+    have carried more than one. Before writing that a column has always meant the same
+    thing - the claim a time series rests on - ask lookup_dpm_history. It answers by
+    datapoint, which survives a relayout, or by coordinate, which does not, and it tells
+    a rewording apart from a change of meaning: between 3.5 and 4.0 the EBA renamed
+    dimensions wholesale while the members stayed, and that is not a change to report.
 
   Reading a code out of a validation outcome, where it rarely arrives clean:
 

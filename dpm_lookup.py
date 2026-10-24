@@ -1151,6 +1151,285 @@ LOOKUP_DPM_PROPERTY_TOOL_DEFINITION = {
 
 LOOKUP_DPM_DIMENSIONS_TOOL_NAME = "lookup_dpm_dimensions"
 LOOKUP_DPM_CELLS_TOOL_NAME = "lookup_dpm_cells"
+# Every placing of a datapoint, release by release. The join is the same one every other
+# answer here uses; what is different is that it is not scoped to one table version, which
+# is the whole point - a datapoint that stayed put and a datapoint that moved look the
+# same until you look across versions.
+#
+# The release range comes from the table version rather than from the variable version:
+# the variable can outlive the layout that placed it, and what a reader is asking about is
+# where it was reported, which is the layout.
+_PLACINGS = """
+SELECT   vv.VariableID              AS datapoint,
+         c.VariableVID              AS variable_vid,
+         tv.Code                    AS table_code,
+         coalesce(hr.Code, '*')     AS row_code,
+         trim(coalesce(hr.Label, '')) AS row_label,
+         coalesce(hc.Code, '*')     AS column_code,
+         trim(coalesce(hc.Label, '')) AS column_label,
+         coalesce(hs.Code, '')      AS sheet_code,
+         trim(coalesce(pi.Name, '')) AS metric,
+         -- Resolved rather than compared as ids. ContextID differs between 99.5% of
+         -- consecutive versions of the same variable, so an alarm on the id fires almost
+         -- always and says nothing; what a reader needs to know is whether the members
+         -- changed, and between 3.5 and 4.0 the EBA renamed dimensions wholesale while
+         -- the members stayed exactly as they were.
+         (SELECT string_agg(trim(d.Name) || '=' || trim(m.Name), '; ' ORDER BY trim(d.Name))
+          FROM   ContextComposition x
+          JOIN   Item m ON m.ItemID = x.ItemID
+          JOIN   Item d ON d.ItemID = x.PropertyID
+          WHERE  x.ContextID = vv.ContextID) AS context,
+         (SELECT string_agg(trim(m.Name), '; ' ORDER BY trim(m.Name))
+          FROM   ContextComposition x
+          JOIN   Item m ON m.ItemID = x.ItemID
+          WHERE  x.ContextID = vv.ContextID) AS members,
+         rs.Code                    AS from_release,
+         coalesce(re.Code, '')      AS to_release,
+         tv.StartReleaseID          AS start_release_id
+FROM     TableVersionCell c
+JOIN     VariableVersion vv ON vv.VariableVID = c.VariableVID
+JOIN     TableVersion tv ON tv.TableVID = c.TableVID
+JOIN     Cell cc ON cc.CellID = c.CellID
+LEFT JOIN Item pi ON pi.ItemID = vv.PropertyID
+LEFT JOIN Release rs ON rs.ReleaseID = tv.StartReleaseID
+LEFT JOIN Release re ON re.ReleaseID = tv.EndReleaseID
+LEFT JOIN TableVersionHeader tr ON tr.TableVID = c.TableVID AND tr.HeaderID = cc.RowID
+LEFT JOIN HeaderVersion hr ON hr.HeaderVID = tr.HeaderVID
+LEFT JOIN TableVersionHeader tc ON tc.TableVID = c.TableVID AND tc.HeaderID = cc.ColumnID
+LEFT JOIN HeaderVersion hc ON hc.HeaderVID = tc.HeaderVID
+LEFT JOIN TableVersionHeader ts ON ts.TableVID = c.TableVID AND ts.HeaderID = cc.SheetID
+LEFT JOIN HeaderVersion hs ON hs.HeaderVID = ts.HeaderVID
+WHERE    c.IsExcluded = 0
+"""
+
+HISTORY_OF_DATAPOINT_SQL = f"""
+SELECT * FROM ({_PLACINGS} AND vv.VariableID = ?)
+ORDER BY start_release_id, table_code, row_code, column_code
+"""
+
+# Filtered outside the subquery because the coordinate is three coalesces, and a WHERE
+# that repeats them is a WHERE that will disagree with the SELECT after the next edit.
+HISTORY_AT_COORDINATE_SQL = f"""
+SELECT * FROM ({_PLACINGS})
+WHERE  table_code = ? AND row_code = ? AND column_code = ? AND sheet_code = ?
+ORDER  BY start_release_id, datapoint
+"""
+
+
+def _place(row: dict[str, Any]) -> str:
+    """A placing as one string, for comparing one release's to the next."""
+    return cell_code(row["table_code"], row["row_code"], row["column_code"], row["sheet_code"])
+
+
+def changes(placings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """What happened to a datapoint between releases, read off its placings.
+
+    Derived rather than looked up: the DPM ships a ChangeLog table and it is empty in
+    every release, so an account of what changed exists only as the difference between
+    two versions. The categories are the ones the difference can actually support -
+
+      introduced   the first release this datapoint was reported in
+      moved        it left one cell and arrived in another
+      added        reported in a further place, the old one kept
+      removed      one place dropped, others kept
+      relabelled   the same cell, a different wording - the description changed and the
+                   datapoint did not, which is the case nobody notices
+      respecified  different dimension members: the number means something else while
+                   looking identical
+      renamed      the same members under renamed dimensions, which is most of what looks
+                   like a change between 3.5 and 4.0 and is not one
+      remetricked  a different metric behind the cell
+      withdrawn    the last placing ended and nothing followed
+
+    A datapoint is reported by several templates at once - the .a/.b/.c variants of a
+    template share them - so this compares a release against a release, not a row against
+    the next row. Reading the rows in order instead turns being in four places into three
+    moves, every release.
+    """
+    if not placings:
+        return []
+    order: list[str] = []
+    by_release: dict[str, dict[str, dict[str, Any]]] = {}
+    for row in sorted(placings, key=lambda row: (row["start_release_id"], row["table_code"], row["row_code"])):
+        release = row["from_release"]
+        if release not in by_release:
+            by_release[release] = {}
+            order.append(release)
+        by_release[release][_place(row)] = row
+
+    first = by_release[order[0]]
+    found = [{"release": order[0], "kind": "introduced", "now": ", ".join(sorted(first))}]
+    for earlier, later in zip(order, order[1:], strict=False):
+        was, now = by_release[earlier], by_release[later]
+        gone, arrived = sorted(set(was) - set(now)), sorted(set(now) - set(was))
+        if gone and arrived:
+            found.append({"release": later, "kind": "moved", "was": ", ".join(gone), "now": ", ".join(arrived)})
+        elif arrived:
+            found.append({"release": later, "kind": "added", "now": ", ".join(arrived)})
+        elif gone:
+            found.append({"release": later, "kind": "removed", "was": ", ".join(gone)})
+        # Only where the cell is the same in both releases is a difference in its wording
+        # or its members a change to that cell rather than a consequence of the move.
+        for place in sorted(set(was) & set(now)):
+            before, after = was[place], now[place]
+            for kind, old, new in _differences(before, after):
+                entry = {"release": later, "kind": kind, "was": old, "now": new, "at": place}
+                # The same renaming lands on every cell of a template at once. Said once.
+                if not any(seen.get(key) == entry[key] for seen in found for key in ("release", "kind", "was", "now")):
+                    found.append(entry)
+    last = max(placings, key=lambda row: row["start_release_id"])
+    if last["to_release"] and not any(row["to_release"] == "" for row in placings):
+        found.append({"release": last["to_release"], "kind": "withdrawn", "was": _place(last)})
+    return found
+
+
+def _differences(before: dict[str, Any], after: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """What differs between one release's version of a cell and the next's.
+
+    Members are compared by their wording rather than by ItemID, which looks like the
+    wrong way round and is not: the DPM reissues item ids between releases, so only 1 380
+    of 150 558 consecutive version pairs keep the same ids, and comparing ids would call
+    everything a change. The names are the stable part.
+    """
+    found = []
+    if before["row_label"] != after["row_label"]:
+        found.append(("relabelled", before["row_label"], after["row_label"]))
+    if before["column_label"] != after["column_label"]:
+        found.append(("relabelled", before["column_label"], after["column_label"]))
+    if before["members"] != after["members"]:
+        found.append(("respecified", before["context"] or "", after["context"] or ""))
+    elif before["context"] != after["context"]:
+        found.append(("renamed", before["context"] or "", after["context"] or ""))
+    if before["metric"] != after["metric"]:
+        found.append(("remetricked", before["metric"], after["metric"]))
+    return found
+
+
+def lookup_dpm_history(
+    datapoint: str | int | None = None,
+    table: str | None = None,
+    row: str | None = None,
+    column: str | None = None,
+    sheet: str | None = None,
+) -> dict[str, Any]:
+    """What has happened to a datapoint, or to a coordinate, across every DPM release.
+
+    Two ways in, because the model has two reference systems and they are not
+    interchangeable. `datapoint` is the VariableID, which is an identity: it survives a
+    template being relaid out. The coordinate - template, row, column, sheet - is an
+    address, and an address is reused. Within one release a coordinate names exactly one
+    datapoint; across releases 4 517 of 135 043 coordinates in DPM 4.4 have carried more
+    than one. A time series keyed on `r0550_c0020` is keyed on the address.
+
+    Asked by coordinate, the answer therefore says which datapoints have been there and
+    not only what the current one did, because that is the question behind the question:
+    whether a column of a warehouse table has always meant the same thing.
+    """
+    if not available():
+        return {"found": False, "message": BUILD_IT}
+    if datapoint is None and not table:
+        return {
+            "found": False,
+            "message": (
+                "Ask by datapoint - the VariableID, e.g. 152217 or dp152217 - or by coordinate: "
+                "table with row and column. The first asks what became of a thing, the second "
+                "what has been in a place."
+            ),
+        }
+
+    if datapoint is not None:
+        number = datapoint_id(datapoint)
+        if number is None:
+            return {
+                "found": False,
+                "datapoint": datapoint,
+                "message": f"{datapoint!r} is not a datapoint id. They look like dp1010005012 or 152217.",
+            }
+        with _connect() as con:
+            placings = _rows(con, HISTORY_OF_DATAPOINT_SQL, number)
+        if not placings:
+            return {
+                "found": False,
+                "datapoint": number,
+                "message": (
+                    f"No reportable cell has ever carried datapoint {number} in this release of the "
+                    "DPM. lookup_dpm_datapoint says whether the id exists at all."
+                ),
+            }
+        return {
+            "found": True,
+            "asked": {"datapoint": number},
+            "datapoint": number,
+            "placings": placings,
+            "changes": changes(placings),
+            "message": (
+                "placings is where this datapoint was reported, release by release; changes is "
+                "what differed between consecutive ones. The DPM ships no changelog - its "
+                "ChangeLog table is empty in every release - so these are derived by comparing "
+                "versions, not read from one."
+            ),
+        }
+
+    try:
+        with _connect() as con:
+            # Through the resolver so that F1201A and F_12.01.a are the same question, and
+            # so an unknown template is named as such rather than answered with nothing.
+            found = _table_version(con, table or "")
+            placings = _rows(
+                con,
+                HISTORY_AT_COORDINATE_SQL,
+                found["Code"],
+                row or "*",
+                column or "*",
+                sheet or "",
+            )
+    except DpmError as exc:
+        return {"found": False, "table": table, "message": str(exc)}
+
+    here = cell_code(found["Code"], row or "*", column or "*", sheet or "")
+    if not placings:
+        return {
+            "found": False,
+            "table": found["Code"],
+            "message": (
+                f"No reportable cell at {here} in any release. An open table's rows are '*' "
+                "rather than a code, and a template with a sheet axis needs the sheet."
+            ),
+        }
+    seen: dict[int, list[dict[str, Any]]] = {}
+    for placing in placings:
+        seen.setdefault(placing["datapoint"], []).append(placing)
+    current = placings[-1]["datapoint"]
+    return {
+        "found": True,
+        "asked": {"table": found["Code"], "row": row, "column": column, "sheet": sheet},
+        "coordinate": here,
+        "datapoints": [
+            {
+                "datapoint": number,
+                "from_release": theirs[0]["from_release"],
+                "to_release": theirs[-1]["to_release"],
+                "row_label": theirs[-1]["row_label"],
+                "column_label": theirs[-1]["column_label"],
+                "current": number == current,
+            }
+            for number, theirs in seen.items()
+        ],
+        "reused": len(seen) > 1,
+        "placings": placings,
+        "changes": changes(seen[current]),
+        "message": (
+            f"{len(seen)} datapoint(s) have been reported at {here}. "
+            + (
+                "More than one, so this coordinate is not a stable key: a series keyed on it "
+                "joins figures that are not the same quantity. Key on the datapoint instead."
+                if len(seen) > 1
+                else "One, so far - which is a fact about this coordinate and not a guarantee about the next release."
+            )
+        ),
+    }
+
+
 LOOKUP_DPM_SUMS_TOOL_NAME = "lookup_dpm_sums"
 
 _TABLE_ARG = {
@@ -1313,6 +1592,55 @@ LOOKUP_DPM_SUMS_TOOL_DEFINITION = {
     },
 }
 
+LOOKUP_DPM_HISTORY_TOOL_NAME = "lookup_dpm_history"
+
+LOOKUP_DPM_HISTORY_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": LOOKUP_DPM_HISTORY_TOOL_NAME,
+        "description": (
+            "What has happened to a datapoint, or to a coordinate, across every DPM release the "
+            "database carries - 3.4 to 4.4. Ask by datapoint (the VariableID, which is an "
+            "identity) or by coordinate (template, row, column, which is an address). Returns "
+            "where it was reported release by release and what differed between consecutive "
+            "ones, classified: introduced, moved, relabelled (same cell, new wording - the "
+            "description changed and the figure did not), respecified (different dimension "
+            "members, so the number means something else while looking identical), renamed (the "
+            "same members under renamed dimensions, which is most of what looks like a change "
+            "between 3.5 and 4.0), remetricked, withdrawn. Asked by coordinate it also says "
+            "whether more than one datapoint has ever been reported there, which is the question "
+            "behind a time series keyed on a column name. The EBA ships no changelog - the DPM's "
+            "ChangeLog table is empty in every release - so all of this is derived by comparing "
+            "versions. Use it before telling anyone a column has always meant the same thing."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "datapoint": {
+                    "type": ["string", "null"],
+                    "description": (
+                        "The datapoint id, e.g. 152217 or dp152217, to ask what became of one "
+                        "thing. Null when asking by coordinate."
+                    ),
+                },
+                "table": {
+                    "type": ["string", "null"],
+                    "description": "Template code, e.g. F_18.00.a, to ask what has been in one place.",
+                },
+                "row": {"type": ["string", "null"], "description": "Row code, four digits. '*' for an open table."},
+                "column": {"type": ["string", "null"], "description": "Column code, four digits."},
+                "sheet": {
+                    "type": ["string", "null"],
+                    "description": "Sheet code for a template with a sheet axis. Null otherwise.",
+                },
+            },
+            "required": ["datapoint", "table", "row", "column", "sheet"],
+            "additionalProperties": False,
+        },
+    },
+}
+
 LOOKUP_DPM_TABLE_TOOL_NAME = "lookup_dpm_table"
 LOOKUP_DPM_CELL_TOOL_NAME = "lookup_dpm_cell"
 
@@ -1387,6 +1715,7 @@ DPM_TOOL_DEFINITIONS = (
     LOOKUP_DPM_DIMENSIONS_TOOL_DEFINITION,
     LOOKUP_DPM_CELLS_TOOL_DEFINITION,
     LOOKUP_DPM_SUMS_TOOL_DEFINITION,
+    LOOKUP_DPM_HISTORY_TOOL_DEFINITION,
 )
 
 

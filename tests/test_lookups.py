@@ -573,10 +573,15 @@ def test_a_datapoint_resolves_to_the_cell_it_is():
 @needs_dpm2
 def test_an_id_above_the_release_says_newer_release_rather_than_nothing():
     """An empty answer cannot tell a caller whether the id is wrong or the file is newer,
-    and that is the whole question when a report will not resolve."""
-    answer = dpm_lookup.lookup_dpm_datapoint("dp1010005012")
+    and that is the whole question when a report will not resolve.
+
+    The id to ask for is read out of the database rather than written here: dp1010005012
+    is above 4.2.1's highest and below 4.4's, so a fixed one tests the release and not the
+    behaviour, and this suite is run against whichever DPM2_DB points at."""
+    highest = dpm_lookup.lookup_dpm_datapoint("dp999999999")["max_datapoint"]
+    answer = dpm_lookup.lookup_dpm_datapoint(highest + 1)
     assert answer["found"] is False
-    assert answer["max_datapoint"] < 1010005012
+    assert answer["max_datapoint"] < highest + 1
     assert "newer release" in answer["message"]
 
 
@@ -1035,3 +1040,140 @@ def test_every_query_in_the_module_is_a_constant_with_placeholders():
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "execute":
             first = node.args[0] if node.args else None
             assert isinstance(first, ast.Name), f"line {node.lineno}: execute() of a built string"
+
+
+# --- what happened to a datapoint, and to a coordinate ---------------------------------
+
+
+def placing(release, start, table="T_01.00", row="0010", column="0010", **rest):
+    """One row as the history query returns it, with the fields a classifier reads."""
+    return {
+        "from_release": release,
+        "to_release": rest.get("to_release", ""),
+        "start_release_id": start,
+        "table_code": table,
+        "row_code": row,
+        "column_code": column,
+        "sheet_code": "",
+        "row_label": rest.get("row_label", "A row"),
+        "column_label": rest.get("column_label", "A column"),
+        "members": rest.get("members", "Assets"),
+        "context": rest.get("context", "Base=Assets"),
+        "metric": rest.get("metric", "Carrying amount"),
+        "datapoint": 1,
+        "variable_vid": start,
+    }
+
+
+def kinds(changes):
+    return [(change["release"], change["kind"]) for change in changes]
+
+
+def test_being_in_two_places_at_once_is_not_a_move():
+    """A datapoint is reported by several templates in the same release - the .a/.b/.c
+    variants share them - and comparing row against row instead of release against release
+    turns that into a move for every release it stays put."""
+    history = [
+        placing("3.4", 1, table="T_01.00"),
+        placing("3.4", 1, table="T_01.00.a"),
+        placing("4.0", 3, table="T_01.00"),
+        placing("4.0", 3, table="T_01.00.a"),
+    ]
+    assert kinds(dpm_lookup.changes(history)) == [("3.4", "introduced")]
+
+
+def test_a_move_names_where_it_went():
+    history = [placing("3.4", 1, row="0010"), placing("4.0", 3, row="0020")]
+    moved = [change for change in dpm_lookup.changes(history) if change["kind"] == "moved"]
+    assert len(moved) == 1
+    assert "r0010" in moved[0]["was"] and "r0020" in moved[0]["now"]
+
+
+def test_a_rewording_is_told_apart_from_a_move():
+    """The case nobody notices: the cell and the figure are the same, the sentence shown
+    to a reader is not. K_47.00.a row 0010 went from '1.' to '0.1' in DPM 4.1."""
+    history = [
+        placing("3.4", 1, row_label="1. Loans and advances"),
+        placing("4.1", 4, row_label="0.1 Loans and advances"),
+    ]
+    found = dpm_lookup.changes(history)
+    assert kinds(found) == [("3.4", "introduced"), ("4.1", "relabelled")]
+    assert found[1]["was"].startswith("1.") and found[1]["now"].startswith("0.1")
+
+
+def test_renaming_a_dimension_is_not_respecifying_the_cell():
+    """Between 3.5 and 4.0 the EBA renamed dimensions wholesale - Base became Accounting
+    items - while the members stayed. Calling that a changed meaning would make the
+    classification useless, because it fires on almost every datapoint."""
+    history = [
+        placing("3.5", 2, context="Base=Assets", members="Assets"),
+        placing("4.0", 3, context="Accounting items=Assets", members="Assets"),
+    ]
+    assert kinds(dpm_lookup.changes(history)) == [("3.5", "introduced"), ("4.0", "renamed")]
+
+
+def test_different_members_are_a_respecification():
+    history = [
+        placing("4.0", 3, context="Performing status=Performing", members="Performing"),
+        placing("4.2", 5, context="Performing status=Non-performing", members="Non-performing"),
+    ]
+    assert kinds(dpm_lookup.changes(history)) == [("4.0", "introduced"), ("4.2", "respecified")]
+
+
+def test_one_renaming_across_many_cells_is_said_once():
+    """A renaming lands on every cell of a template in the same release. Reported per cell
+    it buries the one change a reader was looking for."""
+    history = [
+        placing("3.5", 2, row="0010", context="Base=Assets"),
+        placing("3.5", 2, row="0020", context="Base=Assets"),
+        placing("4.0", 3, row="0010", context="Accounting items=Assets"),
+        placing("4.0", 3, row="0020", context="Accounting items=Assets"),
+    ]
+    assert kinds(dpm_lookup.changes(history)) == [("3.5", "introduced"), ("4.0", "renamed")]
+
+
+def test_the_history_of_nothing_is_nothing():
+    assert dpm_lookup.changes([]) == []
+
+
+@needs_dpm2
+def test_asking_for_neither_a_datapoint_nor_a_coordinate_says_which_to_ask():
+    # With the database absent every tool answers that first, so this is about the
+    # argument check and only reaches it when there is a database to check against.
+    answer = dpm_lookup.lookup_dpm_history()
+    assert answer["found"] is False
+    assert "coordinate" in answer["message"]
+
+
+@needs_dpm2
+def test_a_coordinate_says_whether_it_has_meant_more_than_one_thing():
+    """The question behind a time series keyed on a column name. This coordinate has
+    carried different datapoints, and the row label says they are not the same quantity."""
+    answer = dpm_lookup.lookup_dpm_history(table="K_60.00.a", row="0270", column="0010")
+    assert answer["found"] is True
+    assert answer["reused"] is True, "this coordinate has carried more than one datapoint"
+    assert len({entry["datapoint"] for entry in answer["datapoints"]}) == len(answer["datapoints"])
+    assert sum(1 for entry in answer["datapoints"] if entry["current"]) == 1
+    assert "not a stable key" in answer["message"]
+
+
+@needs_dpm2
+def test_a_datapoint_carries_its_own_history():
+    answer = dpm_lookup.lookup_dpm_history("dp471887")
+    assert answer["found"] is True
+    assert answer["placings"], "a datapoint that exists was reported somewhere"
+    assert answer["changes"][0]["kind"] == "introduced"
+
+
+@needs_dpm2
+def test_an_unknown_coordinate_says_what_to_check():
+    answer = dpm_lookup.lookup_dpm_history(table="F_18.00.a", row="9999", column="9999")
+    assert answer["found"] is False
+    assert "open table" in answer["message"]
+
+
+@needs_dpm2
+def test_a_datapoint_id_that_is_not_one_is_named_as_such():
+    answer = dpm_lookup.lookup_dpm_history("not an id")
+    assert answer["found"] is False
+    assert "datapoint id" in answer["message"]

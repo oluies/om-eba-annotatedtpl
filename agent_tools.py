@@ -1,7 +1,7 @@
 """The tool definitions an agent registers, and the one dispatcher that runs them.
 
-Fifteen tools, from four modules, assembled here so a host application imports one name
-instead of fifteen and cannot end up with a definition registered but not dispatched:
+Sixteen tools, from four modules, assembled here so a host application imports one name
+instead of sixteen and cannot end up with a definition registered but not dispatched:
 
     lookup_datapoint        resolve a column name to its datapoint, and to the display
                             name to use for it                      (pay42_lookup.py)
@@ -17,6 +17,8 @@ instead of fifteen and cannot end up with a definition registered but not dispat
     lookup_dpm_dimensions   what a template breaks down by, and under which wording
     lookup_dpm_cells        the cells one dimension member covers - an aggregate's codes
     lookup_dpm_sums         which rows add up to which, from the validation rules
+    lookup_dpm_history      what has happened to a datapoint, or to a coordinate,
+                            across every release: moved, relabelled, respecified
                                                                     (dpm_lookup.py)
     explain_report          what a reported file is: its template, its module versions
                             and what each column header means
@@ -54,7 +56,7 @@ Trying one from a shell, before any of that:
     uv run agent_tools.py                       # the definitions the model will be shown
     uv run agent_tools.py lookup_dpm_sums table='F 12.01.a' module=FINREP9 version=null
 
-The eleven DPM-backed tools are the exception - the nine lookups and the two that read a
+The twelve DPM-backed tools are the exception - the ten lookups and the two that read a
 reported file: they need a 139 MB database that a checkout does not have, so they are
 registered only when it is there. A tool whose every answer is "not
 downloaded" costs a turn and teaches the model to stop calling it. `dispatch` still knows
@@ -90,6 +92,7 @@ class ToolName(enum.StrEnum):
     LOOKUP_DPM_DIMENSIONS = dpm_lookup.LOOKUP_DPM_DIMENSIONS_TOOL_NAME
     LOOKUP_DPM_CELLS = dpm_lookup.LOOKUP_DPM_CELLS_TOOL_NAME
     LOOKUP_DPM_SUMS = dpm_lookup.LOOKUP_DPM_SUMS_TOOL_NAME
+    LOOKUP_DPM_HISTORY = dpm_lookup.LOOKUP_DPM_HISTORY_TOOL_NAME
     CHECK_REPORT = check_instance.CHECK_REPORT_TOOL_NAME
     EXPLAIN_REPORT = check_instance.EXPLAIN_REPORT_TOOL_NAME
 
@@ -201,6 +204,14 @@ def _run(name: str, args: dict[str, Any]) -> dict[str, Any]:
         case ToolName.LOOKUP_DPM_SUMS:
             return dpm_lookup.lookup_dpm_sums(
                 args["table"], args["module"], args.get("version"), args.get("dpm_release")
+            )
+        case ToolName.LOOKUP_DPM_HISTORY:
+            return dpm_lookup.lookup_dpm_history(
+                args.get("datapoint"),
+                args.get("table"),
+                args.get("row"),
+                args.get("column"),
+                args.get("sheet"),
             )
         case ToolName.LOOKUP_DPM_DATAPOINT:
             return dpm_lookup.lookup_dpm_datapoint(args["datapoint"])

@@ -1508,10 +1508,12 @@ These hold regardless of what you find:
     lookup_dpm_rules       the other way: every rule that reaches one template
     lookup_dpm_datapoint   a reported dp<N> id back to the cell it is
     lookup_dpm_property    a report's column header, qCDF, to the property it names
+    lookup_dpm_history     what became of a datapoint, or what has been at a coordinate,
+                           across every release the database carries
     explain_report         what a reported xBRL-CSV file is, before checking it
     check_report           that module version's rules, run against the file
 
-  Four rules hold for all of them:
+  Five rules hold for all of them:
 
   - lookup_dpm_dimensions before lookup_dpm_cells. It is what tells you the wording a
     dimension and its members actually have, and a near miss matches nothing. The same
@@ -1533,6 +1535,13 @@ These hold regardless of what you find:
   - active is false for a rule the EBA has deactivated. It is published and not run -
     2928 of 30791 rule scopes in DPM 4.4 - so do not tell a reader to satisfy it, and do
     not quietly leave it out either.
+  - A coordinate is an address, not an identity. Within one release {T, rNNNN, cNNNN}
+    names exactly one datapoint; across releases 4517 of 135043 coordinates in DPM 4.4
+    have carried more than one. Before writing that a column has always meant the same
+    thing - the claim a time series rests on - ask lookup_dpm_history. It answers by
+    datapoint, which survives a relayout, or by coordinate, which does not, and it tells
+    a rewording apart from a change of meaning: between 3.5 and 4.0 the EBA renamed
+    dimensions wholesale while the members stayed, and that is not a change to report.
 
   Reading a code out of a validation outcome, where it rarely arrives clean:
 
@@ -1746,9 +1755,9 @@ queried in the browser with DuckDB-WASM.
 | `07-agent-prompt.md` | The stanza to paste into an agent's system prompt, covering every framework | You are configuring an agent |
 | `describe_table.py` | Writes descriptions and glossary terms onto a table's columns, by name | You are describing a real table |
 | `pay42_lookup.py` | Deterministic datapoint lookup over DuckDB, and its tool definition | You are giving an agent a lookup tool |
-| `agent_tools.py` | All fifteen tool definitions, one dispatcher, and a shell front end for trying one | You are wiring the tools into an agent |
+| `agent_tools.py` | All sixteen tool definitions, one dispatcher, and a shell front end for trying one | You are wiring the tools into an agent |
 | `env.sh` | `source env.sh` reads `.env`, sets the two DuckDB stores and prints every variable the pack reads, with secrets counted rather than shown | A tool reads the wrong store, or a datapoint id will not resolve |
-| `dpm_lookup.py` | Nine lookups over the whole DPM 2.0 database: a template, a cell, a reported datapoint id, a report's column header, a validation code, every rule reaching a template, what a template breaks down by, the cells one dimension member covers, and which rows add up to which | A warehouse table is COREP, FINREP or anything but PAY and DORA, you need the codes behind a business aggregate, or you are reading a report or a validation outcome |
+| `dpm_lookup.py` | Ten lookups over the whole DPM 2.0 database: a template, a cell, a reported datapoint id, a report's column header, a validation code, every rule reaching a template, what a template breaks down by, the cells one dimension member covers, which rows add up to which, and what has happened to a datapoint or a coordinate across releases | A warehouse table is COREP, FINREP or anything but PAY and DORA, you need the codes behind a business aggregate, or you are reading a report or a validation outcome |
 | `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file, as a CLI and as the `check_report` tool | You want to know whether a report adds up before you send it, or want an agent to check its own arithmetic |
 | `web/` | A query page in Scala.js over that tree: pick a question, fill it in, see the answer and the SQL — published at [oluies.github.io/om-eba-annotatedtpl](https://oluies.github.io/om-eba-annotatedtpl/) | You want the model without installing anything |
 | `source/gen_wasm_data.py` | Writes the model as partitioned parquet a browser can query with DuckDB-WASM | You are building a web page over the DPM |
