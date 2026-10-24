@@ -166,3 +166,41 @@ def test_a_numbered_sub_template_is_not_a_variant():
     two variants of an F 04.02, and there is usually no F 04.02 to take a grid from."""
     assert its.stem_of("F_04.02.1") is None
     assert its.stem_of("F_04.02.2") is None
+
+
+INSTRUCTIONS = """
+<p>ANNEX II</p>
+<p>1.2. C 01.00 – OWN FUNDS (CA1)</p>
+<table>
+<tr><td><p>Row</p></td><td><p>Legal references and instructions</p></td></tr>
+<tr><td><p>0010</p></td><td><p>1. Own funds Article 72 CRR The own funds are the sum.</p></td></tr>
+<tr><td><p>0015</p></td><td><p>1.1. Tier 1 capital Article 25 CRR The Tier 1 capital is a sum.</p></td></tr>
+</table>
+"""
+
+
+def test_the_instructions_annex_heads_a_template_with_number_and_code():
+    """`1.2. C 01.00 – OWN FUNDS (CA1)`, which the template annex never writes and which
+    the label parser refuses on purpose - the prose tables are not a template's grid."""
+    found = [row for row in its.instruction_rows(INSTRUCTIONS) if row.text]
+    assert [(row.template, row.code) for row in found] == [("C_01.00", "0010"), ("C_01.00", "0015")]
+    assert found[0].text.startswith("1. Own funds Article 72 CRR")
+
+
+def test_a_short_second_cell_is_not_an_instruction():
+    """A heading row or a continuation. Taking it would put `Own funds` where a
+    definition belongs, which reads as a definition."""
+    short = INSTRUCTIONS.replace("1. Own funds Article 72 CRR The own funds are the sum.", "Own funds")
+    assert [row.code for row in its.instruction_rows(short) if row.text] == ["0015"]
+
+
+def test_the_label_parser_still_refuses_the_instructions_heading():
+    """Both parsers read the same document. If HEADING accepted `1.2. C 01.00 – ...` the
+    prose tables would be attributed to the template as if they were its rows."""
+    assert all(row.template is None for row in its.rows(INSTRUCTIONS))
+
+
+def test_instructions_are_numbered_over_the_same_stream_as_labels():
+    """Both emit a Row per table row whether or not it carries anything, which is what
+    lets the languages align by position in either mode."""
+    assert len(its.instruction_rows(INSTRUCTIONS)) == len(its.rows(INSTRUCTIONS))

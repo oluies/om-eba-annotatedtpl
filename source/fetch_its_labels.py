@@ -133,6 +133,44 @@ def rows(html: str) -> list[Row]:
     return found
 
 
+# The instructions annex heads a template with its numbering *and* its code -
+# `1.2. C 01.00 – OWN FUNDS (CA1)` - which the template annex never does, and which
+# HEADING deliberately refuses so that the prose tables are not read as a template's grid.
+INSTRUCTION_HEADING = re.compile(r"^[\d.]+\s+([A-Z] \d{2}\.\d{2}(?:\.[a-z0-9]+)*)\s*[-\u2013\u2014]\s*(.+)$")
+
+
+def instruction_rows(html: str) -> list[Row]:
+    """The prose the instructions annex gives each row, numbered over the same stream.
+
+    The same index as `rows()` - a Row per table row of the document, whether or not it
+    carries anything - so the languages align by position the way the labels do.
+
+    What a label is to a column heading, this is to a definition: `1. Own funds Point
+    (118) of Article 4(1) and Article 72 CRR The own funds of an institution shall be
+    ...`, legal reference included. The shape is a two-column table of row code and text,
+    which is specific enough that nothing else in the document matches it.
+    """
+    found: list[Row] = []
+    template: str | None = None
+    for match in re.finditer(r"<p[^>]*>(.*?)</p>|<tr[^>]*>(.*?)</tr>", html, re.S):
+        paragraph, row = match.group(1), match.group(2)
+        if paragraph is not None:
+            text = text_of(paragraph)
+            if ANNEX.match(text):
+                template = None
+                continue
+            heading = INSTRUCTION_HEADING.match(text)
+            if heading:
+                template = heading.group(1).replace(" ", "_")
+            continue
+        cells = [cell for cell in (text_of(c) for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.S)) if cell]
+        # Two columns, a row code, and a second cell long enough to be prose. Anything
+        # shorter is a heading row or a continuation, not an instruction.
+        prose = template and len(cells) == 2 and ROW_CODE.fullmatch(cells[0]) and len(cells[1]) > 20
+        found.append(Row(len(found), template, cells[0], cells[1]) if prose else Row(len(found), template, None, None))
+    return found
+
+
 def aligned(per_language: dict[str, list[Row]]) -> tuple[list[dict[str, str]], dict[str, int]]:
     """The languages joined by position, with English saying which template a row is in.
 
@@ -341,6 +379,12 @@ def main() -> None:
         "from C_75.01 - which the Journal prints once. Needs the DPM, to know which "
         "variants exist. Every row says which it is in the `from` column.",
     )
+    parser.add_argument(
+        "--instructions",
+        action="store_true",
+        help="collect the instructions annex's prose per row instead of the labels - what a "
+        "row means and which article requires it, rather than what it is called.",
+    )
     parser.add_argument("--report", action="store_true", help="say what was found and what the model makes of it")
     parser.add_argument("--disagreements", type=int, default=10, help="how many to print with --report")
     args = parser.parse_args()
@@ -352,7 +396,8 @@ def main() -> None:
     if "en" not in wanted:
         raise SystemExit("English is the join key back into the model; ask for it.")
 
-    per_language = {language: rows(fetch(args.celex, language, args.refresh)) for language in wanted}
+    read = instruction_rows if args.instructions else rows
+    per_language = {language: read(fetch(args.celex, language, args.refresh)) for language in wanted}
     for language, found in per_language.items():
         print(f"{language}: {len(found)} table rows, {sum(1 for row in found if row.code)} carrying a row code")
 

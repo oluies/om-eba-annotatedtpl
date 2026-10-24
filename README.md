@@ -522,6 +522,28 @@ matches, which is what makes the fallback defensible rather than convenient. A n
 suffix is not a variant: `F 04.02.1` and `F 04.02.2` have their own codes in the Journal's
 own index.
 
+#### What a row means, not only what it is called
+
+`--instructions` reads the other half of the same document. The instructions annex gives
+each row its meaning and the article that requires it, and it is published in every
+language too:
+
+> **C 01.00, row 0010** — *1. Own funds Point (118) of Article 4(1) and Article 72 CRR
+> The own funds of an institution shall consist of the sum of its Tier 1 capital and
+> Tier 2 capital.*
+>
+> *1. Kapitalbas Artikel 4.1.118 och artikel 72 i CRR Ett instituts kapitalbas ska
+> utgöras av summan av primärkapital och supplementärkapital.*
+
+```bash
+uv run source/fetch_its_labels.py --instructions --out source/its_instructions.csv
+```
+
+978 rows across 51 templates, three languages. That is COREP: the instructions annex
+heads a template with its numbering *and* its code — `1.2. C 01.00 – OWN FUNDS (CA1)` —
+which is the shape this reads, and FINREP's own instructions annex is written differently
+again. The template pages show these definitions where they have them.
+
 What this cannot give: dimension members, metrics and module names, which the DPM carries
 and no annex does. And a code is never translated - `F_18.00.a`, `r0010`, `dp152217`,
 `v0174_m` are identities, in every language.

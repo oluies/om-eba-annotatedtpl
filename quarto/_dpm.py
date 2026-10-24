@@ -212,13 +212,30 @@ def dimensions(con: duckdb.DuckDBPyConnection, table_vid: int) -> list[dict[str,
 OFFICIAL = HERE.parent / "source" / "its_labels.csv"
 
 
-def official(path: Path | None = None) -> dict[tuple[str, str], dict[str, str]]:
-    """Published translations keyed on template and row, or empty if none are collected."""
-    here = path or OFFICIAL
-    if not here.exists():
+INSTRUCTIONS = HERE.parent / "source" / "its_instructions.csv"
+
+
+def keyed(path: Path) -> dict[tuple[str, str], dict[str, str]]:
+    """A three-language CSV keyed on template and row, or empty if it is not collected."""
+    if not path.exists():
         return {}
-    with here.open(encoding="utf-8") as handle:
+    with path.open(encoding="utf-8") as handle:
         return {(row["template"], row["row"]): row for row in csv.DictReader(handle)}
+
+
+def official(path: Path | None = None) -> dict[tuple[str, str], dict[str, str]]:
+    """Published translations of the row labels - what a row is called."""
+    return keyed(path or OFFICIAL)
+
+
+def instructions(path: Path | None = None) -> dict[tuple[str, str], dict[str, str]]:
+    """The instructions annex's prose - what a row means, and which article requires it.
+
+    A different thing from a label, and the more useful one for a description: `1. Own
+    funds Point (118) of Article 4(1) and Article 72 CRR The own funds of an institution
+    shall be the sum of Tier 1 capital and Tier 2 capital.` - in Swedish and German too.
+    """
+    return keyed(path or INSTRUCTIONS)
 
 
 def described(cell: dict[str, Any], table_name: str) -> str:

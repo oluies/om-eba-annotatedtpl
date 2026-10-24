@@ -76,6 +76,31 @@ if here:
     print()
 ```
 
+```{python}
+#| output: asis
+defined = dpm.instructions()
+spelled = [(cell, defined[(table_code, cell["row_code"])]) for cell in cells
+           if (table_code, cell["row_code"]) in defined]
+if spelled:
+    seen, shown = set(), 0
+    print(
+        "\n### What the regulation says these rows are\n\n"
+        "From the instructions annex, which gives each row its meaning and the article "
+        "that requires it. Also published in every official language.\n"
+    )
+    for cell, found in spelled:
+        if cell["row_code"] in seen or shown >= 4:
+            continue
+        seen.add(cell["row_code"])
+        shown += 1
+        print(f"\n**{cell['row_code']} — {cell['row_label'][:70]}**\n")
+        print(f"> {found['en'][:420]}\n")
+        print(f"> _{found['sv'][:420]}_\n")
+    rows_defined = len({cell['row_code'] for cell, _ in spelled})
+    if rows_defined > shown:
+        print(f"\n_{rows_defined - shown} more rows are spelled out; source/its_instructions.csv has them._\n")
+```
+
 ## What it breaks down by
 
 The members are given in the model's own wording, which is the wording a query has to
