@@ -43,6 +43,39 @@ for cell in cells[:3]:
 print()
 ```
 
+```{python}
+#| output: asis
+published = dpm.official()
+here = [(cell, published[(table_code, cell["row_code"])]) for cell in cells
+        if (table_code, cell["row_code"]) in published]
+if here:
+    rows_covered = len({cell["row_code"] for cell, _ in here})
+    print(
+        f"\n### The same rows in Swedish and German\n\n"
+        f"Not a translation: the templates are an annex to an Implementing Regulation, and "
+        f"an Implementing Regulation is published in all 24 official languages. "
+        f"{rows_covered} of this template's rows have a published wording.\n"
+    )
+    seen, listing = set(), []
+    for cell, found in here:
+        if cell["row_code"] in seen:
+            continue
+        seen.add(cell["row_code"])
+        listing.append({
+            "row": cell["row_code"],
+            "English": cell["row_label"][:48],
+            "Svenska": found["sv"][:48],
+            "Deutsch": found["de"][:48],
+            # `stem` means the Journal printed this grid once, under the template this
+            # one is a variant of. Said, rather than quietly presented as its own.
+            "from": found.get("from", "journal"),
+        })
+    print(dpm.markdown_table(listing[:12], ["row", "English", "Svenska", "Deutsch", "from"]))
+    if len(listing) > 12:
+        print(f"\n_{len(listing) - 12} more; source/its_labels.csv has them all._")
+    print()
+```
+
 ## What it breaks down by
 
 The members are given in the model's own wording, which is the wording a query has to

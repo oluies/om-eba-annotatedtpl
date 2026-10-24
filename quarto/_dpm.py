@@ -17,6 +17,7 @@ without naming the table version is a header from some other version of the tabl
 
 from __future__ import annotations
 
+import csv
 import os
 from pathlib import Path
 from typing import Any
@@ -202,6 +203,21 @@ def dimensions(con: duckdb.DuckDBPyConnection, table_vid: int) -> list[dict[str,
     member out of a listing should not have to copy the space too.
     """
     return rows(con, DIMENSIONS, table_vid)
+
+
+# The Official Journal's own Swedish and German, where source/fetch_its_labels.py has
+# collected them. Absent is the normal case for most frameworks, so a page says so rather
+# than leaving a gap a reader reads as "no translation exists".
+OFFICIAL = HERE.parent / "source" / "its_labels.csv"
+
+
+def official(path: Path | None = None) -> dict[tuple[str, str], dict[str, str]]:
+    """Published translations keyed on template and row, or empty if none are collected."""
+    here = path or OFFICIAL
+    if not here.exists():
+        return {}
+    with here.open(encoding="utf-8") as handle:
+        return {(row["template"], row["row"]): row for row in csv.DictReader(handle)}
 
 
 def described(cell: dict[str, Any], table_name: str) -> str:
