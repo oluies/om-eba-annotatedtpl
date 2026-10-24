@@ -34,3 +34,7 @@ quarto/_md/
 quarto/[A-Z]_*.qmd
 quarto/[A-Z][A-Z]*.qmd
 quarto/.quarto/
+
+# The Official Journal's own XHTML, ~21 MB a language; source/fetch_its_labels.py
+# fetches it from the Publications Office and caches it here.
+source/its/

@@ -28,6 +28,7 @@ queried in the browser with DuckDB-WASM.
 | `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file, as a CLI and as the `check_report` tool | You want to know whether a report adds up before you send it, or want an agent to check its own arithmetic |
 | `web/` | A query page in Scala.js over that tree: pick a question, fill it in, see the answer and the SQL — published at [oluies.github.io/om-eba-annotatedtpl](https://oluies.github.io/om-eba-annotatedtpl/) | You want the model without installing anything |
 | `source/gen_wasm_data.py` | Writes the model as partitioned parquet a browser can query with DuckDB-WASM | You are building a web page over the DPM |
+| `source/fetch_its_labels.py` | The official Swedish and German row labels, from the Official Journal: the DPM is English only, but the templates are an annex to an Implementing Regulation and that is published in all 24 languages | You want a label in a language the model does not carry |
 | `source/apply_vr_updates.py` | Applies the EBA's between-release validation rule updates (deactivations, reactivations, severity changes) to a local DPM database | A rule's severity or activity changed since the release you downloaded |
 | `source/load_to_mssql.py` | Loads the DPM database into SQL Server over TDS, authenticating with your Kerberos ticket | You want the dictionary in the same database as the reported figures |
 | `display_names.py` | The rule for what a table and its columns are called | You are setting display names |
@@ -479,6 +480,40 @@ the EBA, and the page says that as well.
 on push: each release is a 200 MB download and several minutes, and publishing is a
 decision each time rather than a consequence of a commit. Untick *deploy* to build the
 artefact and stop.
+
+### Labels in another language
+
+The DPM is English. Its `Translation` and `Language` tables are in the schema and ship
+with 0 rows in every release, so there is nothing to read - but there is nothing to
+translate either, because the templates are an annex to an Implementing Regulation and an
+Implementing Regulation is published in all 24 official languages. The Swedish row labels
+are already the legally published ones.
+
+```bash
+uv run source/fetch_its_labels.py --report                    # what is there, and what the model makes of it
+uv run source/fetch_its_labels.py --out source/its_labels.csv # template, row, en, sv, de
+```
+
+EUR-Lex's web front end answers a scripted request with `202` and zero bytes; the
+Publications Office's CELLAR service answers properly, with the language chosen by
+content negotiation. Each language is about 21 MB of XHTML, and the three are parallel
+documents: **13 838 table rows each, and 7 766 of the 7 768 rows carrying a row code
+carry the same code at the same index in all three.** So English says which template a row
+belongs to and the index says what it reads in Swedish; two rows disagree and are dropped
+rather than guessed at.
+
+Measured against DPM 4.4, for the templates in force: **789 of 13 371 row labels have a
+published translation at the same coordinate, and 693 of those agree on the English text**
+as well. The first figure is low and the reason is reach rather than the Journal - within
+the templates the parser finds, **87 %** of the model's rows are covered. COREP heads each
+template with its code (`C 01.00 - OWN FUNDS (CA1)`) and reads cleanly; FINREP heads them
+with a section number and a name and no code (`1. Balance Sheet Statement [Statement of
+Financial Position]`), so reaching it needs the annex's own index read first. That is the
+next piece of work, and it is most of the remaining coverage.
+
+What this cannot give: dimension members, metrics and module names, which the DPM carries
+and no annex does. And a code is never translated - `F_18.00.a`, `r0010`, `dp152217`,
+`v0174_m` are identities, in every language.
 
 ### The page over it
 
