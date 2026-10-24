@@ -6,10 +6,18 @@ serve both without a second pipeline, and whether a page whose numbers come out 
 DPM database at build time is better than a page whose numbers were typed in.
 
 ```bash
-uv sync --group docs      # ipykernel, nbclient, nbformat - not installed by `uv sync`
-./render.sh               # F_18.00.a and K_47.00.a, both formats
-./render.sh C_01.00       # any template in the database
+uv sync --group docs           # ipykernel, nbclient, nbformat - not installed by `uv sync`
+./render.sh                    # F_18.00.a and K_47.00.a, both formats
+./render.sh C_01.00            # any templates you name
+./render.sh --framework DORA   # a whole framework, with an index page linking them
 DPM2_DB=../source/dpm2/dpm2_4_3.duckdb ./render.sh    # the same pages under 4.3
+```
+
+And into the catalogue, which is the second destination this exists for:
+
+```bash
+uv run import_to_openmetadata.py --quarto quarto/_md --under FINREP --dry-run
+uv run import_to_openmetadata.py --quarto quarto/_md --under FINREP   # writes them
 ```
 
 `_site/` is the site, `_md/` is what an OpenMetadata article would be given. Neither is
@@ -83,6 +91,43 @@ markdown from one source".
 What none of them replaces is the interactive page: Quarto renders once, at build, and a
 reader who wants to ask their own question needs the query to run in their browser. The
 two are complements, which is why the navbar links to it.
+
+## A whole framework
+
+`./render.sh --framework FINREP` writes a page per template and an index that links them,
+and `.github/workflows/wasm-data.yml` publishes that under `/templates/` on the same site
+as the query page. The workflow renders from a release you name rather than from the
+newest, because the newest is 4.4 and 4.4 is a draft: a page that reads like settled
+documentation should not be generated from one without someone saying so.
+
+Three things that only showed up at 150 pages rather than at two:
+
+- **A title is not a safe YAML scalar.** F_40.02 is `Scope of the group:
+  "instrument-by-instrument"`, which has both the colon and the quotes that end a title
+  early, and Quarto's answer is a YAMLException and no pages at all - not a bad page.
+  `json.dumps` produces a scalar YAML reads correctly, since YAML 1.2 takes a JSON string.
+- **`sum()` over no rows is NULL.** A template whose datapoints are placed nowhere else
+  rendered `**{None:,} have sat at another row or column**`, which fails the build with a
+  TypeError two hundred pages in. `coalesce(..., 0)` in the query, not a guard in the page.
+- **Quarto clears the output directory per render, not per format.** The second project
+  render took the first one's HTML with it, and the count at the end of `render.sh` is
+  what noticed. `--no-clean` on the second.
+
+## Into OpenMetadata
+
+`import_to_openmetadata.py --quarto quarto/_md --under FINREP` imports the rendered
+markdown as Context Center pages: one section named after the framework, whose body is
+the framework index, with a page per template under it. It reuses everything the pack's
+own import already does - the preflight that tells an API root from an ingress, the check
+that the body actually landed, the reindex - because the files are markdown either way.
+
+`split_title` already did the one Quarto-specific thing needed: OpenMetadata renders the
+page's displayName as a heading, so a body starting with the same `# F_18.00.a - ...`
+shows the title twice. It takes the H1 for the displayName and drops it from the body.
+
+Not verified against a live server. Everything above the HTTP call is exercised by
+`--dry-run`, which prints the tree it would write; what no amount of local work can
+answer is whether that server accepts a 6 kB body with pipe tables in it.
 
 ## What it costs
 

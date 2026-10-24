@@ -210,6 +210,59 @@ def build_tree(pack: Path) -> Page:
     )
 
 
+# What pandoc escapes when it writes markdown. Correct in a document and wrong in a
+# field: OpenMetadata shows displayName as plain text, so a title lifted out of a heading
+# arrives as "Balance Sheet Statement \[Statement of Financial Position\]".
+MARKDOWN_ESCAPES = re.compile(r"\\([\\`*_{}\[\]()#+\-.!])")
+
+
+def unescaped(text: str) -> str:
+    """A markdown heading as the plain text it was before pandoc wrote it."""
+    return MARKDOWN_ESCAPES.sub(r"\1", text)
+
+
+def rendered_tree(directory: Path, under: str) -> Page:
+    """A Quarto render as a page hierarchy: one section, one page per template.
+
+    The pages come from `quarto/render.sh --framework X`, which writes GFM beside the
+    HTML it publishes. The point of taking them here is that the site and the catalogue
+    then say the same thing because they are the same file, rather than because someone
+    kept two of them in step.
+
+    A file named after the section - FINREP.md for FINREP - is the framework's index, so
+    it becomes the section's own body rather than a page under itself.
+    """
+    files = sorted(path for path in directory.glob("*.md") if path.stem != "index")
+    if not files:
+        raise SystemExit(
+            f"No markdown in {directory}. Render it first:\n"
+            f"  quarto/render.sh --framework {under}\n"
+            "which writes quarto/_md/."
+        )
+    listing = next((path for path in files if path.stem == under), None)
+    children = tuple(
+        found.model_copy(update={"display_name": unescaped(found.display_name)})
+        for found in (leaf(path) for path in files if path is not listing)
+    )
+    body = (
+        split_title(listing.read_text(encoding="utf-8"), under)[1]
+        if listing
+        else f"{len(children)} templates, generated from the EBA DPM 2.0 database.\n"
+    )
+    return section(
+        name=under,
+        display_name=under,
+        body=body
+        + (
+            "\n\nEach page is generated from the DPM database: what the template is, what it "
+            "breaks down by, what checks it, and what has changed about it between releases. "
+            "Reproduced under the EBA legal notice, which authorises reproduction provided the "
+            "source is acknowledged. Not published by the EBA and not endorsed by it.\n"
+        ),
+        children=children,
+    )
+
+
 def walk(page: Page, depth: int = 0) -> Iterator[tuple[Page, int]]:
     yield page, depth
     for child in page.children:
@@ -679,9 +732,26 @@ def main() -> None:
         "Use when a half-finished import left a dangling term reference.",
     )
     parser.add_argument("--glossary-only", action="store_true", help="skip the Knowledge Pages")
+    parser.add_argument(
+        "--quarto",
+        type=Path,
+        metavar="DIR",
+        help="import a Quarto render instead of the pack - the markdown in quarto/_md/, "
+        "one page per template. Implies --pages-only.",
+    )
+    parser.add_argument(
+        "--under",
+        default="FINREP",
+        help="the section name a --quarto import lands under, and the name of its index file. Default FINREP.",
+    )
     args = parser.parse_args()
 
-    tree = build_tree(PACK)
+    if args.quarto:
+        tree = rendered_tree(args.quarto, args.under)
+        args.pages_only = True
+        args.glossary_only = False
+    else:
+        tree = build_tree(PACK)
 
     if args.dry_run:
         for page, depth in walk(tree):

@@ -74,6 +74,56 @@ def releases(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
     return rows(con, RELEASES)
 
 
+# A template belongs to a framework through the module versions that compose it, not
+# directly: the same join gen_wasm_data.py partitions by. A template in two frameworks -
+# some are - is listed under both, which is what a reader looking for it expects.
+FRAMEWORKS = """
+SELECT   f.Code AS framework, f.Name AS name, count(DISTINCT tv.Code) AS templates
+FROM     TableVersion tv
+JOIN     ModuleVersionComposition mvc ON mvc.TableVID = tv.TableVID
+JOIN     ModuleVersion mv ON mv.ModuleVID = mvc.ModuleVID
+JOIN     Module m ON m.ModuleID = mv.ModuleID
+JOIN     Framework f ON f.FrameworkID = m.FrameworkID
+GROUP BY f.Code, f.Name
+ORDER BY templates DESC
+"""
+
+
+def frameworks(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
+    """Every framework in the database, largest first."""
+    return rows(con, FRAMEWORKS)
+
+
+TEMPLATES_OF = """
+SELECT   tv.Code AS table_code,
+         -- The name as the version in force has it, not max() over every version: the
+         -- index and the page it links to disagreeing about a template's name is the
+         -- kind of small wrongness that makes a reader doubt the rest.
+         arg_max(tv.Name, tv.StartReleaseID) AS name,
+         arg_max(tv.TableVID, tv.StartReleaseID) AS table_vid
+FROM     TableVersion tv
+JOIN     ModuleVersionComposition mvc ON mvc.TableVID = tv.TableVID
+JOIN     ModuleVersion mv ON mv.ModuleVID = mvc.ModuleVID
+JOIN     Module m ON m.ModuleID = mv.ModuleID
+JOIN     Framework f ON f.FrameworkID = m.FrameworkID
+WHERE    f.Code = ?
+     AND EXISTS (SELECT 1 FROM TableVersionCell c
+                 WHERE c.TableVID = tv.TableVID AND c.IsExcluded = 0)
+GROUP BY tv.Code
+ORDER BY tv.Code
+"""
+
+
+def templates_of(con: duckdb.DuckDBPyConnection, framework: str) -> list[dict[str, Any]]:
+    """The templates of one framework that have reportable cells.
+
+    The EXISTS is not tidiness: a template version with every cell excluded is a layout
+    the EBA publishes and nobody files, and a page for it would say 0 cells, 0 dimensions
+    and nothing else.
+    """
+    return rows(con, TEMPLATES_OF, framework)
+
+
 VERSIONS = """
 SELECT tv.TableVID       AS table_vid,
        tv.Code           AS code,
@@ -235,9 +285,12 @@ per AS (
   FROM   seen
   GROUP  BY VariableID
 )
-SELECT count(*)                          AS variables,
-       sum((places > 1)::INT)            AS moved,
-       sum((templates > 1)::INT)         AS shared
+-- coalesce because sum() over no rows is NULL, not 0, and a template whose datapoints
+-- are placed nowhere else renders "**{None:,} have sat at another row or column**",
+-- which fails the whole build with a TypeError two hundred pages in.
+SELECT count(*)                                  AS variables,
+       coalesce(sum((places > 1)::INT), 0)       AS moved,
+       coalesce(sum((templates > 1)::INT), 0)    AS shared
 FROM   per
 """
 

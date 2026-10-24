@@ -16,6 +16,14 @@ on:
         description: "Which of them are draft technical packages. The page says so when one is picked."
         required: false
         default: "4.4"
+      framework:
+        description: "Also render a page per template of this framework, under /templates/. Empty skips it."
+        required: false
+        default: "DORA"
+      templates_release:
+        description: "Which release those template pages are generated from. Must be one of the releases above."
+        required: false
+        default: "4.3"
       deploy:
         description: "Publish to Pages. Unticked builds the artefact and stops."
         type: boolean
@@ -40,7 +48,13 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
-      - run: uv sync --locked
+      # --group docs as well: the template pages are rendered here, and Quarto's Python
+      # engine needs a kernel. `uv sync` alone leaves that group out, which is why it is
+      # a group and not a dev dependency.
+      - run: uv sync --locked --group docs
+      - uses: quarto-dev/quarto-actions/setup@v2
+        with:
+          version: 1.10.19
 
       # mdbtools reads the Access file the EBA ships; the download is ~200 MB per release
       # and the export takes minutes, which is why this is not part of CI.
@@ -66,6 +80,21 @@ jobs:
             echo "::endgroup::"
           done
           cat web/public/data/releases.json
+
+      # The databases are still here - the loop only gives back the downloads and the
+      # CSV - so the template pages are rendered from one of them rather than fetched
+      # again. Named rather than "the newest": 4.4 is a draft, and a page that reads
+      # like settled documentation should not be generated from one by default.
+      - name: Render a page per template
+        if: ${{ inputs.framework != '' }}
+        run: |
+          tag=$(echo "${{ inputs.templates_release }}" | tr . _)
+          db="source/dpm2/dpm2_$tag.duckdb"
+          [ -f "$db" ] || { echo "No $db - is ${{ inputs.templates_release }} in the releases list?"; exit 1; }
+          DPM2_DB="$PWD/$db" quarto/render.sh --framework "${{ inputs.framework }}"
+          mkdir -p web/public/templates
+          cp -r quarto/_site/. web/public/templates/
+          echo "$(find web/public/templates -name '*.html' | wc -l) template pages"
 
       - uses: VirtusLab/scala-cli-setup@v1.18.0
         with:

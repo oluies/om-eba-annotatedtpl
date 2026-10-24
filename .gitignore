@@ -32,4 +32,5 @@ web/server.log
 quarto/_site/
 quarto/_md/
 quarto/[A-Z]_*.qmd
+quarto/[A-Z][A-Z]*.qmd
 quarto/.quarto/

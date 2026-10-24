@@ -43,3 +43,9 @@ execute:
   echo: false
   warning: false
   freeze: false
+  # Asked for, and it does not do what the name suggests here: the daemon keeps a kernel
+  # alive between renders of the SAME file, so a project of 157 pages still starts 157
+  # kernels and the log says so. Left on because it makes re-rendering one page while
+  # editing it quick, which is the case it is for. The cost of a framework is kernel
+  # startup, about 1.5s a page, and that is why this is a manual workflow.
+  daemon: true
