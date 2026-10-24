@@ -28,6 +28,7 @@ queried in the browser with DuckDB-WASM.
 | `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file, as a CLI and as the `check_report` tool | You want to know whether a report adds up before you send it, or want an agent to check its own arithmetic |
 | `web/` | A query page in Scala.js over that tree: pick a question, fill it in, see the answer and the SQL — published at [oluies.github.io/om-eba-annotatedtpl](https://oluies.github.io/om-eba-annotatedtpl/) | You want the model without installing anything |
 | `source/gen_wasm_data.py` | Writes the model as partitioned parquet a browser can query with DuckDB-WASM | You are building a web page over the DPM |
+| `source/score_translation.py` | Scores a local translation model against the Official Journal's own wording, since we hold it | Someone proposes machine-translating the labels |
 | `source/fetch_its_labels.py` | The official Swedish and German row labels, from the Official Journal: the DPM is English only, but the templates are an annex to an Implementing Regulation and that is published in all 24 languages | You want a label in a language the model does not carry |
 | `source/apply_vr_updates.py` | Applies the EBA's between-release validation rule updates (deactivations, reactivations, severity changes) to a local DPM database | A rule's severity or activity changed since the release you downloaded |
 | `source/load_to_mssql.py` | Loads the DPM database into SQL Server over TDS, authenticating with your Kerberos ticket | You want the dictionary in the same database as the reported figures |
@@ -514,6 +515,29 @@ next piece of work, and it is most of the remaining coverage.
 What this cannot give: dimension members, metrics and module names, which the DPM carries
 and no annex does. And a code is never translated - `F_18.00.a`, `r0010`, `dp152217`,
 `v0174_m` are identities, in every language.
+
+#### Why not just run a translation model
+
+Because holding the published translations makes that testable rather than arguable.
+`source/score_translation.py` runs a local model over a sample and scores it against the
+Journal's own wording. Against a 9 GB general model on one laptop, 25 labels:
+
+| | exact |
+|---|---|
+| plain | 1 / 25 |
+| with a 40-term glossary drawn from the official labels | 6 / 25 |
+
+Six times better, and still wrong nineteen times. The failures are terminology, not
+fluency: `Debt securities` came back as `Skuldsäkerheter`, which is fluent Swedish and is
+not the term — the Journal says `Räntebärande värdepapper`. A better model writes better
+Swedish; it does not know which Swedish the regulation uses. One run rendered `Level 1
+collateral which is extremely high quality covered bonds` as `Säkerhet på nivå 1 **utom**
+säkerställda obligation` — *utom* means "except", so the label was negated while reading
+perfectly.
+
+So a model is for this pack's own prose, and for a first draft of the vocabulary the
+Journal does not carry, which a person then approves. It is not for the labels. The
+labels are published.
 
 ### The page over it
 
