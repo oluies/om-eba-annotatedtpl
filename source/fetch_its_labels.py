@@ -60,6 +60,16 @@ CELLAR = "http://publications.europa.eu/resource/celex/{celex}"
 # in every language because a code is not translated. The dash is a hyphen in the
 # templates and an en dash in the instructions, and both forms appear across languages.
 HEADING = re.compile(r"^([A-Z] \d{2}\.\d{2}(?:\.[a-z0-9]+)*) ?[-–—] ?(.+)$")
+# COREP heads each template with its code. FINREP does not: Annex III opens with an index
+# of TEMPLATE NUMBER / TEMPLATE CODE / NAME and then heads each template with the number
+# alone - `1.1 Assets` for F 01.01. The index is read as the document goes past it and a
+# numbered heading is resolved against it.
+NUMBERED = re.compile(r"^(\d+(?:\.\d+)*)\.? +(\S.*)$")
+TEMPLATE_CODE = re.compile(r"^[A-Z] \d{2}\.\d{2}(?:\.[a-z0-9]+)*$")
+NUMBER = re.compile(r"^\d+(?:\.\d+)*$")
+# Per annex, because the numbers are: 1 is C 01.00 in Annex I and 1.1 is F 01.01 in
+# Annex III, so one map shared between them answers the wrong template.
+ANNEX = re.compile(r"^ANNEX [IVX]+\b")
 ROW_CODE = re.compile(r"0\d{3}")
 # A cell that is punctuation, digits and nothing else is a column code or a footnote
 # marker, never a label.
@@ -90,15 +100,33 @@ def rows(html: str) -> list[Row]:
     """
     found: list[Row] = []
     template: str | None = None
+    annex = ""
+    numbered: dict[str, dict[str, str]] = defaultdict(dict)
     for match in re.finditer(r"<p[^>]*>(.*?)</p>|<tr[^>]*>(.*?)</tr>", html, re.S):
         paragraph, row = match.group(1), match.group(2)
         if paragraph is not None:
-            heading = HEADING.match(text_of(paragraph))
+            text = text_of(paragraph)
+            if ANNEX.match(text):
+                annex, template = text.split()[1], None
+                continue
+            heading = HEADING.match(text)
             if heading:
                 # The model spells it F_18.00.a; the Journal spells it F 18.00.a.
                 template = heading.group(1).replace(" ", "_")
+                continue
+            numbering = NUMBERED.match(text)
+            if numbering and numbering.group(1) in numbered[annex]:
+                template = numbered[annex][numbering.group(1)]
             continue
         cells = [cell for cell in (text_of(c) for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.S)) if cell]
+        # An index row - a template number beside a template code - is the annex's
+        # contents page, not a reportable row. Recorded, and not emitted as a label.
+        code = next((cell for cell in cells if TEMPLATE_CODE.match(cell)), None)
+        number = next((cell for cell in cells if NUMBER.match(cell)), None)
+        if code and number:
+            numbered[annex].setdefault(number, code.replace(" ", "_"))
+            found.append(Row(len(found), template, None, None))
+            continue
         codes = [cell for cell in cells if ROW_CODE.fullmatch(cell)]
         words = [cell for cell in cells if len(cell) > 2 and not NOT_A_LABEL.fullmatch(cell)]
         found.append(Row(len(found), template, codes[0] if codes else None, words[0] if words else None))
@@ -209,6 +237,36 @@ def model_rows(con: duckdb.DuckDBPyConnection) -> dict[tuple[str, str], str]:
     return {(template, row): label for template, row, label in cursor.fetchall()}
 
 
+# A template and its variants: C_75.01.a and C_75.01.w are C_75.01 reported under another
+# scope, with the same grid. The Journal prints the grid once, under the stem.
+#
+# A letter, not [a-z0-9]: F 04.02.1 and F 04.02.2 are separate templates with their own
+# codes in the Journal's own index, not variants of an F 04.02. Treating a numeric suffix
+# as a variant would hand them a grid they do not have - and would do it silently, since
+# there is usually no F 04.02 published to take it from.
+STEM = re.compile(r"^([A-Z]_\d{2}\.\d{2})\.[a-z]+$")
+
+
+def stem_of(template: str) -> str | None:
+    """The template a variant is a variant of, or None if it is not one."""
+    found = STEM.match(template)
+    return found.group(1) if found else None
+
+
+def database_path() -> Path:
+    """The DPM database, from the environment or where fetch_dpm2.py puts it."""
+    database = Path(os.environ.get("DPM2_DB") or HERE / "dpm2" / "dpm2.duckdb")
+    if not database.exists():
+        raise SystemExit(f"{database} is not there; source/fetch_dpm2.py builds it.")
+    return database
+
+
+def model_keys(database: Path) -> set[tuple[str, str]]:
+    """Every (template, row) the model has, which is what variants are expanded against."""
+    with duckdb.connect(str(database), read_only=True) as con:
+        return set(model_rows(con))
+
+
 def report(labels: list[dict[str, str]], model: dict[tuple[str, str], str]) -> dict[str, Any]:
     """How much of the model these labels reach, and how well they agree.
 
@@ -233,6 +291,16 @@ def report(labels: list[dict[str, str]], model: dict[tuple[str, str], str]) -> d
     # template it has found, almost every row is there.
     reached = {key[0] for key in published}
     in_reach = {key for key in model if key[0] in reached}
+    # What a stem fallback would add, measured rather than assumed: a variant row that
+    # has no published label of its own, whose stem has one at the same row code. The
+    # agreement rate on those is the test - if the variant is not the same grid after
+    # all, its English text will not match the stem's.
+    variants = {
+        key: published[(stem_of(key[0]) or "", key[1])]
+        for key in model
+        if key not in published and (stem_of(key[0]) or "", key[1]) in published
+    }
+    variants_agreeing = {key for key, value in variants.items() if normal(value["en"]) == normal(model[key])}
     return {
         "published_rows": len(published),
         "model_rows": len(model),
@@ -241,6 +309,8 @@ def report(labels: list[dict[str, str]], model: dict[tuple[str, str], str]) -> d
         "reached_templates": len(reached),
         "rows_in_reach": len(in_reach),
         "covered_in_reach": len(in_reach & set(hits)),
+        "by_variant": len(variants),
+        "by_variant_agreeing": len(variants_agreeing),
         "templates": {
             template: {"model": counts[0], "covered": counts[1], "agreeing": counts[2]}
             for template, counts in sorted(by_template.items())
@@ -264,6 +334,13 @@ def main() -> None:
     )
     parser.add_argument("--refresh", action="store_true", help="fetch again rather than use the cache")
     parser.add_argument("--out", type=Path, help="write the aligned labels here as CSV")
+    parser.add_argument(
+        "--variants",
+        action="store_true",
+        help="also give a variant template the grid of the template it varies - C_75.01.a "
+        "from C_75.01 - which the Journal prints once. Needs the DPM, to know which "
+        "variants exist. Every row says which it is in the `from` column.",
+    )
     parser.add_argument("--report", action="store_true", help="say what was found and what the model makes of it")
     parser.add_argument("--disagreements", type=int, default=10, help="how many to print with --report")
     args = parser.parse_args()
@@ -287,19 +364,27 @@ def main() -> None:
         f"aligned across {', '.join(wanted)}: {len(labels)} distinct coordinates"
     )
 
+    if args.variants:
+        published = {(row["template"], row["row"]): row for row in labels}
+        added = [
+            published[(stem_of(key[0]) or "", key[1])] | {"template": key[0], "from": "stem"}
+            for key in model_keys(database_path())
+            if key not in published and (stem_of(key[0]) or "", key[1]) in published
+        ]
+        labels = [row | {"from": "journal"} for row in labels] + added
+        print(f"with variants: {len(labels)} rows, {len(added)} of them from a stem")
+
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
+        columns = ["template", "row", *wanted] + (["from"] if args.variants else [])
         with args.out.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=["template", "row", *wanted])
+            writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore")
             writer.writeheader()
-            writer.writerows(labels)
+            writer.writerows(sorted(labels, key=lambda row: (row["template"], row["row"])))
         print(f"wrote {args.out}")
 
     if args.report:
-        database = Path(os.environ.get("DPM2_DB") or HERE / "dpm2" / "dpm2.duckdb")
-        if not database.exists():
-            raise SystemExit(f"{database} is not there; source/fetch_dpm2.py builds it.")
-        with duckdb.connect(str(database), read_only=True) as con:
+        with duckdb.connect(str(database_path()), read_only=True) as con:
             model = model_rows(con)
         found = report(labels, model)
         print(
@@ -313,6 +398,13 @@ def main() -> None:
             f"({100 * found['covered_in_reach'] / max(found['rows_in_reach'], 1):.1f}%).\n"
             "The gap between that and the figure above is reach, not the Journal: a template the "
             "parser finds is a template it reads almost completely."
+        )
+        print(
+            f"\na stem fallback - a variant taking its grid from the template it varies, "
+            f"C_75.01.a from C_75.01 - would add {found['by_variant']} rows, of which "
+            f"{found['by_variant_agreeing']} agree with the model's English "
+            f"({100 * found['by_variant_agreeing'] / max(found['by_variant'], 1):.1f}%). "
+            "That rate is the test of whether a variant really is the same grid."
         )
         print("\nby template, best first:")
         ranked = sorted(found["templates"].items(), key=lambda item: -item[1]["agreeing"])

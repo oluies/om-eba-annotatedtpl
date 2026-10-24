@@ -2225,7 +2225,7 @@ are already the legally published ones.
 
 ```bash
 uv run source/fetch_its_labels.py --report                    # what is there, and what the model makes of it
-uv run source/fetch_its_labels.py --out source/its_labels.csv # template, row, en, sv, de
+uv run source/fetch_its_labels.py --variants --out source/its_labels.csv
 ```
 
 EUR-Lex's web front end answers a scripted request with `202` and zero bytes; the
@@ -2236,14 +2236,24 @@ carry the same code at the same index in all three.** So English says which temp
 belongs to and the index says what it reads in Swedish; two rows disagree and are dropped
 rather than guessed at.
 
-Measured against DPM 4.4, for the templates in force: **789 of 13 371 row labels have a
-published translation at the same coordinate, and 693 of those agree on the English text**
-as well. The first figure is low and the reason is reach rather than the Journal - within
-the templates the parser finds, **87 %** of the model's rows are covered. COREP heads each
-template with its code (`C 01.00 - OWN FUNDS (CA1)`) and reads cleanly; FINREP heads them
-with a section number and a name and no code (`1. Balance Sheet Statement [Statement of
-Financial Position]`), so reaching it needs the annex's own index read first. That is the
-next piece of work, and it is most of the remaining coverage.
+Measured against DPM 4.4, for the templates in force: **2 499 of 13 371 row labels have a
+published translation at the same coordinate, and 2 324 of those agree on the English
+text** as well. Within the 150 templates the parser reaches, **95 %** of the model's rows
+are covered — the gap to the first figure is reach, not the Journal.
+
+Two things the annexes do differently. COREP heads each template with its code
+(`C 01.00 - OWN FUNDS (CA1)`). FINREP does not: Annex III opens with an index of template
+number, code and name, and then heads each template with the number alone — `1.1 Assets`
+for F 01.01. The index is read as the document goes past it, per annex, because the
+numbers collide: `1` is C 01.00 in Annex I and `1.1` is F 01.01 in Annex III.
+
+And a variant takes the grid of the template it varies. The Journal prints `C 75.01`
+once; the model has `C_75.01.a` and `C_75.01.w`, the same grid reported under another
+scope. `--variants` fills those in and marks them `stem` in the `from` column, which adds
+**2 792 rows at 94 % agreement** with the model's English — the same rate as the direct
+matches, which is what makes the fallback defensible rather than convenient. A numeric
+suffix is not a variant: `F 04.02.1` and `F 04.02.2` have their own codes in the Journal's
+own index.
 
 What this cannot give: dimension members, metrics and module names, which the DPM carries
 and no annex does. And a code is never translated - `F_18.00.a`, `r0010`, `dp152217`,
