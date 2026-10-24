@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import csv
 import os
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -381,6 +382,18 @@ def rules(con: duckdb.DuckDBPyConnection, table_code: str) -> list[dict[str, Any
     runs is worse than one that names none.
     """
     return rows(con, RULES, table_code)
+
+
+# The query page answers a rule code, and the release is in its query string, so a link
+# is to the rule as that release had it. That matters: 2005 of 7514 consecutive version
+# pairs change what the rule checks, so a code without a release is not a statement.
+PAGE = "https://oluies.github.io/om-eba-annotatedtpl/"
+
+
+def rule_link(rule_code: str, release: str = "") -> str:
+    """A markdown link from a rule code to the page that explains it."""
+    query = urllib.parse.urlencode({"q": "rule", "rule_code": rule_code} | ({"release": release} if release else {}))
+    return f"[{rule_code}]({PAGE}?{query})"
 
 
 def markdown_table(records: list[dict[str, Any]], columns: list[str] | None = None) -> str:

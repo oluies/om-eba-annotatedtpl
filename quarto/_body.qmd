@@ -133,9 +133,17 @@ print()
 `active` is the EBA's deactivated-rules list. A description that tells a reader to
 satisfy a rule nobody runs is worse than one that names no rule at all.
 
+Each code links to what it checks, under this release. A code is not a stable statement:
+2 005 of 7 514 consecutive versions of a rule change the expression, and others change
+only the severity — `v0174_m` is an error up to DPM 4.1 and a warning from 4.2. So "the
+file passed v0174_m" means nothing without the release it was checked under.
+
 ```{python}
 #| output: asis
-print(dpm.markdown_table(checks[:25], ["rule_code", "severity", "active", "rows_here"]))
+print(dpm.markdown_table(
+    [check | {"rule_code": dpm.rule_link(check["rule_code"], last)} for check in checks[:25]],
+    ["rule_code", "severity", "active", "rows_here"],
+))
 if len(checks) > 25:
     print(f"\n_{len(checks) - 25:,} more; the whole list is a query, not a page._")
 print()

@@ -1177,3 +1177,80 @@ def test_a_datapoint_id_that_is_not_one_is_named_as_such():
     answer = dpm_lookup.lookup_dpm_history("not an id")
     assert answer["found"] is False
     assert "datapoint id" in answer["message"]
+
+
+# --- a rule code, across the releases it meant different things in ----------------------
+
+
+def version(release, start, expression="a = b", severities=("error",), active=True, to=""):
+    """One version of a rule as the query returns it."""
+    return {
+        "from_release": release,
+        "to_release": to,
+        "start_release_id": start,
+        "expression": expression,
+        "description": None,
+        "severities": list(severities),
+        "active_anywhere": active,
+    }
+
+
+def rule_kinds(changes):
+    return [(change["release"], change["kind"]) for change in changes]
+
+
+def test_a_rule_that_never_changed_says_only_that_it_was_introduced():
+    assert rule_kinds(dpm_lookup.rule_changes([version("3.4", 1)])) == [("3.4", "introduced")]
+
+
+def test_a_changed_expression_is_a_rewrite():
+    found = dpm_lookup.rule_changes([version("3.4", 1, "a = b"), version("4.0", 3, "a = b + c")])
+    assert rule_kinds(found) == [("3.4", "introduced"), ("4.0", "rewritten")]
+    assert found[1]["was"] == "a = b" and found[1]["now"] == "a = b + c"
+
+
+def test_whitespace_alone_is_a_reformatting_and_said_to_be_one():
+    """32 of the 2037 pairs that differ differ only in whitespace. Reported as a rewrite
+    they are false alarms on a page about what changed; dropped, they are invisible to
+    anyone comparing two releases byte for byte."""
+    found = dpm_lookup.rule_changes([version("3.4", 1, "with {tC_05.02"), version("4.0", 3, "with{tC_05.02")])
+    assert rule_kinds(found) == [("3.4", "introduced"), ("4.0", "reformatted")]
+
+
+def test_a_severity_change_is_its_own_kind():
+    """v0174_m is an error to DPM 4.1 and a warning from 4.2, with the same expression.
+    A reader told only that the rule is unchanged would draw the wrong conclusion."""
+    found = dpm_lookup.rule_changes([version("3.4", 1), version("4.2", 5, severities=("warning",))])
+    assert rule_kinds(found) == [("3.4", "introduced"), ("4.2", "severity")]
+    assert found[1]["was"] == "error" and found[1]["now"] == "warning"
+
+
+def test_switching_a_rule_off_and_on_again_are_different_kinds():
+    off = dpm_lookup.rule_changes([version("3.4", 1), version("4.0", 3, active=False)])
+    on = dpm_lookup.rule_changes([version("3.4", 1, active=False), version("4.0", 3)])
+    assert rule_kinds(off)[-1] == ("4.0", "deactivated")
+    assert rule_kinds(on)[-1] == ("4.0", "reactivated")
+
+
+def test_a_withdrawn_rule_says_when():
+    found = dpm_lookup.rule_changes([version("3.4", 1, to="4.2")])
+    assert rule_kinds(found)[-1] == ("4.2", "withdrawn")
+
+
+def test_a_rule_url_carries_the_release_when_there_is_one():
+    """A code without a release is not a statement, so the link made for a version has
+    that version's release in it."""
+    plain = dpm_lookup.rule_url("v0174_m")
+    pinned = dpm_lookup.rule_url("v0174_m", "4.3")
+    assert "rule_code=v0174_m" in plain and "release" not in plain
+    assert "release=4.3" in pinned and pinned.startswith("https://")
+
+
+@needs_dpm2
+def test_a_rule_answer_carries_its_link_and_its_versions():
+    answer = dpm_lookup.lookup_dpm_rule("v0174_m")
+    assert answer["found"] is True
+    assert answer["url"].endswith("rule_code=v0174_m")
+    assert answer["versions"], "a rule that exists has at least one version"
+    assert all(version["url"] for version in answer["versions"])
+    assert answer["changes"][0]["kind"] == "introduced"

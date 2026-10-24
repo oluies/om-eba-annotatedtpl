@@ -17,6 +17,7 @@ import json
 import os
 import re
 import sys
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -860,6 +861,94 @@ WHERE    trim(lower(op.Code)) = trim(lower(?))
 ORDER BY mv.Code, mv.VersionNumber
 """
 
+# The page that answers a rule code, so an answer can be cited rather than retyped. The
+# release is in the query string, so a link is to the rule as that release had it - which
+# matters, because 2037 of 7514 consecutive version pairs change the expression.
+RULE_PAGE = "https://oluies.github.io/om-eba-annotatedtpl/"
+
+
+def rule_url(rule_code: str, dpm_release: str | None = None) -> str:
+    """A link to this rule on the published page, under one release when one is given."""
+    query = urllib.parse.urlencode(
+        {"q": "rule", "rule_code": rule_code} | ({"release": dpm_release} if dpm_release else {})
+    )
+    return f"{RULE_PAGE}?{query}"
+
+
+# One row per version of the rule itself, which is not the same as one row per module
+# version: a rule is reissued when its expression changes and reused across modules when
+# it does not. RULE_SCOPES_SQL answers where it applies; this answers what it said when.
+RULE_VERSIONS_SQL = """
+SELECT   ov.OperationVID       AS operation_vid,
+         rs.Code               AS from_release,
+         coalesce(re.Code, '') AS to_release,
+         ov.StartReleaseID     AS start_release_id,
+         ov.Expression         AS expression,
+         nullif(ov.Description, '') AS description,
+         list_sort(list(DISTINCT os.Severity)) AS severities,
+         bool_or(os.IsActive <> 0) AS active_anywhere
+FROM     Operation op
+JOIN     OperationVersion ov ON ov.OperationID = op.OperationID
+LEFT JOIN OperationScope os ON os.OperationVID = ov.OperationVID
+LEFT JOIN Release rs ON rs.ReleaseID = ov.StartReleaseID
+LEFT JOIN Release re ON re.ReleaseID = ov.EndReleaseID
+WHERE    trim(lower(op.Code)) = trim(lower(?))
+GROUP BY ALL
+ORDER BY ov.StartReleaseID
+"""
+
+
+def rule_changes(versions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """What changed about a rule between releases, read off its versions.
+
+    The same derivation as for a datapoint, and for the same reason: the DPM's ChangeLog
+    table ships empty, so an account of what changed is the difference between two rows or
+    it does not exist.
+
+    `rewritten` is the one that matters. A rule code is not a stable statement - 2037 of
+    7514 consecutive version pairs change the expression - so "the file passed v0174_m"
+    means nothing without the release it was checked under.
+    """
+    if not versions:
+        return []
+    ordered = sorted(versions, key=lambda row: row["start_release_id"])
+    found = [{"release": ordered[0]["from_release"], "kind": "introduced"}]
+    for before, after in zip(ordered, ordered[1:], strict=False):
+        if before["expression"] != after["expression"]:
+            # Whitespace only in 32 of the 2037 pairs that differ, and those 32 would be
+            # false alarms on a page that says what changed. Labelled rather than hidden:
+            # a reader comparing two releases byte for byte should still find them here.
+            was, now = before["expression"] or "", after["expression"] or ""
+            cosmetic = re.sub(r"\s+", "", was) == re.sub(r"\s+", "", now)
+            found.append(
+                {
+                    "release": after["from_release"],
+                    "kind": "reformatted" if cosmetic else "rewritten",
+                    "was": was[:200],
+                    "now": now[:200],
+                }
+            )
+        if before["severities"] != after["severities"]:
+            found.append(
+                {
+                    "release": after["from_release"],
+                    "kind": "severity",
+                    "was": ", ".join(before["severities"] or []),
+                    "now": ", ".join(after["severities"] or []),
+                }
+            )
+        if before["active_anywhere"] != after["active_anywhere"]:
+            found.append(
+                {
+                    "release": after["from_release"],
+                    "kind": "reactivated" if after["active_anywhere"] else "deactivated",
+                }
+            )
+    if ordered[-1]["to_release"]:
+        found.append({"release": ordered[-1]["to_release"], "kind": "withdrawn"})
+    return found
+
+
 # Which cells one version of the rule names. The DPM has already resolved every leaf of
 # the expression to a location, so this is a join rather than a parse of the DPM-XL.
 RULE_CELLS_SQL = """
@@ -924,7 +1013,9 @@ def lookup_dpm_rule(rule_code: str) -> dict[str, Any]:
                 ),
             }
         cells = {scope["operation_vid"]: _rows(con, RULE_CELLS_SQL, scope["operation_vid"]) for scope in scopes}
+        versions = _rows(con, RULE_VERSIONS_SQL, rule_code)
     severities = {scope["severity"] for scope in scopes}
+    changed = rule_changes(versions)
     return {
         "found": True,
         "rule_code": rule_code,
@@ -934,6 +1025,13 @@ def lookup_dpm_rule(rule_code: str) -> dict[str, Any]:
             for scope in scopes
         ],
         "tables": sorted({cell["table_code"] for rows in cells.values() for cell in rows}),
+        "url": rule_url(rule_code),
+        "versions": [
+            {key: value for key, value in version.items() if key != "operation_vid"}
+            | {"url": rule_url(rule_code, version["from_release"])}
+            for version in versions
+        ],
+        "changes": changed,
         "message": (
             (
                 f"The code asked for carried the occurrence number {occurrence}, which is the "
@@ -951,6 +1049,15 @@ def lookup_dpm_rule(rule_code: str) -> dict[str, Any]:
                 else f"The severity is {severities.pop()} in every version here."
             )
             + " from_submission_date is the first reporting date each version applies to."
+            + (
+                " What it checks is not the same in every release either: "
+                + ", ".join(
+                    f"{change['kind']} in {change['release']}" for change in changed if change["kind"] != "introduced"
+                )
+                + ". A code is not a stable statement, so cite the release with it - url carries one."
+                if any(change["kind"] not in ("introduced", "reformatted") for change in changed)
+                else " The expression, severity and activity are the same in every release here."
+            )
         ),
     }
 

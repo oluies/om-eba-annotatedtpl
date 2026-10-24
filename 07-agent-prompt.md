@@ -108,6 +108,12 @@ These hold regardless of what you find:
   - active is false for a rule the EBA has deactivated. It is published and not run -
     2928 of 30791 rule scopes in DPM 4.4 - so do not tell a reader to satisfy it, and do
     not quietly leave it out either.
+  - A rule code is not a stable statement. 2005 of 7514 consecutive versions of a rule
+    change the expression, and others change only the severity - v0174_m is an error to
+    DPM 4.1 and a warning from 4.2 with the same expression. lookup_dpm_rule returns
+    `changes` saying what differed and when (rewritten, reformatted, severity,
+    deactivated, reactivated, withdrawn), and a `url` per version linking to the rule as
+    that release had it. Never write a code without the release it was checked under.
   - A coordinate is an address, not an identity. Within one release {T, rNNNN, cNNNN}
     names exactly one datapoint; across releases 4517 of 135043 coordinates in DPM 4.4
     have carried more than one. Before writing that a column has always meant the same
