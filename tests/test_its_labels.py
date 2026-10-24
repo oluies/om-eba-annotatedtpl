@@ -184,7 +184,7 @@ def test_the_instructions_annex_heads_a_template_with_number_and_code():
     the label parser refuses on purpose - the prose tables are not a template's grid."""
     found = [row for row in its.instruction_rows(INSTRUCTIONS) if row.text]
     assert [(row.template, row.code) for row in found] == [("C_01.00", "0010"), ("C_01.00", "0015")]
-    assert found[0].text.startswith("1. Own funds Article 72 CRR")
+    assert (found[0].text or "").startswith("1. Own funds Article 72 CRR")
 
 
 def test_a_short_second_cell_is_not_an_instruction():
