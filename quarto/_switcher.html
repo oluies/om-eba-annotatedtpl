@@ -1,0 +1,17 @@
+<nav class="release-switcher">
+  <span>DPM release</span>
+  <a class="release" href="../4.2.1/">4.2.1</a>
+  <a class="release current" href="#">4.3</a>
+  <a class="release" href="../4.4/">4.4</a>
+</nav>
+<script>
+  // One switcher file is included above every page, so it cannot carry the page's own
+  // name. The links point at each release's index; this puts the current page back on
+  // them, so 4.3's C_01.00 goes to 4.4's C_01.00 and not to 4.4's front page. Without
+  // scripting the links still work and land on the index, which is why it is done this
+  // way round rather than the links being written by script.
+  for (const link of document.querySelectorAll('.release-switcher a[href$="/"]')) {
+    const here = location.pathname.split('/').pop();
+    if (here && here !== 'index.html') link.href += here;
+  }
+</script>

@@ -85,6 +85,25 @@ if here:
     if len(listing) > 12:
         print(f"\n_{len(listing) - 12} more; source/its_labels.csv has them all._")
     print()
+
+    # Only where the regulation itself reworded a row. 16 templates of 165 have any, so
+    # on most pages this prints nothing, which is the point: a page that says nothing
+    # about versions is a page where the version does not change the answer.
+    earlier = dpm.reworded()
+    touched = [(cell, earlier[(table_code, cell["row_code"])]) for cell, _ in here
+               if (table_code, cell["row_code"]) in earlier]
+    said = set()
+    for cell, trail in touched:
+        if cell["row_code"] in said or len(trail) < 2:
+            continue
+        said.add(cell["row_code"])
+        if len(said) == 1:
+            print("\n#### Rows the regulation has reworded\n")
+            print("The datapoint did not change and neither did the cell. The sentence did.\n")
+        print(f"\n**{cell['row_code']}**\n")
+        for step in trail:
+            print(f"- `{step['celex']}` — {step['en'][:84]}")
+        print()
 ```
 
 ```{python}

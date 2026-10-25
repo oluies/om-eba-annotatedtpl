@@ -355,6 +355,37 @@ def stem_of(template: str) -> str | None:
     return found.group(1) if found else None
 
 
+def worded_differently(celex: str, languages: list[str]) -> list[dict[str, str]]:
+    """Rows the consolidations of an act word differently, one entry per wording.
+
+    Not a version selector, which is what this started as. The four consolidations of
+    2021/451 are two distinct texts, and they differ in 58 of 4273 coordinates across 16
+    of 165 templates - so a control offering a choice would show the same thing on 149
+    pages out of 165, which teaches a reader that the choice does not matter anywhere.
+    The 16 templates where it does are told, on the rows where it does.
+    """
+    per_version = {}
+    for version in CONSOLIDATIONS.get(celex, [celex]):
+        here = {language: rows(fetch(version, language)) for language in languages}
+        labels, _ = aligned(here)
+        per_version[version] = {(row["template"], row["row"]): row for row in labels}
+
+    everywhere = set().union(*(set(found) for found in per_version.values()))
+    changed = []
+    for key in sorted(everywhere):
+        wordings = []
+        for version, found in per_version.items():
+            row = found.get(key)
+            if row and (not wordings or wordings[-1][1]["en"] != row["en"]):
+                wordings.append((version, row))
+        if len(wordings) > 1:
+            changed.extend(
+                {"template": key[0], "row": key[1], "celex": version} | {k: v for k, v in row.items() if k in languages}
+                for version, row in wordings
+            )
+    return changed
+
+
 def database_path() -> Path:
     """The DPM database, from the environment or where fetch_dpm2.py puts it."""
     database = Path(os.environ.get("DPM2_DB") or HERE / "dpm2" / "dpm2.duckdb")
@@ -441,6 +472,12 @@ def main() -> None:
         help="list the consolidated versions known for the regulation and stop.",
     )
     parser.add_argument(
+        "--changed",
+        action="store_true",
+        help="collect the rows the consolidations word differently, one entry per wording, "
+        "instead of the labels. Small: 58 coordinates over 16 templates.",
+    )
+    parser.add_argument(
         "--languages",
         default="en,sv,de",
         help="comma separated, English required. Default en,sv,de.",
@@ -476,6 +513,18 @@ def main() -> None:
         raise SystemExit(f"Unknown language(s) {unknown}. Known: {', '.join(LANGUAGES)}.")
     if "en" not in wanted:
         raise SystemExit("English is the join key back into the model; ask for it.")
+
+    if args.changed:
+        changed = worded_differently(CELEX, wanted)
+        print(f"{len(changed)} wordings over {len({row['template'] for row in changed})} templates")
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            with args.out.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=["template", "row", "celex", *wanted])
+                writer.writeheader()
+                writer.writerows(changed)
+            print(f"wrote {args.out}")
+        return
 
     read = instruction_rows if args.instructions else rows
     per_language = {language: read(fetch(args.celex, language, args.refresh)) for language in wanted}

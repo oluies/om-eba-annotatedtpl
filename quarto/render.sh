@@ -10,6 +10,13 @@
 #   ./render.sh --framework DORA       # a whole framework, with an index page
 #   DPM2_DB=../source/dpm2/dpm2_4_3.duckdb ./render.sh     # under another release
 #
+# RELEASE and RELEASES put the pages in a directory of their own and give every page
+# links to the same template under the other releases. A page that says 4.3 is then 4.3
+# all the way down - its cells, its rules, its severities and its history - rather than
+# offering a choice it cannot honour, since Quarto renders once.
+#
+#   RELEASE=4.3 RELEASES="4.2.1 4.3 4.4" ./render.sh --framework COREP
+#
 # Both renders are of the whole project rather than file by file. Quarto starts one
 # kernel per render, so a project of 154 pages pays for one startup and not 154 - the
 # difference between about a minute and about ten.
@@ -22,7 +29,6 @@ here() { uv run --group docs --project .. "$@"; }
 # but the two sources: index.qmd is written by hand, _body.qmd is what the stubs include.
 # Matching [A-Z]_* instead left DORA.qmd behind, and a FINREP render published a DORA page.
 find . -maxdepth 1 -name '*.qmd' ! -name 'index.qmd' ! -name '_body.qmd' -delete
-mkdir -p _md
 
 if [ "${1:-}" = "--framework" ]; then
   shift
@@ -30,27 +36,32 @@ if [ "${1:-}" = "--framework" ]; then
   # All of them in one call, and one render over the lot: each framework's pages are
   # written before anything is rendered, so a second framework cannot delete the first
   # one's - which is what looping this script per framework would do.
-  here python pages.py --framework "$@" > /dev/null
+  here python pages.py --framework "$@" --release "${RELEASE:-}" --releases ${RELEASES:-} > /dev/null
   echo "pages for $*:"
 elif [ "$#" -gt 0 ]; then
-  here python pages.py "$@" > /dev/null
+  here python pages.py "$@" --release "${RELEASE:-}" --releases ${RELEASES:-} > /dev/null
 else
   # One template that has moved datapoints, one that has reworded a row: between them
   # they exercise both halves of the history section.
-  here python pages.py F_18.00.a K_47.00.a > /dev/null
+  here python pages.py F_18.00.a K_47.00.a --release "${RELEASE:-}" --releases ${RELEASES:-} > /dev/null
 fi
 
-here quarto render --to html
+# A directory per release when one is named, so three renders do not overwrite each other.
+site="_site${RELEASE:+/$RELEASE}"
+markdown="_md${RELEASE:+/$RELEASE}"
+mkdir -p "$markdown"
+
+here quarto render --to html --output-dir "$site"
 # --no-clean, or the second project render empties _site/ and the HTML from the first one
 # goes with it. Quarto clears the output directory per render, not per format.
-here quarto render --to gfm --no-clean
+here quarto render --to gfm --no-clean --output-dir "$site"
 
 # The markdown lands beside the HTML; the catalogue's half is moved out so that what is
 # published and what is uploaded are two directories rather than one mixed one.
-for page in _site/*.md; do
+for page in "$site"/*.md; do
   [ -e "$page" ] || continue
-  mv "$page" "_md/$(basename "$page")"
+  mv "$page" "$markdown/$(basename "$page")"
 done
 
 echo
-echo "$(find _site -name '*.html' | wc -l | tr -d ' ') pages in _site/, $(find _md -name '*.md' | wc -l | tr -d ' ') in _md/ for the catalogue"
+echo "$(find "$site" -name '*.html' | wc -l | tr -d ' ') pages in $site/, $(find "$markdown" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ') in $markdown/ for the catalogue"

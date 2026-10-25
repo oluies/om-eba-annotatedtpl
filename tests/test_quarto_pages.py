@@ -81,3 +81,43 @@ def test_the_index_names_a_template_as_its_own_page_does():
     listed = {row["table_code"]: row["name"] for row in dpm.templates_of(con, "DORA")}
     for code, name in listed.items():
         assert dpm.versions(con, code)[-1]["name"] == name
+
+
+def test_the_switcher_marks_where_you_are_and_links_the_rest():
+    html = pages.switcher("4.3", ["4.2.1", "4.3", "4.4"])
+    assert 'class="release current" href="#">4.3' in html
+    assert 'href="../4.4/"' in html and 'href="../4.2.1/"' in html
+    assert html.count('class="release"') == 2, "every release but the current one is a link"
+
+
+def test_the_switcher_links_are_relative_to_the_release_directory():
+    """The whole tree moves - /templates/4.3/C_01.00.html is mounted wherever Pages puts
+    it - so ../4.4/ keeps working and /templates/4.4/ would not."""
+    html = pages.switcher("4.3", ["4.3", "4.4"])
+    assert "/templates/" not in html
+    assert html.count("../") == 1
+
+
+def test_one_release_still_produces_a_switcher_without_links():
+    html = pages.switcher("4.3", ["4.3"])
+    assert 'class="release current"' in html
+    assert "../" not in html, "nothing to switch to"
+
+
+def test_a_reworded_row_keeps_every_wording_in_order():
+    """The file has one entry per wording, oldest first, so a page can show what the row
+    said before. A single entry is a row that never changed and is not shown."""
+    import csv as _csv
+    import io
+
+    rows = list(
+        _csv.DictReader(
+            io.StringIO(
+                "template,row,celex,en\n"
+                "C_01.00,0510,02021R0451-20210319,(-) Amount exceeding the 17.65 % threshold\n"
+                "C_01.00,0510,02021R0451-20230711,(-) Amount exceeding the 17.65% threshold\n"
+            )
+        )
+    )
+    assert [row["celex"] for row in rows] == sorted(row["celex"] for row in rows)
+    assert rows[0]["en"] != rows[1]["en"]

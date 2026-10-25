@@ -84,6 +84,49 @@ def yaml_string(text: str) -> str:
     return json.dumps(text)
 
 
+SWITCHER = """<nav class="release-switcher">
+  <span>DPM release</span>
+{links}
+</nav>
+<script>
+  // One switcher file is included above every page, so it cannot carry the page's own
+  // name. The links point at each release's index; this puts the current page back on
+  // them, so 4.3's C_01.00 goes to 4.4's C_01.00 and not to 4.4's front page. Without
+  // scripting the links still work and land on the index, which is why it is done this
+  // way round rather than the links being written by script.
+  for (const link of document.querySelectorAll('.release-switcher a[href$="/"]')) {{
+    const here = location.pathname.split('/').pop();
+    if (here && here !== 'index.html') link.href += here;
+  }}
+</script>
+"""
+
+LINK = '  <a class="{classes}" href="{href}">{release}</a>'
+
+
+def switcher(current: str, releases: list[str]) -> str:
+    """The links that change release, as a block Quarto puts above every page.
+
+    Links rather than a dropdown, and a directory per release rather than one page that
+    switches: Quarto renders once, so a page that offered a choice would have to carry
+    three releases' cells, dimensions, rules and history at once - and its table of
+    contents and its search index would still describe one of them. A page that says 4.3
+    is 4.3 all the way down.
+
+    Relative, because the whole tree moves: ../4.4/C_01.00.html from 4.3's own page keeps
+    working wherever /templates is mounted.
+    """
+    links = "\n".join(
+        LINK.format(
+            classes="release current" if release == current else "release",
+            href="#" if release == current else f"../{release}/",
+            release=release,
+        )
+        for release in releases
+    )
+    return SWITCHER.format(links=links)
+
+
 def stub(code: str, name: str, db: str | None) -> str:
     """The page for one template. The body is included, never copied."""
     return STUB.format(code=code, title=yaml_string(f"{code} - {name}"), db=repr(db or ""))
@@ -134,7 +177,22 @@ if __name__ == "__main__":
         help="every template of these frameworks instead, e.g. --framework FINREP COREP",
     )
     parser.add_argument("--db", help="a DPM database other than the default")
+    parser.add_argument("--release", help="the DPM release these pages are of, for the switcher")
+    parser.add_argument(
+        "--releases",
+        nargs="*",
+        default=[],
+        metavar="RELEASE",
+        help="every release being published, so each page can link to the others",
+    )
     args = parser.parse_args()
+
+    # Written whatever happens, so a render with no releases named still has the file
+    # _quarto.yml includes - an absent include-before-body is an error, not a no-op.
+    (HERE / "_switcher.html").write_text(
+        switcher(args.release or "", args.releases) if args.release and args.releases else "",
+        encoding="utf-8",
+    )
     if not args.templates and not args.framework:
         parser.error("name some templates, or a --framework")
     written = (

@@ -228,6 +228,28 @@ def official(path: Path | None = None) -> dict[tuple[str, str], dict[str, str]]:
     return keyed(path or OFFICIAL)
 
 
+CHANGES = HERE.parent / "source" / "its_label_changes.csv"
+
+
+def reworded(path: Path | None = None) -> dict[tuple[str, str], list[dict[str, str]]]:
+    """Rows the consolidations of the regulation word differently, oldest first.
+
+    Sixteen templates of 165 have any, which is why this is a note on the rows that have
+    one rather than a control offering a version: a selector that shows the same thing on
+    149 pages teaches a reader that it never matters.
+    """
+    here = path or CHANGES
+    if not here.exists():
+        return {}
+    import csv as _csv
+
+    out: dict[tuple[str, str], list[dict[str, str]]] = {}
+    with here.open(encoding="utf-8") as handle:
+        for row in _csv.DictReader(handle):
+            out.setdefault((row["template"], row["row"]), []).append(row)
+    return out
+
+
 def instructions(path: Path | None = None) -> dict[tuple[str, str], dict[str, str]]:
     """The instructions annex's prose - what a row means, and which article requires it.
 

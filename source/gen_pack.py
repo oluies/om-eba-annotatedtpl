@@ -2245,6 +2245,27 @@ every language, the 2024 consolidation does not, and two extra German rows refus
 whole document until the match absorbed them as an insertion. A row that pairs with
 nothing is dropped rather than shifted onto its neighbour.
 
+**Choosing a release, and not choosing a regulation version.** The published pages are
+rendered once per DPM release into a directory of their own — `/templates/4.3/C_01.00.html`
+— and every page links to the same template under the others. Quarto renders at build, so
+a page that offered a choice would have to carry three releases' cells, rules and history
+at once and would still have one table of contents; a page that says 4.3 is 4.3 all the
+way down.
+
+The regulation's own versions are the opposite case and get no control. The four
+consolidations of 2021/451 are two distinct texts, and they differ in 58 of 4 273
+coordinates across 16 of 165 templates — a selector would show the same thing on 149 pages
+out of 165, which teaches a reader that the choice never matters. Those 16 templates say
+so inline instead, on the rows where the wording changed:
+
+> **0510**
+> `02021R0451-20210319` — (-) Amount exceeding the 17.65 **%** threshold
+> `02021R0451-20230711` — (-) Amount exceeding the 17.65**%** threshold
+
+```bash
+uv run source/fetch_its_labels.py --changed --out source/its_label_changes.csv
+```
+
 **Which version of the regulation matters, and the default is not the obvious one.** The
 bare CELEX `32021R0451` is the act *as adopted* — the 2021 text, five years behind the
 releases it is matched against. A consolidated version is the act as amended up to a

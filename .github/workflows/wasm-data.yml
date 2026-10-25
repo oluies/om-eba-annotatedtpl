@@ -20,13 +20,13 @@ on:
         description: "Also render a page per template of these frameworks, space separated, under /templates/. Empty skips it."
         required: false
         default: "COREP FINREP"
-      templates_release:
-        description: "Which release those template pages are generated from. Must be one of the releases above."
+      template_releases:
+        description: "Which releases the template pages are generated from, space separated. Each gets its own directory and the pages link between them."
         required: false
-        # 4.3, not the newest, because the newest is what will be reported and 4.3 is what
-        # is being reported. A page that reads like documentation should describe the
-        # framework in force unless someone asks for the one coming.
-        default: "4.3"
+        # Two, because a release switcher with one entry is a label. 4.3 is what is being
+        # reported and 4.4 is what will be; each page is then honest about one of them all
+        # the way down rather than offering a choice Quarto cannot honour.
+        default: "4.3 4.4"
       deploy:
         description: "Publish to Pages. Unticked builds the artefact and stops."
         type: boolean
@@ -92,12 +92,26 @@ jobs:
       - name: Render a page per template
         if: ${{ inputs.framework != '' }}
         run: |
-          tag=$(echo "${{ inputs.templates_release }}" | tr . _)
-          db="source/dpm2/dpm2_$tag.duckdb"
-          [ -f "$db" ] || { echo "No $db - is ${{ inputs.templates_release }} in the releases list?"; exit 1; }
-          DPM2_DB="$PWD/$db" quarto/render.sh --framework ${{ inputs.framework }}
+          for release in ${{ inputs.template_releases }}; do
+            echo "::group::templates for DPM $release"
+            tag=$(echo "$release" | tr . _)
+            db="source/dpm2/dpm2_$tag.duckdb"
+            [ -f "$db" ] || { echo "No $db - is $release in the releases list?"; exit 1; }
+            # Its own directory, and every page links to the same template under the
+            # others. RELEASES is quoted nowhere on purpose: it is a word list.
+            RELEASE="$release" RELEASES="${{ inputs.template_releases }}" \
+              DPM2_DB="$PWD/$db" quarto/render.sh --framework ${{ inputs.framework }}
+            echo "::endgroup::"
+          done
           mkdir -p web/public/templates
           cp -r quarto/_site/. web/public/templates/
+          # /templates/ itself holds only the release directories now, so it needs a way
+          # in. A redirect rather than a copy of one release's index: two indexes that
+          # drift apart is worse than one hop.
+          first=$(echo "${{ inputs.template_releases }}" | awk '{print $1}')
+          printf '<!doctype html><meta charset=utf-8><title>EBA DPM, by template</title>%s\n' \
+            "<meta http-equiv=refresh content=\"0; url=$first/\"><a href=\"$first/\">DPM $first</a>" \
+            > web/public/templates/index.html
           echo "$(find web/public/templates -name '*.html' | wc -l) template pages"
 
       - uses: VirtusLab/scala-cli-setup@v1.18.0

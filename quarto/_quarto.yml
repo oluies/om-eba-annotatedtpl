@@ -24,7 +24,7 @@ website:
 
 format:
   html:
-    theme: cosmo
+    theme: [cosmo, custom.scss]
     toc: true
     toc-depth: 3
     code-tools: false
@@ -33,6 +33,9 @@ format:
     # that file to the template's own name afterwards, so the link would be to a page
     # that is not there. The markdown is for the catalogue, not for a reader here.
     format-links: false
+    # Written by pages.py before each render: the links that change release. Empty when
+    # only one release is being published, which is the usual case locally.
+    include-before-body: _switcher.html
   # The second destination: one source, rendered as GitHub-flavoured markdown for a
   # catalogue that takes markdown and nothing else.
   gfm:
