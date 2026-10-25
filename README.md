@@ -586,6 +586,12 @@ new and 829 are gone: `v0491_m` is active under 4.2.1 and deactivated under 4.4,
 the page shows by switching the release and asking again. The release is in the URL, so
 a shared answer stays the answer it was.
 
+DuckDB 2.0 on this side of the wire; DuckDB-WASM in the browser stays at 1.29.0, because
+there is no 2.0 of it — the newest published is 1.33.1-dev, and it is *bigger*: 7.1 MB
+brotli against 6.2 MB for the pinned one, measured from the CDN. The databases in
+`source/dpm2/` were written by 1.x and 2.0 reads them, which is what matters here: nothing
+rebuilds them.
+
 Scala.js and Laminar, no npm and no bundler: Scala.js emits ES modules and the browser
 resolves the DuckDB-WASM import from the CDN itself. `web/src/dpm/DuckDb.scala` is the
 facade — six calls, because no Scala.js facade for DuckDB-WASM exists.

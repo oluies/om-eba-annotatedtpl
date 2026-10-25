@@ -17,9 +17,9 @@ on:
         required: false
         default: ""
       framework:
-        description: "Also render a page per template of this framework, under /templates/. Empty skips it."
+        description: "Also render a page per template of these frameworks, space separated, under /templates/. Empty skips it."
         required: false
-        default: "DORA"
+        default: "COREP FINREP"
       templates_release:
         description: "Which release those template pages are generated from. Must be one of the releases above."
         required: false
@@ -95,7 +95,7 @@ jobs:
           tag=$(echo "${{ inputs.templates_release }}" | tr . _)
           db="source/dpm2/dpm2_$tag.duckdb"
           [ -f "$db" ] || { echo "No $db - is ${{ inputs.templates_release }} in the releases list?"; exit 1; }
-          DPM2_DB="$PWD/$db" quarto/render.sh --framework "${{ inputs.framework }}"
+          DPM2_DB="$PWD/$db" quarto/render.sh --framework ${{ inputs.framework }}
           mkdir -p web/public/templates
           cp -r quarto/_site/. web/public/templates/
           echo "$(find web/public/templates -name '*.html' | wc -l) template pages"

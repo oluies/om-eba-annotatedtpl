@@ -9,7 +9,10 @@ requires-python = ">=3.12"
 # about what is known to work rather than a measured minimum: nobody has established that
 # duckdb 1.4 fails, only that it has never been run. Lower one if you test one.
 dependencies = [
-    "duckdb>=1.5.6",
+    # 2.0 is a major version and is what the CLI and the generated databases are read
+    # with here. It reads a database written by 1.x, which is what matters: the DPM stores
+    # in source/dpm2 were built before the bump and are not rebuilt by it.
+    "duckdb>=2.0.0",
     "httpx>=0.28.1",
     "openpyxl>=3.1.5",
     "pydantic>=2",

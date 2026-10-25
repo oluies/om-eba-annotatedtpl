@@ -25,9 +25,13 @@ find . -maxdepth 1 -name '*.qmd' ! -name 'index.qmd' ! -name '_body.qmd' -delete
 mkdir -p _md
 
 if [ "${1:-}" = "--framework" ]; then
-  [ -n "${2:-}" ] || { echo "--framework needs a name, e.g. FINREP" >&2; exit 2; }
-  here python pages.py --framework "$2" > /dev/null
-  echo "pages for $2:"
+  shift
+  [ "$#" -gt 0 ] || { echo "--framework needs at least one name, e.g. FINREP COREP" >&2; exit 2; }
+  # All of them in one call, and one render over the lot: each framework's pages are
+  # written before anything is rendered, so a second framework cannot delete the first
+  # one's - which is what looping this script per framework would do.
+  here python pages.py --framework "$@" > /dev/null
+  echo "pages for $*:"
 elif [ "$#" -gt 0 ]; then
   here python pages.py "$@" > /dev/null
 else

@@ -10,6 +10,7 @@ named after the page.
 
     uv run --group docs quarto/pages.py F_18.00.a K_47.00.a    # named templates
     uv run --group docs quarto/pages.py --framework DORA       # a whole framework
+    uv run --group docs quarto/pages.py --framework COREP FINREP   # or several
 """
 
 from __future__ import annotations
@@ -126,11 +127,20 @@ def write_framework(framework: str, db: str | None = None) -> list[Path]:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("templates", nargs="*", help="template codes, e.g. F_18.00.a")
-    parser.add_argument("--framework", help="every template of this framework instead, e.g. FINREP")
+    parser.add_argument(
+        "--framework",
+        nargs="+",
+        metavar="NAME",
+        help="every template of these frameworks instead, e.g. --framework FINREP COREP",
+    )
     parser.add_argument("--db", help="a DPM database other than the default")
     args = parser.parse_args()
     if not args.templates and not args.framework:
         parser.error("name some templates, or a --framework")
-    written = write_framework(args.framework, args.db) if args.framework else write(args.templates, args.db)
+    written = (
+        [page for framework in args.framework for page in write_framework(framework, args.db)]
+        if args.framework
+        else write(args.templates, args.db)
+    )
     for path in written:
         print(path.name)
