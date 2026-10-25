@@ -497,15 +497,26 @@ uv run source/fetch_its_labels.py --variants --out source/its_labels.csv
 
 EUR-Lex's web front end answers a scripted request with `202` and zero bytes; the
 Publications Office's CELLAR service answers properly, with the language chosen by
-content negotiation. Each language is about 21 MB of XHTML, and the three are parallel
-documents: **13 838 table rows each, and 7 766 of the 7 768 rows carrying a row code
-carry the same code at the same index in all three.** So English says which template a row
-belongs to and the index says what it reads in Swedish; two rows disagree and are dropped
-rather than guessed at.
+content negotiation. Each language is about 20 MB of XHTML. English says which template a row belongs to —
+the heading that announces one is typeset differently per language, and joining on
+(template, row) per language loses a fifth of the coverage — and the other languages are
+asked only what a row reads. They are matched to it by a sequence alignment over the row
+codes rather than position for position: the 2021 text had the same 13 838 table rows in
+every language, the 2024 consolidation does not, and two extra German rows refused the
+whole document until the match absorbed them as an insertion. A row that pairs with
+nothing is dropped rather than shifted onto its neighbour.
 
-Measured against DPM 4.4, for the templates in force: **2 499 of 13 371 row labels have a
-published translation at the same coordinate, and 2 324 of those agree on the English
-text** as well. Within the 150 templates the parser reaches, **95 %** of the model's rows
+**Which version of the regulation matters, and the default is not the obvious one.** The
+bare CELEX `32021R0451` is the act *as adopted* — the 2021 text, five years behind the
+releases it is matched against. A consolidated version is the act as amended up to a
+date, and `--versions` lists them: `02021R0451-20210319`, `-20220303`, `-20230711`,
+`-20240901`. The newest is the default, and the difference is not academic — 381
+coordinates the original does not have, 57 rows worded differently, and agreement with
+the model up a point. Every row carries the `celex` it came from, and the pages say so.
+
+Measured against DPM 4.4, for the templates in force: **2 539 of 13 371 row labels have a
+published translation at the same coordinate, and 2 387 of those agree on the English
+text** as well. Within the 165 templates the parser reaches, **96 %** of the model's rows
 are covered — the gap to the first figure is reach, not the Journal.
 
 Two things the annexes do differently. COREP heads each template with its code
@@ -517,7 +528,7 @@ numbers collide: `1` is C 01.00 in Annex I and `1.1` is F 01.01 in Annex III.
 And a variant takes the grid of the template it varies. The Journal prints `C 75.01`
 once; the model has `C_75.01.a` and `C_75.01.w`, the same grid reported under another
 scope. `--variants` fills those in and marks them `stem` in the `from` column, which adds
-**2 792 rows at 94 % agreement** with the model's English — the same rate as the direct
+**3 479 rows** with the model's English — the same rate as the direct
 matches, which is what makes the fallback defensible rather than convenient. A numeric
 suffix is not a variant: `F 04.02.1` and `F 04.02.2` have their own codes in the Journal's
 own index.
@@ -539,7 +550,7 @@ language too:
 uv run source/fetch_its_labels.py --instructions --out source/its_instructions.csv
 ```
 
-978 rows across 51 templates, three languages. That is COREP: the instructions annex
+1 040 rows across 51 templates, three languages. That is COREP: the instructions annex
 heads a template with its numbering *and* its code — `1.2. C 01.00 – OWN FUNDS (CA1)` —
 which is the shape this reads, and FINREP's own instructions annex is written differently
 again. The template pages show these definitions where they have them.

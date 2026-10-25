@@ -50,12 +50,23 @@ here = [(cell, published[(table_code, cell["row_code"])]) for cell in cells
         if (table_code, cell["row_code"]) in published]
 if here:
     rows_covered = len({cell["row_code"] for cell, _ in here})
+    celex = here[0][1].get("celex", "")
+    link = f"https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:{celex}" if celex else ""
     print(
         f"\n### The same rows in Swedish and German\n\n"
         f"Not a translation: the templates are an annex to an Implementing Regulation, and "
         f"an Implementing Regulation is published in all 24 official languages. "
         f"{rows_covered} of this template's rows have a published wording.\n"
     )
+    if celex:
+        # Which text, not just that there is one. The act is amended, and a row's wording
+        # is a wording of one consolidated version of it.
+        print(
+            f"\nFrom [{celex}]({link}), the consolidated regulation as it applies from "
+            f"{celex[-8:-4]}-{celex[-4:-2]}-{celex[-2:]}. Earlier consolidations word some "
+            "rows differently, so this is the wording of one version and not of the act "
+            "for all time.\n"
+        )
     seen, listing = set(), []
     for cell, found in here:
         if cell["row_code"] in seen:
@@ -83,10 +94,13 @@ spelled = [(cell, defined[(table_code, cell["row_code"])]) for cell in cells
            if (table_code, cell["row_code"]) in defined]
 if spelled:
     seen, shown = set(), 0
+    where = spelled[0][1].get("celex", "")
     print(
         "\n### What the regulation says these rows are\n\n"
         "From the instructions annex, which gives each row its meaning and the article "
-        "that requires it. Also published in every official language.\n"
+        "that requires it. Also published in every official language"
+        + (f", here from {where}" if where else "")
+        + ".\n"
     )
     for cell, found in spelled:
         if cell["row_code"] in seen or shown >= 4:

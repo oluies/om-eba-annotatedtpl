@@ -36,6 +36,7 @@ import os
 import re
 import sys
 from collections import defaultdict
+from difflib import SequenceMatcher
 from html import unescape
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -52,7 +53,29 @@ LANGUAGES = {"en": "eng", "sv": "swe", "de": "deu"}
 
 # One Implementing Regulation per framework family. 2021/451 is supervisory reporting -
 # COREP, FINREP, large exposures, leverage, liquidity, asset encumbrance.
+#
+# The bare CELEX is the act as *adopted*, and asking for it gets the 2021 text, five years
+# behind the DPM releases this is matched against. A consolidated version - 0 prefix, an
+# application date suffix - is the act as amended up to that date, and is what anyone
+# reading the regulation today reads. The difference is not academic: 2024-09-01 has 381
+# coordinates the original does not, 57 rows are worded differently, and agreement with
+# the model goes from 93.2% to 94.2%.
 CELEX = "32021R0451"
+
+# The consolidations of it, oldest first. Listed rather than discovered at run time: the
+# list comes from a SPARQL query against the Publications Office (`consolidations()`
+# below reproduces it), and a build that silently followed a new consolidation would
+# change published labels without anyone deciding to.
+CONSOLIDATIONS = {
+    "32021R0451": [
+        "02021R0451-20210319",
+        "02021R0451-20220303",
+        "02021R0451-20230711",
+        "02021R0451-20240901",
+    ],
+}
+
+SPARQL = "http://publications.europa.eu/webapi/rdf/sparql"
 
 CELLAR = "http://publications.europa.eu/resource/celex/{celex}"
 
@@ -171,38 +194,51 @@ def instruction_rows(html: str) -> list[Row]:
     return found
 
 
-def aligned(per_language: dict[str, list[Row]]) -> tuple[list[dict[str, str]], dict[str, int]]:
-    """The languages joined by position, with English saying which template a row is in.
+def paired(english: list[Row], other: list[Row]) -> dict[int, Row]:
+    """Which row of another language is which row of the English, by row code.
 
-    By position rather than by (template, row code), which is what this started as. The
-    heading that announces a template is typeset slightly differently in each language -
-    Swedish finds eleven templates English does not and misses four it has - so attributing
-    per language disagrees about which rows belong where, and the join then drops two
-    thirds of everything. The documents themselves are parallel: the same number of table
-    rows, and the same row code at the same index in 7 766 of 7 768 cases. So English says
-    where a row is and the index says what it says in Swedish, and a row whose code is not
-    identical across the languages is dropped rather than guessed at.
+    difflib over the two streams of row codes rather than position-for-position. The
+    original 2021 text had the same 13 838 table rows in every language and position was
+    exact; the 2024 consolidation does not - German has two rows the others lack - and a
+    strict pairing refuses the whole document over two rows in the middle of it.
+
+    A sequence match absorbs that: the two odd rows become an insertion and everything
+    either side stays paired. Only blocks matched one to one are kept, so a row paired
+    with nothing is dropped rather than shifted onto its neighbour.
+    """
+    ours = [row.code or "" for row in english]
+    theirs = [row.code or "" for row in other]
+    pairs: dict[int, Row] = {}
+    for block in SequenceMatcher(None, ours, theirs, autojunk=False).get_matching_blocks():
+        for step in range(block.size):
+            pairs[block.a + step] = other[block.b + step]
+    return pairs
+
+
+def aligned(per_language: dict[str, list[Row]]) -> tuple[list[dict[str, str]], dict[str, int]]:
+    """The languages joined, with English saying which template a row is in.
+
+    English attributes, because the heading that announces a template is typeset
+    differently in each language: Swedish finds templates English does not and misses
+    others, and in the 2024 consolidation German attributes 147 templates where English
+    attributes 165. Joining on (template, row code) per language therefore loses coverage
+    - 2027 rows against 2499 - which is why the other languages are not asked where a row
+    belongs, only what it says.
     """
     english = per_language["en"]
-    others = {language: found for language, found in per_language.items() if language != "en"}
-    if any(len(found) != len(english) for found in others.values()):
-        raise SystemExit(
-            "The language versions have different numbers of table rows, so position cannot "
-            "align them. Re-fetch with --refresh: this means one cache is of another "
-            "consolidation than the rest."
-        )
+    others = {language: paired(english, found) for language, found in per_language.items() if language != "en"}
     kept: list[dict[str, str]] = []
-    counts = {"rows": len(english), "coded": 0, "misaligned": 0, "untranslated": 0}
+    counts = {"rows": len(english), "coded": 0, "unpaired": 0, "untranslated": 0}
     seen: set[tuple[str, str]] = set()
     for row in english:
         if not (row.template and row.code and row.text):
             continue
         counts["coded"] += 1
-        theirs = {language: found[row.index] for language, found in others.items()}
-        if any(other.code != row.code for other in theirs.values()):
-            counts["misaligned"] += 1
+        theirs = {language: pairs.get(row.index) for language, pairs in others.items()}
+        if any(other is None or other.code != row.code for other in theirs.values()):
+            counts["unpaired"] += 1
             continue
-        if any(not other.text for other in theirs.values()):
+        if any(not other.text for other in theirs.values() if other):
             counts["untranslated"] += 1
             continue
         if (row.template, row.code) in seen:
@@ -210,9 +246,37 @@ def aligned(per_language: dict[str, list[Row]]) -> tuple[list[dict[str, str]], d
         seen.add((row.template, row.code))
         kept.append(
             {"template": row.template, "row": row.code, "en": row.text}
-            | {language: other.text or "" for language, other in theirs.items()}
+            | {language: (other.text or "") for language, other in theirs.items() if other}
         )
     return kept, counts
+
+
+def consolidations(celex: str) -> list[str]:
+    """Every consolidated version of an act, oldest last, asked of the Publications Office.
+
+    Not called by the build - CONSOLIDATIONS is what it uses, so that a new consolidation
+    appearing upstream cannot change published labels on its own. This is how that list is
+    refreshed, deliberately, when someone looks.
+    """
+    query = (
+        "PREFIX cdm: <http://publications.europa.eu/ontology/cdm#> "
+        "SELECT ?celex WHERE { ?w cdm:resource_legal_id_celex ?celex . "
+        f"FILTER(STRSTARTS(STR(?celex), '0{celex[1:]}')) }} ORDER BY ?celex"
+    )
+    response = httpx.get(
+        SPARQL,
+        params={"query": query, "format": "application/sparql-results+json"},
+        follow_redirects=True,
+        timeout=120.0,
+    )
+    response.raise_for_status()
+    return [row["celex"]["value"] for row in response.json()["results"]["bindings"]]
+
+
+def newest(celex: str) -> str:
+    """The consolidated version to read, or the act itself when it has none."""
+    found = CONSOLIDATIONS.get(celex)
+    return found[-1] if found else celex
 
 
 def fetch(celex: str, language: str, refresh: bool = False) -> str:
@@ -364,7 +428,18 @@ def report(labels: list[dict[str, str]], model: dict[tuple[str, str], str]) -> d
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--celex", default=CELEX, help=f"the regulation to read. Default {CELEX}.")
+    parser.add_argument(
+        "--celex",
+        default="",
+        help="the version of the regulation to read - a consolidated id such as "
+        f"02021R0451-20230711, or {CELEX} for the act as adopted. Default: the newest "
+        f"consolidation of {CELEX}, which is {newest(CELEX)}.",
+    )
+    parser.add_argument(
+        "--versions",
+        action="store_true",
+        help="list the consolidated versions known for the regulation and stop.",
+    )
     parser.add_argument(
         "--languages",
         default="en,sv,de",
@@ -389,6 +464,12 @@ def main() -> None:
     parser.add_argument("--disagreements", type=int, default=10, help="how many to print with --report")
     args = parser.parse_args()
 
+    if args.versions:
+        for version in CONSOLIDATIONS.get(args.celex or CELEX, []):
+            print(version)
+        return
+    args.celex = args.celex or newest(CELEX)
+
     wanted = [language.strip() for language in args.languages.split(",") if language.strip()]
     unknown = [language for language in wanted if language not in LANGUAGES]
     if unknown:
@@ -404,7 +485,7 @@ def main() -> None:
     labels, counts = aligned(per_language)
     print(
         f"English rows with a template, a code and a label: {counts['coded']}\n"
-        f"  dropped, the code differs across languages at that position: {counts['misaligned']}\n"
+        f"  dropped, no row with that code lines up in every language: {counts['unpaired']}\n"
         f"  dropped, one language has no text there: {counts['untranslated']}\n"
         f"aligned across {', '.join(wanted)}: {len(labels)} distinct coordinates"
     )
@@ -421,7 +502,8 @@ def main() -> None:
 
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        columns = ["template", "row", *wanted] + (["from"] if args.variants else [])
+        labels = [row | {"celex": args.celex} for row in labels]
+        columns = ["template", "row", *wanted, "celex"] + (["from"] if args.variants else [])
         with args.out.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore")
             writer.writeheader()

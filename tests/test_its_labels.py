@@ -52,9 +52,10 @@ def test_a_numbered_section_is_not_a_template_heading():
     assert its.rows("<p>1.2. C 01.00 - OWN FUNDS</p><table><tr><td>x</td></tr></table>")[0].template is None
 
 
-def test_the_languages_are_joined_by_position():
-    """Not by (template, row): the heading is typeset differently per language, so each
-    language disagrees about which rows belong where and the join loses two thirds."""
+def test_the_languages_are_joined_without_asking_them_where_a_row_belongs():
+    """English attributes; the others only say what a row reads. Joining on (template,
+    row) per language instead loses coverage - 2027 rows against 2499 - because the
+    heading that announces a template is typeset differently in each one."""
     labels, counts = its.aligned({"en": its.rows(TEMPLATE), "sv": its.rows(SWEDISH)})
     assert labels == [
         {"template": "C_01.00", "row": "0010", "en": "OWN FUNDS", "sv": "KAPITALBAS"},
@@ -66,27 +67,41 @@ def test_the_languages_are_joined_by_position():
             "sv": "TOTALT RISKVÄGT EXPONERINGSBELOPP",
         },
     ]
-    assert counts["misaligned"] == 0
+    assert counts["unpaired"] == 0
 
 
-def test_a_position_whose_code_differs_is_dropped_not_guessed():
+def test_two_extra_rows_in_one_language_do_not_refuse_the_document():
+    """The 2021 text had the same 13 838 table rows in every language; the 2024
+    consolidation does not - German has two the others lack - and position-for-position
+    refused the whole document over them. A sequence match absorbs them as an insertion."""
+    padded = SWEDISH.replace(
+        "<table><tr><td><p>TOTALT RISKVÄGT EXPONERINGSBELOPP</p></td><td><p>0010</p></td></tr></table>",
+        "<table><tr><td><p>en rubrikrad</p></td></tr>"
+        "<tr><td><p>TOTALT RISKVÄGT EXPONERINGSBELOPP</p></td><td><p>0010</p></td></tr></table>",
+    )
+    labels, counts = its.aligned({"en": its.rows(TEMPLATE), "sv": its.rows(padded)})
+    assert counts["unpaired"] == 0
+    assert [row["row"] for row in labels] == ["0010", "0015", "0010"]
+    assert labels[-1]["sv"] == "TOTALT RISKVÄGT EXPONERINGSBELOPP"
+
+
+def test_a_row_that_pairs_with_nothing_is_dropped_not_shifted():
     """Two of 7 768 rows are out of step in the real document. A label hung on the wrong
     row is worse than a missing one, because nothing downstream can tell."""
     shifted = SWEDISH.replace("<p>0015</p>", "<p>0017</p>")
     labels, counts = its.aligned({"en": its.rows(TEMPLATE), "sv": its.rows(shifted)})
-    assert counts["misaligned"] == 1
+    assert counts["unpaired"] == 1
     assert all(row["row"] != "0015" for row in labels)
 
 
-def test_languages_of_different_lengths_are_refused():
-    """They can only be from different consolidations of the regulation, and aligning
-    them by position would silently pair unrelated rows."""
-    try:
-        its.aligned({"en": its.rows(TEMPLATE), "sv": its.rows(SWEDISH + "<table><tr><td>x</td></tr></table>")})
-    except SystemExit as refused:
-        assert "different numbers of table rows" in str(refused)
-    else:
-        raise AssertionError("mismatched documents must be refused")
+def test_the_consolidations_are_listed_newest_last():
+    """`newest` picks what the build reads. The bare CELEX is the act as adopted - the
+    2021 text, five years behind the releases it is matched against - and asking for it
+    by accident is how 2024's wording went missing."""
+    found = its.CONSOLIDATIONS[its.CELEX]
+    assert found == sorted(found), "oldest first, so the last is the newest"
+    assert its.newest(its.CELEX) == found[-1]
+    assert its.newest("32099R9999") == "32099R9999", "an act with no consolidation is itself"
 
 
 def test_comparing_labels_looks_past_numbering_and_dashes():
