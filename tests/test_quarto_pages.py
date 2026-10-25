@@ -6,6 +6,7 @@ like a Quarto problem rather than a data one.
 """
 
 import json
+from pathlib import Path
 
 import _dpm as dpm
 import pages
@@ -121,3 +122,13 @@ def test_a_reworded_row_keeps_every_wording_in_order():
     )
     assert [row["celex"] for row in rows] == sorted(row["celex"] for row in rows)
     assert rows[0]["en"] != rows[1]["en"]
+
+
+def test_the_execute_daemon_is_off():
+    """A kernel keeps the environment it was started with. With the daemon on, rendering
+    4.3 and then 4.4 gave the second render the first one's DPM2_DB, so every page under
+    /templates/4.4/ was built from the 4.3 database while saying 4.4 - and the two
+    directories differed only in the switcher, which is the one thing that made it look
+    right. The daemon is per file, so it bought nothing across a project either."""
+    config = (Path(pages.__file__).parent / "_quarto.yml").read_text(encoding="utf-8")
+    assert "daemon: false" in config, "rendering two releases needs two environments"

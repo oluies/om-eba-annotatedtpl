@@ -46,9 +46,12 @@ execute:
   echo: false
   warning: false
   freeze: false
-  # Asked for, and it does not do what the name suggests here: the daemon keeps a kernel
-  # alive between renders of the SAME file, so a project of 157 pages still starts 157
-  # kernels and the log says so. Left on because it makes re-rendering one page while
-  # editing it quick, which is the case it is for. The cost of a framework is kernel
-  # startup, about 1.5s a page, and that is why this is a manual workflow.
-  daemon: true
+  # Off, and it has to be. The daemon keeps a kernel alive between renders, and a kernel
+  # keeps the environment it was started with - so rendering 4.3 and then 4.4 gave the
+  # second render the first one's DPM2_DB, and every page under /templates/4.4/ was built
+  # from the 4.3 database while saying 4.4. The pages differed only in the switcher.
+  #
+  # It bought nothing here anyway: the daemon is per file, so a project of 382 pages
+  # starts 382 kernels either way. The cost of a framework is kernel startup, about 1.5s
+  # a page, which is why this is a manual workflow.
+  daemon: false
