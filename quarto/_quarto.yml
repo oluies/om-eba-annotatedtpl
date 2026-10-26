@@ -1,3 +1,8 @@
+# A website project still, because that is what gives `{{< include >}}`, the per-page
+# front matter and the gfm writer. What it no longer is, is published: the HTML it
+# produces is a local preview, and what leaves this directory is _md/, which goes into
+# OpenMetadata. The pages a reader sees are built by obs/ with Observable Framework,
+# where a release selector can actually re-ask the question.
 project:
   type: website
   output-dir: _site

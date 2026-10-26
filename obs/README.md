@@ -1,0 +1,49 @@
+# The template pages
+
+One page per reporting template, built with [Observable Framework](https://observablehq.com/framework).
+
+```bash
+npm ci
+DPM2_DB=../source/dpm2/dpm2_4_4.duckdb OBS_FRAMEWORKS="COREP FINREP" ./build.sh
+```
+
+## Why this and not a rendered document
+
+The pages were Quarto documents, and the thing they could not do is the thing a reader
+wants: **choose a release and have the page answer under it**. Quarto renders once, at
+build, so a selector would mean carrying three releases' cells, rules and history in one
+page — and its table of contents would still describe one of them.
+
+Here the queries run in the reader's browser against the parquet the publish already
+writes, so a different release is a different URL the page asks for. The same mechanism
+gives the other thing a document could not: all 808 cells of a template, searchable, with
+rows rendered as you scroll. The Quarto page showed twelve and pointed at a CSV.
+
+It is also faster to build, for a principled reason rather than a lucky one: nothing is
+computed at build, so there is no kernel per page. 154 FINREP pages take 17 seconds where
+rendering them as documents took twenty minutes.
+
+## How it fits together
+
+- `src/t/[code].md` — **one source file for every template page**. `dynamicPaths` in
+  `observablehq.config.js` says which templates exist, so adding a framework adds pages
+  and a withdrawn template stops having one, without a file per template to maintain.
+- `src/data/_catalogue.py` — which templates exist, and their names, from the DPM. Run
+  through `catalogue.json.sh` because Observable runs a `.py` loader with whatever
+  `python3` is on PATH, and that one has no duckdb.
+- `build.sh` — writes the catalogue, then builds. Two steps because `dynamicPaths` is read
+  when the config loads, which is before any data loader has run.
+- The queries live in `quarto/_dpm.py`, shared rather than written twice. That is a name
+  to fix, not a second copy to make.
+
+## Two things that will bite
+
+**Verify in Chrome, not Safari.** Safari 27 renders an Observable page with every cell
+blank and *no error anywhere* — a pristine three-line Framework project does the same, so
+it is not this code. It looks exactly like broken JavaScript. Chrome renders it correctly.
+
+**Do not attach the partitioned parquet as files.** Our layout names every partition
+`data_0.parquet`, and Observable's attachment handling collides on the basename: `cells`
+came back as the three columns it shares with `cell_members`, with a binder error naming a
+column that is plainly in the file. The pages read URLs instead, which has no such naming
+— and which is what makes the release selector possible at all.

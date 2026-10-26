@@ -20,13 +20,13 @@ on:
         description: "Also render a page per template of these frameworks, space separated, under /templates/. Empty skips it."
         required: false
         default: "COREP FINREP"
-      template_releases:
-        description: "Which releases the template pages are generated from, space separated. Each gets its own directory and the pages link between them."
+      templates_from:
+        description: "Which release's DPM the template catalogue is read from. The pages themselves offer every published release."
         required: false
-        # Two, because a release switcher with one entry is a label. 4.3 is what is being
-        # reported and 4.4 is what will be; each page is then honest about one of them all
-        # the way down rather than offering a choice Quarto cannot honour.
-        default: "4.3 4.4"
+        # One release, and only to decide which templates exist. Which release a page
+        # *answers* under is the reader's choice now - the page queries the parquet for
+        # whichever one they pick - so this no longer fixes what a page says.
+        default: "4.4"
       deploy:
         description: "Publish to Pages. Unticked builds the artefact and stops."
         type: boolean
@@ -55,9 +55,11 @@ jobs:
       # engine needs a kernel. `uv sync` alone leaves that group out, which is why it is
       # a group and not a dev dependency.
       - run: uv sync --locked --group docs
-      - uses: quarto-dev/quarto-actions/setup@v2
+      - uses: actions/setup-node@v6
         with:
-          version: 1.10.19
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: obs/package-lock.json
 
       # mdbtools reads the Access file the EBA ships; the download is ~200 MB per release
       # and the export takes minutes, which is why this is not part of CI.
@@ -92,26 +94,18 @@ jobs:
       - name: Render a page per template
         if: ${{ inputs.framework != '' }}
         run: |
-          for release in ${{ inputs.template_releases }}; do
-            echo "::group::templates for DPM $release"
-            tag=$(echo "$release" | tr . _)
-            db="source/dpm2/dpm2_$tag.duckdb"
-            [ -f "$db" ] || { echo "No $db - is $release in the releases list?"; exit 1; }
-            # Its own directory, and every page links to the same template under the
-            # others. RELEASES is quoted nowhere on purpose: it is a word list.
-            RELEASE="$release" RELEASES="${{ inputs.template_releases }}" \
-              DPM2_DB="$PWD/$db" quarto/render.sh --framework ${{ inputs.framework }}
-            echo "::endgroup::"
-          done
+          # Observable builds every template page from one source file, and the queries
+          # run in the reader's browser rather than at build - so this is seconds for
+          # hundreds of pages, where rendering them as documents was twenty minutes. The
+          # release selector works for the same reason: a different release is a
+          # different URL the page asks for, not a different build.
+          tag=$(echo "${{ inputs.templates_from }}" | tr . _)
+          db="source/dpm2/dpm2_$tag.duckdb"
+          [ -f "$db" ] || { echo "No $db - is ${{ inputs.templates_from }} in the releases list?"; exit 1; }
+          cd obs && npm ci && cd ..
+          DPM2_DB="$PWD/$db" OBS_FRAMEWORKS="${{ inputs.framework }}" obs/build.sh
           mkdir -p web/public/templates
-          cp -r quarto/_site/. web/public/templates/
-          # /templates/ itself holds only the release directories now, so it needs a way
-          # in. A redirect rather than a copy of one release's index: two indexes that
-          # drift apart is worse than one hop.
-          first=$(echo "${{ inputs.template_releases }}" | awk '{print $1}')
-          printf '<!doctype html><meta charset=utf-8><title>EBA DPM, by template</title>%s\n' \
-            "<meta http-equiv=refresh content=\"0; url=$first/\"><a href=\"$first/\">DPM $first</a>" \
-            > web/public/templates/index.html
+          cp -r obs/dist/. web/public/templates/
           echo "$(find web/public/templates -name '*.html' | wc -l) template pages"
 
       - uses: VirtusLab/scala-cli-setup@v1.18.0

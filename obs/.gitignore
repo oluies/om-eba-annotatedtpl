@@ -1,0 +1,6 @@
+# Observable Framework's own output and caches, and the catalogue the build writes.
+dist/
+node_modules/
+src/.observablehq/
+src/data/catalogue.json
+src/data/releases.json

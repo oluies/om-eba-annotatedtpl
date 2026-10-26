@@ -1,0 +1,15 @@
+import {templates} from "./src/data/known.js";
+
+export default {
+  title: "EBA DPM, by template",
+  toc: true,
+  search: true,
+  // One source file for every template page. Adding a framework to the publish adds
+  // pages without touching this, and a template the EBA withdraws stops having one.
+  dynamicPaths: templates().map(({code}) => `/t/${code}`),
+  pages: [{name: "What this is", path: "/"}],
+  footer: `Derived from the EBA DPM 2.0 database. Reproduction of EBA material is
+    authorised provided the source is acknowledged
+    (<a href="https://www.eba.europa.eu/legal-notice">eba.europa.eu/legal-notice</a>).
+    Not published by the EBA and not endorsed by it.`,
+};

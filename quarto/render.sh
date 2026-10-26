@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Render one page per template, twice: HTML for the site, GFM for the catalogue.
+# Render one page per template as GitHub-flavoured markdown for OpenMetadata, and as
+# HTML to read it locally before uploading.
+#
+# The HTML is no longer published: obs/ builds the pages a reader sees, because a
+# document rendered at build cannot offer a release selector and this one has to.
 #
 # The same source both times, which is the thing this spike exists to find out - whether
 # one source can serve a public site and an OpenMetadata article without a second

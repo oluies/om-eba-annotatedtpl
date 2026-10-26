@@ -26,7 +26,8 @@ queried in the browser with DuckDB-WASM.
 | `env.sh` | `source env.sh` reads `.env`, sets the two DuckDB stores and prints every variable the pack reads, with secrets counted rather than shown | A tool reads the wrong store, or a datapoint id will not resolve |
 | `dpm_lookup.py` | Ten lookups over the whole DPM 2.0 database: a template, a cell, a reported datapoint id, a report's column header, a validation code, every rule reaching a template, what a template breaks down by, the cells one dimension member covers, which rows add up to which, and what has happened to a datapoint or a coordinate across releases | A warehouse table is COREP, FINREP or anything but PAY and DORA, you need the codes behind a business aggregate, or you are reading a report or a validation outcome |
 | `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file, as a CLI and as the `check_report` tool | You want to know whether a report adds up before you send it, or want an agent to check its own arithmetic |
-| `web/` | A query page in Scala.js over that tree: pick a question, fill it in, see the answer and the SQL — published at [oluies.github.io/om-eba-annotatedtpl](https://oluies.github.io/om-eba-annotatedtpl/) | You want the model without installing anything |
+| `web/` | A query page in Scala.js over that tree: pick a question, fill it in, see the answer and the SQL, with a small model that turns a question into one of eleven — published at [oluies.github.io/om-eba-annotatedtpl](https://oluies.github.io/om-eba-annotatedtpl/) | You want the model without installing anything |
+| `obs/` | A page per template in Observable Framework: every cell searchable, the release a control rather than a build | You are reading about one template |
 | `source/gen_wasm_data.py` | Writes the model as partitioned parquet a browser can query with DuckDB-WASM | You are building a web page over the DPM |
 | `source/score_translation.py` | Scores a local translation model against the Official Journal's own wording, since we hold it | Someone proposes machine-translating the labels |
 | `source/fetch_its_labels.py` | The official Swedish and German row labels, from the Official Journal: the DPM is English only, but the templates are an annex to an Implementing Regulation and that is published in all 24 languages | You want a label in a language the model does not carry |
@@ -506,12 +507,17 @@ every language, the 2024 consolidation does not, and two extra German rows refus
 whole document until the match absorbed them as an insertion. A row that pairs with
 nothing is dropped rather than shifted onto its neighbour.
 
-**Choosing a release, and not choosing a regulation version.** The published pages are
-rendered once per DPM release into a directory of their own — `/templates/4.3/C_01.00.html`
-— and every page links to the same template under the others. Quarto renders at build, so
-a page that offered a choice would have to carry three releases' cells, rules and history
-at once and would still have one table of contents; a page that says 4.3 is 4.3 all the
-way down.
+**Choosing a release.** The template pages are built with
+[Observable Framework](https://observablehq.com/framework) and query the parquet in the
+reader's browser, so the release is a control on the page: pick 4.3 and the cells, the
+dimensions, the rules and their severities are 4.3's answer, asked again. They were Quarto
+documents, which render once at build and so could only be a directory per release with a
+link between them. The same mechanism gives the other thing a document could not — every
+cell of a template, searchable, rendered as you scroll, where the document showed twelve
+rows and pointed at a CSV.
+
+Quarto still renders the same content as markdown, which is what goes into OpenMetadata.
+A catalogue article is static text; a public page should not be.
 
 The regulation's own versions are the opposite case and get no control. The four
 consolidations of 2021/451 are two distinct texts, and they differ in 58 of 4 273
