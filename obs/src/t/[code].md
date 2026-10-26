@@ -16,6 +16,18 @@ import {DuckDBClient} from "npm:@observablehq/duckdb";
 // the query page, and it is what makes the release selector work at all - a different
 // release is a different URL, not a different build.
 const db = await DuckDBClient.of();
+
+// A partition that holds nothing is not written at all - no FINREP template has a
+// reworded row, so there is no relabelled/framework=FINREP/ - and DuckDB answers a
+// missing file by throwing, which killed every cell on the page rather than the one
+// section. An absent table is an empty table here.
+const maybe = async (sql) => {
+  try {
+    return await db.query(sql);
+  } catch (problem) {
+    return {numRows: 0, toArray: () => [], get: () => undefined};
+  }
+};
 // Two levels up from /<site>/templates/t/<code> is /<site>/, where the publish puts the
 // parquet - and resolving against the document rather than against import.meta.url keeps
 // that true wherever the site is mounted, which on Pages is a project path and not a root.
@@ -45,7 +57,7 @@ const grid = await db.query(`
   FROM '${at(release, `cells/framework=${framework}/data_0.parquet`)}'
   WHERE table_code = '${code}' ORDER BY row_code, column_code`);
 
-const dimensions = await db.query(`
+const dimensions = await maybe(`
   SELECT dimension, count(DISTINCT member) AS members,
          string_agg(DISTINCT member, ', ' ORDER BY member) AS wording
   FROM '${at(release, `cell_members/framework=${framework}/data_0.parquet`)}'
@@ -55,24 +67,24 @@ const dimensions = await db.query(`
 // an Implementing Regulation and one is published in all 24 official languages. Not
 // release-scoped the way everything above is - a regulation has its own versions, and the
 // `celex` column says which text a row came from.
-const wording = await db.query(`
+const wording = await maybe(`
   SELECT row, en, sv, de, celex, "from"
   FROM '${base}its_labels.csv'
   WHERE template = '${code}' ORDER BY row`);
 
-const spelled = await db.query(`
+const spelled = await maybe(`
   SELECT row, en, sv, celex
   FROM '${base}its_instructions.csv'
   WHERE template = '${code}' ORDER BY row`);
 
-const reworded = await db.query(`
+const reworded = await maybe(`
   SELECT row, celex, en
   FROM '${base}its_label_changes.csv'
   WHERE template = '${code}' ORDER BY row, celex`);
 
 // What has changed is the one thing on this page that is not an answer under the chosen
 // release: it is a comparison across all of them, so the publish precomputes it.
-const drift = await db.query(`
+const drift = await maybe(`
   SELECT datapoints, moved, shared
   FROM '${at(release, `template_changes/framework=${framework}/data_0.parquet`)}'
   WHERE table_code = '${code}'`);
@@ -80,12 +92,12 @@ const drift = await db.query(`
 // Ordered by header and not by row code: a template can serve one code from two
 // headers, and reading them as one row makes a pair of unrelated labels look like a
 // rewording. The row is the header.
-const reworded_rows = await db.query(`
+const reworded_rows = await maybe(`
   SELECT row_code, from_release, to_release, label
   FROM '${at(release, `relabelled/framework=${framework}/data_0.parquet`)}'
   WHERE table_code = '${code}' ORDER BY row_code, header_id, start_release_id`);
 
-const checks = await db.query(`
+const checks = await maybe(`
   WITH here AS (SELECT DISTINCT operation_vid
                 FROM '${at(release, `rule_cells/framework=${framework}/data_0.parquet`)}'
                 WHERE table_code = '${code}')
@@ -161,9 +173,11 @@ display(reworded.numRows === 0 ? html`` : html`<h3>Rows the regulation has rewor
 
 ```js
 display(spelled.numRows === 0
-  ? html`<p><em>The instructions annex does not spell out ${code}'s rows in the text that
-      has been read. COREP's instructions head a template with its code; FINREP's own
-      annex is written differently again, and is not read yet.</em></p>`
+  ? html`<p><em>The instructions annex says nothing about ${code}'s rows in particular.
+      COREP's is a table of row code and prose and gives 1 040 of these; FINREP's Annex V
+      is narrative guidance naming an item by quoting its label, which attaches to a row
+      only 37 times. Most of its 708 paragraphs are about accounting treatment and belong
+      to no row.</em></p>`
   : html`<p>${spelled.numRows} rows have a meaning and an article given in the
       instructions annex — in Swedish too.</p>`);
 ```
