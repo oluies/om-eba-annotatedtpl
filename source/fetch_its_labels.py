@@ -46,6 +46,8 @@ import httpx
 
 HERE = Path(__file__).resolve().parent
 CACHE = HERE / "its"
+# The row wording, which the FINREP notes are matched against.
+REPO_LABELS = HERE / "its_labels.csv"
 
 # CELLAR speaks ISO 639-2/B three-letter codes, not the two-letter ones everything else
 # uses. `sv` is accepted and ignored; `swe` is honoured.
@@ -386,6 +388,124 @@ def worded_differently(celex: str, languages: list[str]) -> list[dict[str, str]]
     return changed
 
 
+# FINREP's instructions annex is not COREP's. COREP gives a two-column table of row code
+# and prose; Annex V gives numbered paragraphs of narrative guidance, and names the item
+# it is about by quoting its label rather than by its code:
+#
+#   1. 'Cash on hand' shall include holdings of national and foreign banknotes…
+#
+# So the key is the label, matched inside one template. The yield is small and that is a
+# property of the annex, not of this: 708 numbered paragraphs in Part 2, 246 quoting an
+# item at all, and 65 whose quoted term is a row of the template they sit under. The
+# other 643 are guidance about accounting treatment, which belongs to no row.
+FINREP_HEADING = re.compile(r"^(\d+(?:\.\d+)*)\.\s+(.+?)\s*\((\d+(?:\.\d+)*)\)$")
+NUMBERED_PARAGRAPH = re.compile(r"^(\d+)\.\s")
+QUOTED_ITEM = re.compile(r"[\u2018']([^\u2019']{4,90})[\u2019']")
+
+
+def paragraphs(html: str) -> list[tuple[str, str, str]]:
+    """Part 2's numbered paragraphs, each with the template number it sits under.
+
+    In document order, each with its own number and the template heading above it.
+
+    The numbers are not unique: they restart, so `1.` occurs many times and keying on it
+    pairs an English paragraph about cash on hand with a Swedish one about exposure
+    classes - which is the one thing this must not do, because the result reads as a
+    translation. They are aligned as a sequence instead, the way the row codes are.
+
+    Anchored on the heading shape and not on "PART 2: TEMPLATE RELATED INSTRUCTIONS",
+    which is English and found nothing in the other two. `1.1. Assets (1.1)` is
+    `1.1. Tillgångar (1.1)` in Swedish, and the number in the brackets is the same in
+    every language because a template number is not translated.
+    """
+    found: list[tuple[str, str, str]] = []
+    template = ""
+    for match in re.finditer(r"<p[^>]*>(.*?)</p>", html, re.S):
+        text = text_of(match.group(1))
+        heading = FINREP_HEADING.match(text)
+        if heading:
+            template = heading.group(3)
+            continue
+        own = NUMBERED_PARAGRAPH.match(text)
+        if template and own and len(text) > 40:
+            found.append((own.group(1), template, text))
+    return found
+
+
+def finrep_notes(
+    per_language: dict[str, str],
+    labels: dict[tuple[str, str], str],
+    numbers: dict[str, str] | None = None,
+) -> list[dict[str, str]]:
+    """Paragraphs of Annex V attached to the row they quote, in every language.
+
+    `labels` is the row wording already collected, keyed on (template, row) and normalised
+    - the match is an exact one inside a single template, because a near match here would
+    hang an official definition on the wrong row, which is worse than having none.
+    """
+    english = paragraphs(per_language["en"])
+    others = {}
+    for language, html in per_language.items():
+        if language == "en":
+            continue
+        theirs = paragraphs(html)
+        pairs: dict[int, str] = {}
+        matcher = SequenceMatcher(None, [n for n, _, _ in english], [n for n, _, _ in theirs], autojunk=False)
+        for block in matcher.get_matching_blocks():
+            for step in range(block.size):
+                pairs[block.a + step] = theirs[block.b + step][2]
+        others[language] = pairs
+    # Injectable so the matching can be tested without an annex index to parse.
+    numbers = numbers if numbers is not None else template_numbers(per_language["en"])
+    by_label: dict[str, dict[str, str]] = {}
+    for (template, row), text in labels.items():
+        by_label.setdefault(template, {}).setdefault(normal(text), row)
+
+    notes = []
+    seen: set[tuple[str, str]] = set()
+    for index, (_, number, text) in enumerate(english):
+        template = numbers.get(number)
+        if not template or template not in by_label:
+            continue
+        # A paragraph that pairs with nothing is dropped rather than carried with the
+        # English in its place, which would read as a translation and is not.
+        theirs = {language: pairs.get(index, "") for language, pairs in others.items()}
+        if any(not other for other in theirs.values()):
+            continue
+        for term in QUOTED_ITEM.findall(text):
+            row = by_label[template].get(normal(term))
+            if not row or (template, row) in seen:
+                continue
+            seen.add((template, row))
+            notes.append(
+                {"template": template, "row": row, "en": text}
+                | {language: other or "" for language, other in theirs.items()}
+            )
+            break
+    return notes
+
+
+def template_numbers(html: str) -> dict[str, str]:
+    """The annex index, as number to code: 1.1 is F 01.01."""
+    numbers: dict[str, str] = {}
+    annex = ""
+    for match in re.finditer(r"<p[^>]*>(.*?)</p>|<tr[^>]*>(.*?)</tr>", html, re.S):
+        paragraph, row = match.group(1), match.group(2)
+        if paragraph is not None:
+            text = text_of(paragraph)
+            if ANNEX.match(text):
+                annex = text.split()[1]
+            continue
+        if annex not in ("III", "IV"):
+            continue
+        cells = [cell for cell in (text_of(c) for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.S)) if cell]
+        code = next((cell for cell in cells if TEMPLATE_CODE.match(cell)), None)
+        number = next((cell for cell in cells if NUMBER.match(cell)), None)
+        if code and number:
+            numbers.setdefault(number, code.replace(" ", "_"))
+    return numbers
+
+
 def database_path() -> Path:
     """The DPM database, from the environment or where fetch_dpm2.py puts it."""
     database = Path(os.environ.get("DPM2_DB") or HERE / "dpm2" / "dpm2.duckdb")
@@ -526,7 +646,36 @@ def main() -> None:
             print(f"wrote {args.out}")
         return
 
-    read = instruction_rows if args.instructions else rows
+    if args.instructions:
+        # COREP's tables, then FINREP's narrative, into one file with a `shape` saying
+        # which it is - because they are not the same kind of thing and a reader of the
+        # file should not have to guess.
+        pages = {language: fetch(args.celex, language, args.refresh) for language in wanted}
+        per_language = {language: instruction_rows(html) for language, html in pages.items()}
+        from_tables, counts = aligned(per_language)
+        wording = {}
+        for row in csv.DictReader((REPO_LABELS.read_text(encoding="utf-8")).splitlines()):
+            wording[(row["template"], row["row"])] = row["en"]
+        notes = finrep_notes(pages, wording)
+        labels = [row | {"shape": "table"} for row in from_tables] + [row | {"shape": "note"} for row in notes]
+        print(
+            f"from COREP's instruction tables: {len(from_tables)}\nfrom FINREP's Annex V, quoting a row: {len(notes)}"
+        )
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            with args.out.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=["template", "row", *wanted, "celex", "shape"])
+                writer.writeheader()
+                writer.writerows(
+                    sorted(
+                        ({**row, "celex": args.celex} for row in labels),
+                        key=lambda row: (row["template"], row["row"]),
+                    )
+                )
+            print(f"wrote {args.out}")
+        return
+
+    read = rows
     per_language = {language: read(fetch(args.celex, language, args.refresh)) for language in wanted}
     for language, found in per_language.items():
         print(f"{language}: {len(found)} table rows, {sum(1 for row in found if row.code)} carrying a row code")

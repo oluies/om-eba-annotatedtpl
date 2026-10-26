@@ -6,7 +6,10 @@ each distinguish a case. What they are not is a sample of the real thing: for th
 made of it.
 """
 
+from pathlib import Path
+
 import fetch_its_labels as its
+import pytest
 
 TEMPLATE = """
 <p class="oj-ti-grseq-1">C 01.00 - OWN FUNDS (CA1)</p>
@@ -219,3 +222,63 @@ def test_instructions_are_numbered_over_the_same_stream_as_labels():
     """Both emit a Row per table row whether or not it carries anything, which is what
     lets the languages align by position in either mode."""
     assert len(its.instruction_rows(INSTRUCTIONS)) == len(its.rows(INSTRUCTIONS))
+
+
+ANNEX_V = """
+<p>1.1. Assets (1.1)</p>
+<p>1. ‘Cash on hand’ shall include holdings of national and foreign banknotes in circulation.</p>
+<p>2. ‘Other demand deposits’ shall include loans and advances that are demand deposits.</p>
+<p>2.1. Something else (2.1)</p>
+<p>1. A paragraph whose number repeats, about something entirely different from cash.</p>
+"""
+
+ANNEX_V_SV = """
+<p>1.1. Tillgångar (1.1)</p>
+<p>1. ‘Kassa’ ska omfatta innehav av svenska och utländska sedlar i omlopp.</p>
+<p>2. ‘Övriga avistainlåning’ ska omfatta lån och förskott som är avistainlåning.</p>
+<p>2.1. Något annat (2.1)</p>
+<p>1. Ett stycke vars nummer upprepas, om något helt annat än kassa.</p>
+"""
+
+
+def test_a_paragraph_number_repeats_so_it_cannot_be_the_key():
+    """`1.` occurs under every heading. Keying on it paired an English paragraph about
+    cash on hand with a Swedish one about exposure classes - a wrong translation
+    presented as a translation, which is the worst thing this can produce."""
+    numbers = [number for number, _, _ in its.paragraphs(ANNEX_V)]
+    assert numbers.count("1") > 1, "the fixture has to contain the repeat it is about"
+
+
+def test_the_paragraphs_align_in_order_not_by_number():
+    found = its.paragraphs(ANNEX_V)
+    swedish = its.paragraphs(ANNEX_V_SV)
+    assert [n for n, _, _ in found] == [n for n, _, _ in swedish]
+    assert "Kassa" in swedish[0][2] and "Cash on hand" in found[0][2]
+    assert "helt annat" in swedish[2][2], "the repeat pairs with the repeat, not with the first"
+
+
+def test_a_note_is_attached_to_the_row_it_quotes():
+    """The match is exact and inside one template: a near match would hang an official
+    definition on the wrong row, which is worse than having none."""
+    labels = {("F_01.01", "0020"): "Cash on hand", ("F_01.01", "0030"): "Other demand deposits"}
+    numbered = {"1.1": "F_01.01"}
+    notes = its.finrep_notes({"en": ANNEX_V, "sv": ANNEX_V_SV}, labels, numbered)
+    attached = {(note["template"], note["row"]) for note in notes}
+    assert attached == {("F_01.01", "0020"), ("F_01.01", "0030")}
+    for note in notes:
+        assert note["en"].split(".")[0] == note["sv"].split(".")[0], "the two are the same paragraph"
+
+
+def test_every_published_note_has_swedish_from_the_same_paragraph():
+    """The invariant the bug broke: a note's English and Swedish carry the same leading
+    number because they are one paragraph in two languages."""
+    import csv
+
+    here = Path(its.__file__).resolve().parent / "its_instructions.csv"
+    if not here.exists():
+        pytest.skip("the instructions file is written by --instructions")
+    with here.open(encoding="utf-8") as handle:
+        notes = [row for row in csv.DictReader(handle) if row.get("shape") == "note"]
+    assert notes, "the instructions file carries no FINREP notes"
+    for note in notes:
+        assert note["en"].split(".")[0] == note["sv"].split(".")[0] == note["de"].split(".")[0], note["row"]

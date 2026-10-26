@@ -2316,10 +2316,26 @@ language too:
 uv run source/fetch_its_labels.py --instructions --out source/its_instructions.csv
 ```
 
-1 040 rows across 51 templates, three languages. That is COREP: the instructions annex
-heads a template with its numbering *and* its code — `1.2. C 01.00 – OWN FUNDS (CA1)` —
-which is the shape this reads, and FINREP's own instructions annex is written differently
-again. The template pages show these definitions where they have them.
+1 040 rows across 51 templates, three languages — **and that is COREP**. Its instructions
+annex is a two-column table of row code and prose, under a heading that carries the
+template's code.
+
+**FINREP's Annex V is a different kind of document**, and the yield says so: 37 rows
+against COREP's 1 040. It is narrative guidance in numbered paragraphs, naming the item
+it is about by quoting its label rather than by a code —
+
+> 1. ‘Cash on hand’ shall include holdings of national and foreign banknotes in circulation.
+
+— so a note is attached by matching that quoted term, exactly, inside one template. Of
+708 numbered paragraphs, 246 quote an item at all and 37 survive both that match and the
+alignment across languages. The other 671 are guidance about accounting treatment, which
+belongs to no row. Each row says which it is in a `shape` column: `table` or `note`.
+
+The alignment is a sequence match and not a key, because the paragraph numbers restart
+under every heading. Keying on them paired an English paragraph about cash on hand with a
+Swedish one about exposure classes — a wrong translation presented as a translation,
+which is the one thing this must not produce. A test now pins that a note's three
+languages carry the same paragraph number.
 
 What this cannot give: dimension members, metrics and module names, which the DPM carries
 and no annex does. And a code is never translated - `F_18.00.a`, `r0010`, `dp152217`,
