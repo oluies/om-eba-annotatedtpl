@@ -164,7 +164,9 @@ Inputs.table(inSwedish, {
 ```
 
 ```js
-display(reworded.numRows === 0 ? html`` : html`<h3>Rows the regulation has reworded</h3>
+// An empty html template literal evaluates to null, and display(null) writes the word
+// "null" onto the page. Nothing is displayed by not calling display.
+if (reworded.numRows > 0) display(html`<h3>Rows the regulation has reworded</h3>
   <p>The datapoint did not change and neither did the cell. The sentence did.</p>
   ${Inputs.table(reworded, {columns: ["row", "celex", "en"], rows: 8})}`);
 ```

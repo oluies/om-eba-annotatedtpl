@@ -190,3 +190,26 @@ def test_the_tables_the_change_tests_name_exist():
         gen.lookup("not_a_table")
     for name in ("template_changes", "relabelled"):
         assert gen.lookup(name).name == name
+
+
+def test_the_page_never_displays_an_empty_template():
+    """An empty html template literal evaluates to null, and display(null) writes the
+    word "null" onto the page - which is how it appeared on C_09.01.b between the labels
+    and the instructions. Nothing is displayed by not calling display.
+
+    The needle is built rather than written, so this docstring does not match itself.
+    """
+    needle = "html" + "``"
+    assert needle not in page(), "an empty html template reaches display as null"
+
+
+def test_optional_sections_tolerate_a_missing_table():
+    """A partition that holds nothing is not written: no FINREP template has a reworded
+    row, so relabelled/framework=FINREP/ does not exist, and DuckDB answers a missing
+    file by throwing. Through db.query that killed every cell on every FINREP page."""
+    source = page()
+    assert "const maybe = async" in source, "the tolerant reader is gone"
+    optional = ["wording", "spelled", "reworded", "drift", "reworded_rows", "dimensions", "checks"]
+    for name in optional:
+        assert f"const {name} = await maybe(" in source, f"{name} reads without tolerating an absent table"
+    assert "const grid = await db.query(" in source, "the grid is not optional and should still throw"
