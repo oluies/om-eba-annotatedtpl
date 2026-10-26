@@ -102,6 +102,11 @@ jobs:
           tag=$(echo "${{ inputs.templates_from }}" | tr . _)
           db="source/dpm2/dpm2_$tag.duckdb"
           [ -f "$db" ] || { echo "No $db - is ${{ inputs.templates_from }} in the releases list?"; exit 1; }
+          # The regulation's own wording, which the pages read by URL like everything
+          # else. Not release-scoped: a regulation has its own versions, and each row
+          # carries the celex it came from.
+          cp source/its_labels.csv source/its_instructions.csv source/its_label_changes.csv \
+            web/public/data/
           cd obs && npm ci && cd ..
           DPM2_DB="$PWD/$db" OBS_FRAMEWORKS="${{ inputs.framework }}" obs/build.sh
           mkdir -p web/public/templates

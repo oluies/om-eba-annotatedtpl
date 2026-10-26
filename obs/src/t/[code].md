@@ -51,6 +51,25 @@ const dimensions = await db.query(`
   FROM '${at(release, `cell_members/framework=${framework}/data_0.parquet`)}'
   WHERE table_code = '${code}' GROUP BY dimension ORDER BY dimension`);
 
+// The regulation's own wording, which is not a translation: the templates are an annex to
+// an Implementing Regulation and one is published in all 24 official languages. Not
+// release-scoped the way everything above is - a regulation has its own versions, and the
+// `celex` column says which text a row came from.
+const wording = await db.query(`
+  SELECT row, en, sv, de, celex, "from"
+  FROM '${base}its_labels.csv'
+  WHERE template = '${code}' ORDER BY row`);
+
+const spelled = await db.query(`
+  SELECT row, en, sv, celex
+  FROM '${base}its_instructions.csv'
+  WHERE template = '${code}' ORDER BY row`);
+
+const reworded = await db.query(`
+  SELECT row, celex, en
+  FROM '${base}its_label_changes.csv'
+  WHERE template = '${code}' ORDER BY row, celex`);
+
 const checks = await db.query(`
   WITH here AS (SELECT DISTINCT operation_vid
                 FROM '${at(release, `rule_cells/framework=${framework}/data_0.parquet`)}'
@@ -88,6 +107,62 @@ Inputs.table(found, {
   columns: ["row_code", "row_label", "column_code", "column_label", "cell", "datapoint"],
   header: {row_code: "row", row_label: "row label", column_code: "col", column_label: "column label"},
   rows: 16,
+})
+```
+
+## The same rows in Swedish and German
+
+```js
+display(wording.numRows === 0
+  ? html`<p><em>No published wording for ${code}. The regulation that carries these
+      translations is the supervisory reporting ITS; DORA, MiCA and remuneration are
+      separate regulations, not yet read.</em></p>`
+  : html`<p>Not a translation. ${wording.numRows} of this template's rows have a wording
+      published in every official language, from
+      <a href="https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:${wording.get(0).celex}">${wording.get(0).celex}</a>,
+      the consolidated regulation. <code>from</code> says <code>stem</code> where the
+      Journal printed that grid once, under the template this one varies.</p>`);
+```
+
+```js
+const inSwedish = view(Inputs.search(wording, {placeholder: "a row, or a word in any of the three…"}));
+```
+
+```js
+Inputs.table(inSwedish, {
+  columns: ["row", "en", "sv", "de", "from"],
+  header: {en: "English", sv: "Svenska", de: "Deutsch"},
+  rows: 14,
+})
+```
+
+```js
+display(reworded.numRows === 0 ? html`` : html`<h3>Rows the regulation has reworded</h3>
+  <p>The datapoint did not change and neither did the cell. The sentence did.</p>
+  ${Inputs.table(reworded, {columns: ["row", "celex", "en"], rows: 8})}`);
+```
+
+## What the regulation says these rows are
+
+```js
+display(spelled.numRows === 0
+  ? html`<p><em>The instructions annex does not spell out ${code}'s rows in the text that
+      has been read. COREP's instructions head a template with its code; FINREP's own
+      annex is written differently again, and is not read yet.</em></p>`
+  : html`<p>${spelled.numRows} rows have a meaning and an article given in the
+      instructions annex — in Swedish too.</p>`);
+```
+
+```js
+const defined = view(Inputs.search(spelled, {placeholder: "a row, an article, a word…"}));
+```
+
+```js
+Inputs.table(defined, {
+  columns: ["row", "en", "sv"],
+  header: {en: "What the regulation says", sv: "Vad förordningen säger"},
+  rows: 8,
+  width: {en: 420, sv: 420},
 })
 ```
 

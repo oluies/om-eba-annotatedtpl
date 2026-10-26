@@ -38,3 +38,6 @@ quarto/.quarto/
 # The Official Journal's own XHTML, ~21 MB a language; source/fetch_its_labels.py
 # fetches it from the Publications Office and caches it here.
 source/its/
+
+# The regulation's wording, copied into the published tree by the workflow.
+web/public/data/*.csv

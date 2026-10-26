@@ -36,6 +36,23 @@ rendering them as documents took twenty minutes.
 - The queries live in `quarto/_dpm.py`, shared rather than written twice. That is a name
   to fix, not a second copy to make.
 
+## What a page carries
+
+The grid, what it breaks down by, and what checks it — each from the release the reader
+picked. Then three things the DPM does not have, read by URL like the rest:
+
+- **the same rows in Swedish and German**, from `its_labels.csv`. Not a translation: the
+  templates are an annex to an Implementing Regulation and one is published in all 24
+  official languages. A `from` of `stem` means the Journal printed that grid once, under
+  the template this one varies.
+- **rows the regulation has reworded**, where its own consolidations differ. Sixteen
+  templates of 165 have any, so most pages print nothing here — which is the signal.
+- **what the regulation says a row is**, from the instructions annex, with the article
+  that requires it, in Swedish too.
+
+These are not release-scoped the way the rest of the page is: a regulation has its own
+versions, and each row carries the `celex` it came from.
+
 ## Two things that will bite
 
 **Verify in Chrome, not Safari.** Safari 27 renders an Observable page with every cell
