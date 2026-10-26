@@ -247,3 +247,30 @@ def test_the_page_is_not_guarded_as_openmetadata_markdown():
     scope = guard[guard.index("_NOT_IMPORTED_FROM") :].split("\n\n")[0]
     assert '"obs"' in scope, "the guard globs the Observable page again"
     assert "+" in page(), "the page no longer needs the exemption, so take it back out"
+
+
+@needs_dpm2
+def test_the_catalogue_leaves_out_a_template_no_published_release_reports():
+    """The index listed 349 templates and 37 of them answered nothing: C_02.00, C_16.00.a,
+    C_91 to C_96 - withdrawn before the oldest release the selector offers, so every
+    release a reader can pick says "has no reportable cells". The page itself is honest
+    about it; the link should not have been there.
+    """
+    import dpm_pages as dpm
+
+    with dpm.connect(str(DPM2_DB)) as con:
+        every = {row["table_code"] for row in dpm.templates_of(con, "COREP")}
+        published = {row["table_code"] for row in dpm.templates_of(con, "COREP", ["4.2.1", "4.3", "4.4"])}
+    assert published < every, "the release window excluded nothing, so it is not being applied"
+    assert "C_91.01" in every - published, "C_91.01 was withdrawn long before 4.2.1"
+    assert "C_01.00" in published, "C_01.00 is in every release and has to survive the window"
+
+
+def test_the_publish_tells_the_catalogue_which_releases_it_writes():
+    """Two files have to agree: the loader reads OBS_RELEASES, and the workflow is the only
+    thing that knows what is being published."""
+    loader = (OBS / "src" / "data" / "_catalogue.py").read_text(encoding="utf-8")
+    workflow = (REPO / ".github" / "workflows" / "wasm-data.yml").read_text(encoding="utf-8")
+    assert "OBS_RELEASES" in loader, "the loader no longer reads the window"
+    assert "OBS_RELEASES=" in workflow, "the publish no longer passes it"
+    assert "inputs.releases" in workflow.split("OBS_RELEASES=")[1][:120], "it passes something else"

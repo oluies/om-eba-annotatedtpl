@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Build the template pages.
 #
-#   OBS_FRAMEWORKS="COREP FINREP" DPM2_DB=../source/dpm2/dpm2_4_4.duckdb ./build.sh
+#   OBS_FRAMEWORKS="COREP FINREP" OBS_RELEASES="4.2.1 4.3 4.4" \
+#     DPM2_DB=../source/dpm2/dpm2_4_4.duckdb ./build.sh
+#
+# OBS_RELEASES is which releases are being published: a template that is in none of them
+# gets no page, because the selector could not get an answer for it under any of them.
 #
 # Two steps and not one, because observablehq.config.js has to know which templates exist
 # before the build starts - dynamicPaths is read when the config is loaded, and a data

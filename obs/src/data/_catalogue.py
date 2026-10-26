@@ -20,9 +20,15 @@ import dpm_pages as dpm  # noqa: E402
 
 FRAMEWORKS = os.environ.get("OBS_FRAMEWORKS", "COREP FINREP").split()
 
+# Which releases the publish writes. A template withdrawn before the oldest of them has a
+# page a reader cannot get an answer out of under any release the selector offers, so it
+# is not listed. Empty means every release the database carries, which is what a local
+# build against one database wants.
+RELEASES = os.environ.get("OBS_RELEASES", "").split()
+
 con = dpm.connect(os.environ.get("DPM2_DB") or None)
 seen: dict[str, str] = {}
 for framework in FRAMEWORKS:
-    for row in dpm.templates_of(con, framework):
+    for row in dpm.templates_of(con, framework, RELEASES):
         seen.setdefault(row["table_code"], row["name"])
 json.dump([{"code": code, "name": name} for code, name in sorted(seen.items())], sys.stdout)

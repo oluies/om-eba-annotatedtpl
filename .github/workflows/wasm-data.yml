@@ -108,7 +108,12 @@ jobs:
           cp source/its_labels.csv source/its_instructions.csv source/its_label_changes.csv \
             web/public/data/
           cd obs && npm ci && cd ..
-          DPM2_DB="$PWD/$db" OBS_FRAMEWORKS="${{ inputs.framework }}" obs/build.sh
+          # The releases as well as the frameworks: a template withdrawn before the
+          # oldest published release would otherwise be listed with a page that answers
+          # nothing under any release the selector offers - 37 of them, C_91 to C_96
+          # among others.
+          DPM2_DB="$PWD/$db" OBS_FRAMEWORKS="${{ inputs.framework }}" \
+            OBS_RELEASES="${{ inputs.releases }} ${{ inputs.drafts }}" obs/build.sh
           mkdir -p web/public/templates
           cp -r obs/dist/. web/public/templates/
           echo "$(find web/public/templates -name '*.html' | wc -l) template pages"

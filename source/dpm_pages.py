@@ -98,6 +98,9 @@ def frameworks(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
     return rows(con, FRAMEWORKS)
 
 
+# The releases arrive as one space-separated string so that the parameter count is fixed
+# whatever is published - the same reason the generators pass their release twice rather
+# than building an IN list.
 TEMPLATES_OF = """
 SELECT   tv.Code AS table_code,
          -- The name as the version in force has it, not max() over every version: the
@@ -113,19 +116,36 @@ JOIN     Framework f ON f.FrameworkID = m.FrameworkID
 WHERE    f.Code = ?
      AND EXISTS (SELECT 1 FROM TableVersionCell c
                  WHERE c.TableVID = tv.TableVID AND c.IsExcluded = 0)
+     AND (
+         ? IS NULL
+         OR EXISTS (
+             SELECT 1 FROM Release asked
+             WHERE list_contains(string_split(?, ' '), asked.Code)
+               AND mv.StartReleaseID <= asked.ReleaseID
+               AND (mv.EndReleaseID IS NULL OR mv.EndReleaseID > asked.ReleaseID)
+         )
+     )
 GROUP BY tv.Code
 ORDER BY tv.Code
 """
 
 
-def templates_of(con: duckdb.DuckDBPyConnection, framework: str) -> list[dict[str, Any]]:
+def templates_of(
+    con: duckdb.DuckDBPyConnection, framework: str, releases: list[str] | None = None
+) -> list[dict[str, Any]]:
     """The templates of one framework that have reportable cells.
 
     The EXISTS is not tidiness: a template version with every cell excluded is a layout
     the EBA publishes and nobody files, and a page for it would say 0 cells, 0 dimensions
     and nothing else.
+
+    `releases` is which releases are being published, and with it a template is listed
+    only if it is in force in one of them. Without it, every release the database carries
+    counts - which listed 37 withdrawn templates, C_91 to C_96 among them, each as a page
+    saying it has no reportable cells in any release the reader can choose.
     """
-    return rows(con, TEMPLATES_OF, framework)
+    window = " ".join(releases) if releases else None
+    return rows(con, TEMPLATES_OF, framework, window, window)
 
 
 VERSIONS = """
