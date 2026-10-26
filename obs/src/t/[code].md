@@ -70,6 +70,18 @@ const reworded = await db.query(`
   FROM '${base}its_label_changes.csv'
   WHERE template = '${code}' ORDER BY row, celex`);
 
+// What has changed is the one thing on this page that is not an answer under the chosen
+// release: it is a comparison across all of them, so the publish precomputes it.
+const drift = await db.query(`
+  SELECT datapoints, moved, shared
+  FROM '${at(release, `template_changes/framework=${framework}/data_0.parquet`)}'
+  WHERE table_code = '${code}'`);
+
+const reworded_rows = await db.query(`
+  SELECT row_code, from_release, to_release, label
+  FROM '${at(release, `relabelled/framework=${framework}/data_0.parquet`)}'
+  WHERE table_code = '${code}' ORDER BY row_code, start_release_id`);
+
 const checks = await db.query(`
   WITH here AS (SELECT DISTINCT operation_vid
                 FROM '${at(release, `rule_cells/framework=${framework}/data_0.parquet`)}'
@@ -173,6 +185,34 @@ near miss matches nothing rather than erroring, and a trailing space is a real d
 
 ```js
 Inputs.table(dimensions, {columns: ["dimension", "members", "wording"], rows: 8})
+```
+
+## What has changed
+
+The EBA ships no account of this — the DPM's `ChangeLog` table is present and empty in
+every release — so it is read off the version rows.
+
+```js
+display(drift.numRows === 0
+  ? html`<p><em>No comparison for ${code} under ${framework}.</em></p>`
+  : html`<p>Of the ${drift.get(0).datapoints.toLocaleString("sv")} datapoints this template
+      reports, <strong>${drift.get(0).moved.toLocaleString("sv")} have sat at another row or
+      column</strong> at some point. The datapoint is the thing that persisted; the
+      coordinate is where it happened to be that release — which is why a time series keyed
+      on the coordinate is keyed on an address. A further
+      ${drift.get(0).shared.toLocaleString("sv")} are reported by more than one template,
+      which is the layout and not a change: the variants of a template share datapoints.</p>`);
+```
+
+```js
+display(reworded_rows.numRows === 0
+  ? html`<p>No row of this template has been reworded since it was introduced.</p>`
+  : html`<h3>Rows the EBA has reworded</h3>
+      <p>The coordinate stayed, the datapoint stayed, the sentence shown to a reader did
+      not — which is the change nobody notices, because nothing in a report looks
+      different.</p>
+      ${Inputs.table(reworded_rows, {columns: ["row_code", "from_release", "to_release", "label"],
+                                     header: {row_code: "row"}, rows: 10})}`);
 ```
 
 ## What checks it

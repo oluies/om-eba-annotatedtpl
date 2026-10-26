@@ -8,7 +8,7 @@ like a Quarto problem rather than a data one.
 import json
 from pathlib import Path
 
-import _dpm as dpm
+import dpm_pages as dpm
 import pages
 from conftest import DPM2_DB, needs_dpm2
 

@@ -11,13 +11,12 @@ import os
 import sys
 from pathlib import Path
 
-# The query layer is shared with the Quarto pages rather than written twice. It still
-# lives under quarto/ because that is where it was first needed; that is a name to fix,
-# not a second copy to make.
+# Shared with the markdown Quarto writes for the catalogue rather than written twice: a
+# number must not mean one thing on a page and another in the article about it.
 REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO / "quarto"))
+sys.path.insert(0, str(REPO / "source"))
 
-import _dpm as dpm  # noqa: E402
+import dpm_pages as dpm  # noqa: E402
 
 FRAMEWORKS = os.environ.get("OBS_FRAMEWORKS", "COREP FINREP").split()
 

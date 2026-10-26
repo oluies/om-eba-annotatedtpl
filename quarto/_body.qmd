@@ -2,8 +2,8 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path.cwd()))
-import _dpm as dpm
+sys.path.insert(0, str(Path.cwd().parent / "source"))
+import dpm_pages as dpm
 
 con = dpm.connect(db or None)
 history = dpm.versions(con, table_code)
@@ -213,6 +213,6 @@ print()
 #| output: asis
 print(
     f"_Generated from the DPM 2.0 database. Every number above is a query in "
-    f"`quarto/_dpm.py`, run when this page was built, not a figure typed into it._"
+    f"`source/dpm_pages.py`, run when this page was built, not a figure typed into it._"
 )
 ```

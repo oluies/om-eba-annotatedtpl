@@ -7,8 +7,8 @@ jupyter: python3
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path.cwd()))
-import _dpm as dpm
+sys.path.insert(0, str(Path.cwd().parent / "source"))
+import dpm_pages as dpm
 
 con = dpm.connect()
 known = dpm.releases(con)

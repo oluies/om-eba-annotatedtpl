@@ -33,8 +33,9 @@ rendering them as documents took twenty minutes.
   `python3` is on PATH, and that one has no duckdb.
 - `build.sh` — writes the catalogue, then builds. Two steps because `dynamicPaths` is read
   when the config loads, which is before any data loader has run.
-- The queries live in `quarto/_dpm.py`, shared rather than written twice. That is a name
-  to fix, not a second copy to make.
+- The queries live in `source/dpm_pages.py`, shared with the markdown Quarto writes for
+  the catalogue rather than written twice: a number must not mean one thing on a page and
+  another in the article about it.
 
 ## What a page carries
 
@@ -50,7 +51,15 @@ picked. Then three things the DPM does not have, read by URL like the rest:
 - **what the regulation says a row is**, from the instructions annex, with the article
   that requires it, in Swedish too.
 
-These are not release-scoped the way the rest of the page is: a regulation has its own
+And **what has changed** — how many of a template's datapoints have sat at another
+coordinate, and which rows the EBA has reworded while the coordinate and the datapoint
+stayed. That one is a comparison *across* releases rather than an answer under one, so it
+cannot come from the tables the rest of the page reads: `gen_wasm_data.py` publishes
+`template_changes` and `relabelled` for it. Counts rather than a list, because a reader
+wants to know whether this template moved; `lookup_dpm_history` answers which datapoint
+went where, one at a time.
+
+The three below are not release-scoped the way the rest of the page is: a regulation has its own
 versions, and each row carries the `celex` it came from.
 
 ## Two things that will bite

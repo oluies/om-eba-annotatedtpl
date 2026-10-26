@@ -22,7 +22,7 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))  # the pack's modules live at the repository root
 sys.path.insert(0, str(REPO / "source"))  # and the generators in source/, imported for their pure parts
-sys.path.insert(0, str(REPO / "quarto"))  # and the page helpers, whose pure parts are tested here too
+sys.path.insert(0, str(REPO / "quarto"))  # and pages.py, whose pure parts are tested here too
 
 # After the path setup, necessarily: these are the modules it exists to make importable.
 import dpm_lookup  # noqa: E402

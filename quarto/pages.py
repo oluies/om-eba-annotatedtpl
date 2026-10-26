@@ -21,9 +21,9 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent / "source"))
 
-import _dpm as dpm  # noqa: E402  - the path has to be set before this resolves
+import dpm_pages as dpm  # noqa: E402  - the path has to be set before this resolves
 
 STUB = """---
 title: {title}

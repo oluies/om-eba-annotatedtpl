@@ -1,6 +1,8 @@
-"""The queries one template page asks, as pure functions over a DuckDB connection.
+"""The queries a page about a template asks, as pure functions over a DuckDB connection.
 
-Separate from the .qmd on purpose. A notebook cell that holds a 20-line join is a join
+Shared by both page builders - the Observable site in obs/ and the markdown Quarto
+writes for the catalogue - so a number cannot mean one thing on a page and another in
+the article about it. Separate from either of them on purpose. A notebook cell that holds a 20-line join is a join
 nobody reviews: it is not imported by the tests, ruff does not see it, and the first
 reader to need the same answer writes it again slightly differently. Here it is ordinary
 Python, and the page is prose with calls in it.
@@ -32,7 +34,7 @@ import duckdb
 # instead, which is next to the pages and one level below the database wherever the
 # checkout happens to be.
 HERE = Path(__file__).resolve().parent
-DEFAULT_DB = HERE.parent / "source" / "dpm2" / "dpm2_4_4.duckdb"
+DEFAULT_DB = HERE / "dpm2" / "dpm2_4_4.duckdb"
 
 
 def connect(db: str | os.PathLike[str] | None = None) -> duckdb.DuckDBPyConnection:
@@ -209,10 +211,10 @@ def dimensions(con: duckdb.DuckDBPyConnection, table_vid: int) -> list[dict[str,
 # The Official Journal's own Swedish and German, where source/fetch_its_labels.py has
 # collected them. Absent is the normal case for most frameworks, so a page says so rather
 # than leaving a gap a reader reads as "no translation exists".
-OFFICIAL = HERE.parent / "source" / "its_labels.csv"
+OFFICIAL = HERE / "its_labels.csv"
 
 
-INSTRUCTIONS = HERE.parent / "source" / "its_instructions.csv"
+INSTRUCTIONS = HERE / "its_instructions.csv"
 
 
 def keyed(path: Path) -> dict[tuple[str, str], dict[str, str]]:
@@ -228,7 +230,7 @@ def official(path: Path | None = None) -> dict[tuple[str, str], dict[str, str]]:
     return keyed(path or OFFICIAL)
 
 
-CHANGES = HERE.parent / "source" / "its_label_changes.csv"
+CHANGES = HERE / "its_label_changes.csv"
 
 
 def reworded(path: Path | None = None) -> dict[tuple[str, str], list[dict[str, str]]]:

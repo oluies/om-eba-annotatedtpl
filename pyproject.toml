@@ -50,7 +50,7 @@ extra-paths = [".", "source", "tests", "quarto"]
 # The pack's modules sit at the repository root rather than in a package, so without this
 # ruff sorts them in with httpx and duckdb and the import block stops saying anything.
 known-first-party = [
-    "_dpm",
+    "dpm_pages",
     "pages",
     "agent_tools",
     "check_instance",

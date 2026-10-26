@@ -301,6 +301,71 @@ TABLES = [
         """,
         "code",
     ),
+    # What has changed about a template, which is the one thing on a page that is *not*
+    # an answer under the release the reader picked - it is a comparison across all of
+    # them, so it cannot be computed from the tables above and has to be published.
+    #
+    # Deliberately counts rather than a list: 119 816 variables have been placed
+    # somewhere, and a reader wants to know whether this template moved, not which
+    # datapoint went where. lookup_dpm_history answers that, one datapoint at a time.
+    Published(
+        "template_changes",
+        f"""
+        WITH fw AS ({FRAMEWORK_OF_TABLE}),
+        placed AS (
+          SELECT vv.VariableID, tv.Code AS table_code,
+                 'r' || coalesce(hr.Code, '*') || ' c' || coalesce(hc.Code, '*') AS place
+          FROM   TableVersionCell c
+          JOIN   VariableVersion vv ON vv.VariableVID = c.VariableVID
+          JOIN   TableVersion tv ON tv.TableVID = c.TableVID
+          JOIN   Cell cc ON cc.CellID = c.CellID
+          LEFT JOIN TableVersionHeader tr ON tr.TableVID = c.TableVID AND tr.HeaderID = cc.RowID
+          LEFT JOIN HeaderVersion hr ON hr.HeaderVID = tr.HeaderVID
+          LEFT JOIN TableVersionHeader tc ON tc.TableVID = c.TableVID AND tc.HeaderID = cc.ColumnID
+          LEFT JOIN HeaderVersion hc ON hc.HeaderVID = tc.HeaderVID
+          WHERE  c.IsExcluded = 0
+        ),
+        here AS (SELECT DISTINCT VariableID, table_code FROM placed),
+        spread AS (
+          SELECT h.table_code, h.VariableID,
+                 count(DISTINCT p.place) AS places,
+                 count(DISTINCT p.table_code) AS templates
+          FROM   here h JOIN placed p USING (VariableID)
+          GROUP  BY h.table_code, h.VariableID
+        )
+        SELECT   fw.framework, spread.table_code,
+                 count(*)                               AS datapoints,
+                 coalesce(sum((places > 1)::INT), 0)    AS moved,
+                 coalesce(sum((templates > 1)::INT), 0) AS shared
+        FROM     spread
+        JOIN     fw ON fw.table_code = spread.table_code
+        GROUP BY fw.framework, spread.table_code
+        """,
+        "table_code",
+        partition_by="framework",
+    ),
+    # Rows whose wording changed while the coordinate and the datapoint stayed - the
+    # change nobody notices, because nothing in a report looks different.
+    Published(
+        "relabelled",
+        f"""
+        WITH fw AS ({FRAMEWORK_OF_TABLE})
+        SELECT   fw.framework, tv.Code AS table_code, hv.Code AS row_code,
+                 rs.Code AS from_release, coalesce(re.Code, '') AS to_release,
+                 trim(hv.Label) AS label, hv.StartReleaseID AS start_release_id
+        FROM     TableVersionHeader th
+        JOIN     TableVersion tv ON tv.TableVID = th.TableVID
+        JOIN     HeaderVersion hv ON hv.HeaderID = th.HeaderID
+        JOIN     fw ON fw.table_code = tv.Code
+        LEFT JOIN Release rs ON rs.ReleaseID = hv.StartReleaseID
+        LEFT JOIN Release re ON re.ReleaseID = hv.EndReleaseID
+        WHERE    hv.Code IS NOT NULL
+             AND th.HeaderID IN (SELECT HeaderID FROM HeaderVersion
+                                 GROUP BY HeaderID HAVING count(DISTINCT trim(Label)) > 1)
+        """,
+        "table_code, row_code, start_release_id",
+        partition_by="framework",
+    ),
 ]
 
 
