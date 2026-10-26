@@ -46,6 +46,9 @@ Inputs.table(search, {
   },
   width: {code: 110},
   rows: 20,
+  // Nothing reads the selection, and Inputs.table's checkbox has no label: 133 unlabelled
+  // form controls on a template page, which is the site's largest accessibility failure.
+  select: false,
 })
 ```
 

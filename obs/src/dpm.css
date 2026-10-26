@@ -145,3 +145,114 @@
 .filings .codes span {
   color: var(--theme-foreground-muted);
 }
+
+/* ---------------------------------------------------------------------------------------
+ * WCAG 2.1 AA, where the theme does not reach it
+ * ------------------------------------------------------------------------------------ */
+
+/* 1.4.3 Contrast. The theme's muted foreground is a 60 % mix with the background, which
+ * is 4.42:1 on white and 4.09:1 on the sidebar's own grey - under the 4.5:1 that body text
+ * needs. The sidebar links, the table of contents and the card labels all use it. 72 % is
+ * the same colour family and about 7:1.
+ */
+:root {
+  --theme-foreground-muted: color-mix(in srgb, var(--theme-foreground) 72%, var(--theme-background-a));
+}
+
+/* 1.4.1 Use of colour. A link in a paragraph was told apart from the text around it by
+ * colour alone, at 2.85:1 against it - and the footer's at 1.8:1. Underline them.
+ */
+#observablehq-main p a[href],
+#observablehq-main li a[href],
+#observablehq-footer a[href] {
+  text-decoration: underline;
+}
+
+/* The release and framework selects are the page's controls and had no visible label
+ * association problem, but they sit above the heading with nothing marking them as a
+ * group. This is presentation only; the labels Inputs.select writes are real.
+ */
+#observablehq-main form[class*="-select"] {
+  font: 14px var(--sans-serif);
+}
+
+/* ---------------------------------------------------------------------------------------
+ * Light or dark, by choice rather than by what the operating system happens to say
+ * ------------------------------------------------------------------------------------ */
+
+/* The theme switches on `prefers-color-scheme`, so a reader whose machine is dark has no
+ * way to read this on white - which is what someone sending it round an office needs.
+ * These two blocks are the theme's own variables, forced. They are a copy of what
+ * `theme-air,near-midnight.css` declares inside its media queries, which cannot be
+ * overridden from outside; if the theme's palette changes, these go out of step and the
+ * page still works, in the previous palette.
+ */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --theme-foreground: #1b1e23;
+  --theme-foreground-focus: #3b5fc0;
+  --theme-background-a: #ffffff;
+  --theme-background-b: color-mix(in srgb, var(--theme-foreground) 4%, var(--theme-background-a));
+  --theme-background: var(--theme-background-a);
+  --theme-background-alt: var(--theme-background-b);
+  --theme-foreground-alt: color-mix(in srgb, var(--theme-foreground) 90%, var(--theme-background-a));
+  --theme-foreground-muted: color-mix(in srgb, var(--theme-foreground) 72%, var(--theme-background-a));
+  --theme-foreground-faint: color-mix(in srgb, var(--theme-foreground) 50%, var(--theme-background-a));
+  --theme-foreground-fainter: color-mix(in srgb, var(--theme-foreground) 30%, var(--theme-background-a));
+  --theme-foreground-faintest: color-mix(in srgb, var(--theme-foreground) 14%, var(--theme-background-a));
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --theme-foreground: #dfdfd6;
+  --theme-foreground-focus: oklch(0.712564 0.257662 265.758);
+  --theme-background-b: #161616;
+  --theme-background-a: color-mix(in srgb, var(--theme-foreground) 4%, var(--theme-background-b));
+  --theme-background: var(--theme-background-a);
+  --theme-background-alt: var(--theme-background-b);
+  --theme-foreground-alt: color-mix(in srgb, var(--theme-foreground) 90%, var(--theme-background-b));
+  --theme-foreground-muted: color-mix(in srgb, var(--theme-foreground) 72%, var(--theme-background-b));
+  --theme-foreground-faint: color-mix(in srgb, var(--theme-foreground) 50%, var(--theme-background-b));
+  --theme-foreground-fainter: color-mix(in srgb, var(--theme-foreground) 30%, var(--theme-background-b));
+  --theme-foreground-faintest: color-mix(in srgb, var(--theme-foreground) 14%, var(--theme-background-b));
+}
+
+.appearance {
+  display: flex;
+  gap: 0.25rem;
+  margin-left: auto;
+  align-items: center;
+  font: 500 12px var(--sans-serif);
+  color: var(--theme-foreground-muted);
+}
+
+.appearance button {
+  font: inherit;
+  cursor: pointer;
+  padding: 0.2rem 0.6rem;
+  border: solid 1px var(--theme-foreground-faintest);
+  border-radius: 999px;
+  background: var(--theme-background);
+  color: var(--theme-foreground-muted);
+}
+
+.appearance button[aria-pressed="true"] {
+  border-color: var(--theme-foreground-fainter);
+  background: var(--theme-background-alt);
+  color: var(--theme-foreground);
+}
+
+/* 1.4.3 again, in the footer: the theme sets it to a 50 % mix, which is 3.24:1 on white.
+ * It is the copyright and the EBA's terms - small text that someone does have to read.
+ */
+#observablehq-footer {
+  color: var(--theme-foreground-muted);
+}
+
+/* A table is focusable now, because it scrolls and nothing in it takes focus. The focus
+ * has to be visible where it lands: 2.4.7.
+ */
+#observablehq-main form[class*="-table"]:focus-visible {
+  outline: 2px solid var(--theme-foreground-focus);
+  outline-offset: 2px;
+}

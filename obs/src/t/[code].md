@@ -196,6 +196,7 @@ Inputs.table(found, {
   // sentences a reader came for - take whatever that leaves. Giving every column a width
   // instead made the table wider than the page, which hid the last two columns entirely.
   width: {row_code: 50, column_code: 45, cell: 170, datapoint: 80},
+  select: false,
 })
 ```
 
@@ -224,6 +225,7 @@ Inputs.table(inSwedish, {
   rows: 14,
   // Three languages of the same sentence, so the three share the rest equally.
   width: {row: 50, from: 60},
+  select: false,
 })
 ```
 
@@ -232,7 +234,7 @@ Inputs.table(inSwedish, {
 // "null" onto the page. Nothing is displayed by not calling display.
 if (reworded.numRows > 0) display(html`<h3>Rows the regulation has reworded</h3>
   <p>The datapoint did not change and neither did the cell. The sentence did.</p>
-  ${Inputs.table(reworded, {columns: ["row", "celex", "en"], rows: 8,
+  ${Inputs.table(reworded, {columns: ["row", "celex", "en"], rows: 8, select: false,
                             width: {row: 50, celex: 165}})}`);
 ```
 
@@ -259,6 +261,7 @@ Inputs.table(defined, {
   header: {en: "What the regulation says", sv: "Vad förordningen säger"},
   rows: 8,
   width: {row: 50},
+  select: false,
 })
 ```
 
@@ -277,6 +280,7 @@ Inputs.table(dimensions, {
   rows: 8,
   // The wording is what a query has to match, so it gets what the other two leave.
   width: {dimension: 220, members: 70},
+  select: false,
 })
 ```
 
@@ -308,7 +312,7 @@ display(reworded_rows.numRows === 0
       not — which is the change nobody notices, because nothing in a report looks
       different.</p>
       ${Inputs.table(reworded_rows, {columns: ["row_code", "from_release", "to_release", "label"],
-                                     header: {row_code: "row"}, rows: 10,
+                                     header: {row_code: "row"}, rows: 10, select: false,
                                      width: {row_code: 50, from_release: 90, to_release: 80}})}`);
 ```
 
@@ -329,6 +333,7 @@ const whichRules = view(Inputs.search(checks, {placeholder: "a rule code, a seve
 ```js
 Inputs.table(whichRules, {
   rows: 12,
+  select: false,
   width: {rule_code: 100, severity: 80, active: 60, module: 120},
   format: {
     rule_code: (d) => html`<a href="https://oluies.github.io/om-eba-annotatedtpl/?q=rule&rule_code=${d}&release=${release}">${d}</a>`,

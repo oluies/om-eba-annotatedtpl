@@ -4,6 +4,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DPM in the browser</title>
 <link rel="stylesheet" href="app.css">
+<script>
+  // Before the first paint, or a reader who chose light sees dark first. The key is the
+  // one the template pages use, so the choice carries across the site.
+  try {
+    const chosen = localStorage.getItem("dpm-appearance");
+    if (chosen === "light" || chosen === "dark") document.documentElement.setAttribute("data-theme", chosen);
+  } catch (problem) {
+    // Storage switched off. Following the machine is the default anyway.
+  }
+</script>
 <div id="app">loading…</div>
 <script type="module" src="main.js"></script>
 <!-- GoatCounter: a hit count, no cookies and no cross-site identifier.

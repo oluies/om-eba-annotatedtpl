@@ -336,3 +336,81 @@ def test_the_index_groups_by_what_is_filed():
     index = (OBS / "src" / "index.md").read_text(encoding="utf-8")
     assert "template.modules" in index, "the index no longer reads the modules"
     assert "filings" in index, "the grouping is gone"
+
+
+FRAMEWORK_HTML = """<!DOCTYPE html>
+<html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<nav id="observablehq-sidebar">
+  <ol>
+    <label id="observablehq-sidebar-close" for="observablehq-sidebar-toggle"></label>
+    <li class="observablehq-link"><a href="../">EBA DPM</a></li>
+  </ol>
+  <div id="observablehq-search"><input type="search" placeholder="Search"></div>
+</nav>
+"""
+
+
+def patched(html: str) -> str:
+    """Run the build's own patch over a page, in node, as the build does."""
+    script = OBS / "accessible.mjs"
+    got = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            f"import {{fix}} from {json.dumps(str(script))};process.stdout.write(fix({json.dumps(html)}));",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=OBS,
+    )
+    assert got.returncode == 0, got.stderr
+    return got.stdout
+
+
+def test_the_build_patches_what_framework_gets_wrong():
+    """Four WCAG failures are in Framework's own HTML and no configuration reaches them:
+    the page has no language, `maximum-scale=1` stops a reader zooming, the sidebar puts a
+    <label> inside an <ol>, and the search field has a placeholder for a name. The build
+    patches the output. These assertions are what tells us the day Framework changes its
+    markup and the patch quietly stops matching.
+    """
+    fixed = patched(FRAMEWORK_HTML)
+    assert '<html lang="en">' in fixed, "3.1.1: the page does not say what language it is in"
+    assert "maximum-scale" not in fixed, "1.4.4: pinch zoom is still disabled"
+    assert fixed.index("sidebar-close") < fixed.index("<ol>"), "1.3.1: a <label> is still inside the <ol>"
+    assert 'aria-label="Search this site"' in fixed, "4.1.2: the search field has no name"
+
+
+def test_the_patch_does_nothing_to_a_page_that_is_already_right():
+    """So that it can be dropped the day Framework fixes these upstream, and so that it
+    never runs twice over its own output."""
+    assert patched(patched(FRAMEWORK_HTML)) == patched(FRAMEWORK_HTML)
+    already = '<html lang="sv">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+    assert patched(already) == already
+
+
+def test_the_build_runs_the_patch_after_building():
+    script = (OBS / "build.sh").read_text(encoding="utf-8")
+    assert script.index("observable build") < script.index("accessible.mjs"), "it patches the build's output"
+
+
+def test_no_table_offers_a_row_selection_nobody_reads():
+    """Inputs.table's selection checkbox has no label, and there was one per row: 133
+    unlabelled form controls on C_13.01, which was this site's largest single failure."""
+    index = (OBS / "src" / "index.md").read_text(encoding="utf-8")
+    for name, source in (("the template page", page()), ("the index", index)):
+        tables = source.count("Inputs.table(")
+        assert source.count("select: false") == tables, f"{name}: {tables} tables, not all with selection off"
+
+
+def test_a_reader_can_choose_light_or_dark():
+    """The theme follows `prefers-color-scheme` alone, so a reader on a dark machine had
+    no way to read this on white - which is what circulating it in an office needs."""
+    css = (OBS / "src" / "dpm.css").read_text(encoding="utf-8")
+    config = (OBS / "observablehq.config.js").read_text(encoding="utf-8")
+    assert ':root[data-theme="light"]' in css and ':root[data-theme="dark"]' in css, "no forced themes"
+    assert "appearance.js" in config, "the control is not loaded"
+    assert "--theme-background-a: #ffffff" in css, "forced light is not white"

@@ -23,3 +23,7 @@ if [ -f ../web/public/data/releases.json ]; then
 fi
 
 npx --no-install observable build
+
+# Four defects in Framework's own HTML that no configuration reaches - the language of the
+# page, pinch zoom, a <label> inside an <ol>, and the search field's name. See accessible.mjs.
+node accessible.mjs dist

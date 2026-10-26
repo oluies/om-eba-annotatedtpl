@@ -377,6 +377,7 @@ object Main:
         "file it read. No server: the parquet is fetched into DuckDB-WASM and queried in ",
         "your browser.",
       ),
+      Appearance.control,
       div(
         cls := "controls",
         child <-- releases.signal.map: found =>

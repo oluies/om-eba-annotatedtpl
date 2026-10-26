@@ -1,5 +1,17 @@
 :root { color-scheme: light dark; --edge: color-mix(in oklab, currentColor 18%, transparent); }
-body { font: 15px/1.5 "IBM Plex Sans", system-ui, sans-serif; margin: 0; padding: 2rem 1rem; }
+
+/* Light or dark by choice, not only by what the machine says - the same choice the
+   template pages offer, under the same key, so it carries between them. Everything here
+   is drawn in the system's own Canvas/CanvasText, so forcing `color-scheme` is the whole
+   implementation. */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+/* Stated rather than inherited from the viewport: a page with no background of its own
+   cannot be checked for contrast - an audit reads white and sees a dark-mode link colour
+   on it - and it is at the mercy of whatever it is embedded in. */
+body { font: 15px/1.5 "IBM Plex Sans", system-ui, sans-serif; margin: 0; padding: 2rem 1rem;
+  background: Canvas; color: CanvasText; }
 .page { max-width: 68rem; margin: 0 auto; }
 h1 { font-size: 1.6rem; margin: 0 0 .4rem; }
 .lede { margin: 0 0 1.4rem; opacity: .75; max-width: 46rem; }
@@ -41,3 +53,9 @@ input.rows { width: 5rem; }
   padding: .35rem .8rem; opacity: .95; }
 .starters .examples button:hover { border-color: currentColor; }
 .starters .elsewhere { font-size: .85rem; opacity: .75; margin: .9rem 0 0; }
+
+/* The light/dark control, matching the template pages. */
+.appearance { display: flex; gap: .3rem; align-items: center; font-size: .78rem; opacity: .8;
+  margin: 0 0 1rem; }
+.appearance button { border-radius: 999px; padding: .2rem .7rem; font-size: .78rem; font-weight: 500; }
+.appearance button[aria-pressed="true"] { border-color: currentColor; font-weight: 700; }
