@@ -28,9 +28,15 @@ def test_every_table_is_sorted_on_what_it_is_filtered_by():
 
 
 def test_the_big_tables_are_split_by_framework():
-    """A question concerns one framework, so it should read one partition."""
+    """A question concerns one framework, so it should read one partition.
+
+    Pinned as a set rather than a property, because the cost of getting it wrong is
+    invisible: an unpartitioned table still answers, it just makes every reader of every
+    framework download all of them. The two change tables joined the list when the pages
+    started showing what has changed, and that is the kind of addition this catches.
+    """
     partitioned = {table.name for table in gen.TABLES if table.partition_by == "framework"}
-    assert partitioned == {"cells", "cell_members", "rule_cells"}
+    assert partitioned == {"cells", "cell_members", "rule_cells", "template_changes", "relabelled"}
 
 
 @pytest.mark.parametrize("table", gen.TABLES, ids=lambda table: table.name)
