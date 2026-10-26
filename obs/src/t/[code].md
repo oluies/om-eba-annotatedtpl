@@ -17,22 +17,52 @@ import {DuckDBClient} from "npm:@observablehq/duckdb";
 // release is a different URL, not a different build.
 const db = await DuckDBClient.of();
 
-// A partition that holds nothing is not written at all - no FINREP template has a
-// reworded row, so there is no relabelled/framework=FINREP/ - and DuckDB answers a
-// missing file by throwing, which killed every cell on the page rather than the one
-// section. An absent table is an empty table here.
-const maybe = async (sql) => {
-  try {
-    return await db.query(sql);
-  } catch (problem) {
-    return {numRows: 0, toArray: () => [], get: () => undefined};
-  }
-};
 // Two levels up from /<site>/templates/t/<code> is /<site>/, where the publish puts the
 // parquet - and resolving against the document rather than against import.meta.url keeps
 // that true wherever the site is mounted, which on Pages is a project path and not a root.
-const base = new URL("../../data/", document.baseURI).href;
+// `?data=` points the page at another published tree, which is how it is driven against
+// the published data from a local preview.
+const base = new URL(new URLSearchParams(location.search).get("data") ?? "../../data/", document.baseURI).href;
 const at = (release, path) => `${base}${release}/${path}`;
+
+// Every file is fetched once and handed to DuckDB as bytes, rather than letting DuckDB read
+// it over HTTP. Pages serves these gzipped, and then the content-length it reports is the
+// compressed length while a byte range comes from the uncompressed file: DuckDB reads the
+// footer where it was told the end is, finds no magic bytes there, and the section dies
+// with "No magic bytes found at end of file". Which of the two variants the CDN holds
+// decides whether a page works - that is how the FINREP pages failed while the COREP ones
+// passed on the same code. fetch() decompresses, so the bytes are the file.
+const loaded = new Map();
+const bytes = (url) => {
+  if (!loaded.has(url)) {
+    loaded.set(url, (async () => {
+      // DuckDB picks its reader from the extension, so the name keeps it.
+      const name = url.replace(/^https?:\/\//, "").replace(/[^\w.]+/g, "_");
+      const answer = await fetch(url);
+      if (!answer.ok) throw new Error(`${answer.status} ${answer.statusText} for ${url}`);
+      await db._db.registerFileBuffer(name, new Uint8Array(await answer.arrayBuffer()));
+      return name;
+    })());
+  }
+  return loaded.get(url);
+};
+
+// Inputs.table and Inputs.search want something iterable, and an object carrying a numRows
+// is not one: "TypeError: e is not iterable" is what the reader saw where a table should
+// have been. An empty array with the two accessors the page uses answers both.
+const absent = () => Object.assign([], {numRows: 0, get: () => undefined, toArray: () => []});
+
+// A partition that holds nothing is not written at all - no FINREP template has a reworded
+// row, so there is no relabelled/framework=FINREP/ - and a missing file is a throw, which
+// killed every cell on the page rather than the one section. An absent table is an empty
+// table here. `sql` is handed the registered name of each file it was given, in order.
+const maybe = async (urls, sql) => {
+  try {
+    return await db.query(sql(...(await Promise.all(urls.map(bytes)))));
+  } catch (problem) {
+    return absent();
+  }
+};
 ```
 
 ```js
@@ -51,59 +81,66 @@ const framework = view(Inputs.select(["FINREP", "COREP"], {label: "Framework", v
 ```js
 // One query per section, re-run when the release changes. This is the thing a rendered
 // document cannot do: the page is not three releases deep, it asks again.
+const cells = await bytes(at(release, `cells/framework=${framework}/data_0.parquet`));
 const grid = await db.query(`
   SELECT DISTINCT row_code, row_label, column_code, column_label, datapoint,
          '{' || table_code || ', r' || row_code || ', c' || column_code || '}' AS cell
-  FROM '${at(release, `cells/framework=${framework}/data_0.parquet`)}'
+  FROM '${cells}'
   WHERE table_code = '${code}' ORDER BY row_code, column_code`);
 
-const dimensions = await maybe(`
-  SELECT dimension, count(DISTINCT member) AS members,
-         string_agg(DISTINCT member, ', ' ORDER BY member) AS wording
-  FROM '${at(release, `cell_members/framework=${framework}/data_0.parquet`)}'
-  WHERE table_code = '${code}' GROUP BY dimension ORDER BY dimension`);
+const dimensions = await maybe(
+  [at(release, `cell_members/framework=${framework}/data_0.parquet`)],
+  (members) => `
+    SELECT dimension, count(DISTINCT member) AS members,
+           string_agg(DISTINCT member, ', ' ORDER BY member) AS wording
+    FROM '${members}'
+    WHERE table_code = '${code}' GROUP BY dimension ORDER BY dimension`);
 
 // The regulation's own wording, which is not a translation: the templates are an annex to
 // an Implementing Regulation and one is published in all 24 official languages. Not
 // release-scoped the way everything above is - a regulation has its own versions, and the
 // `celex` column says which text a row came from.
-const wording = await maybe(`
+const wording = await maybe([`${base}its_labels.csv`], (labels) => `
   SELECT row, en, sv, de, celex, "from"
-  FROM '${base}its_labels.csv'
+  FROM '${labels}'
   WHERE template = '${code}' ORDER BY row`);
 
-const spelled = await maybe(`
+const spelled = await maybe([`${base}its_instructions.csv`], (instructions) => `
   SELECT row, en, sv, celex
-  FROM '${base}its_instructions.csv'
+  FROM '${instructions}'
   WHERE template = '${code}' ORDER BY row`);
 
-const reworded = await maybe(`
+const reworded = await maybe([`${base}its_label_changes.csv`], (changes) => `
   SELECT row, celex, en
-  FROM '${base}its_label_changes.csv'
+  FROM '${changes}'
   WHERE template = '${code}' ORDER BY row, celex`);
 
 // What has changed is the one thing on this page that is not an answer under the chosen
 // release: it is a comparison across all of them, so the publish precomputes it.
-const drift = await maybe(`
-  SELECT datapoints, moved, shared
-  FROM '${at(release, `template_changes/framework=${framework}/data_0.parquet`)}'
-  WHERE table_code = '${code}'`);
+const drift = await maybe(
+  [at(release, `template_changes/framework=${framework}/data_0.parquet`)],
+  (changes) => `
+    SELECT datapoints, moved, shared
+    FROM '${changes}'
+    WHERE table_code = '${code}'`);
 
 // Ordered by header and not by row code: a template can serve one code from two
 // headers, and reading them as one row makes a pair of unrelated labels look like a
 // rewording. The row is the header.
-const reworded_rows = await maybe(`
-  SELECT row_code, from_release, to_release, label
-  FROM '${at(release, `relabelled/framework=${framework}/data_0.parquet`)}'
-  WHERE table_code = '${code}' ORDER BY row_code, header_id, start_release_id`);
+const reworded_rows = await maybe(
+  [at(release, `relabelled/framework=${framework}/data_0.parquet`)],
+  (relabelled) => `
+    SELECT row_code, from_release, to_release, label
+    FROM '${relabelled}'
+    WHERE table_code = '${code}' ORDER BY row_code, header_id, start_release_id`);
 
-const checks = await maybe(`
-  WITH here AS (SELECT DISTINCT operation_vid
-                FROM '${at(release, `rule_cells/framework=${framework}/data_0.parquet`)}'
-                WHERE table_code = '${code}')
-  SELECT DISTINCT r.rule_code, r.severity, r.active, r.module, r.taxonomy_version
-  FROM '${at(release, "rules.parquet")}' r JOIN here USING (operation_vid)
-  ORDER BY r.rule_code`);
+const checks = await maybe(
+  [at(release, `rule_cells/framework=${framework}/data_0.parquet`), at(release, "rules.parquet")],
+  (reaching, rules) => `
+    WITH here AS (SELECT DISTINCT operation_vid FROM '${reaching}' WHERE table_code = '${code}')
+    SELECT DISTINCT r.rule_code, r.severity, r.active, r.module, r.taxonomy_version
+    FROM '${rules}' r JOIN here USING (operation_vid)
+    ORDER BY r.rule_code`);
 ```
 
 # ${code} — ${name}

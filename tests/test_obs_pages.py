@@ -213,3 +213,25 @@ def test_optional_sections_tolerate_a_missing_table():
     for name in optional:
         assert f"const {name} = await maybe(" in source, f"{name} reads without tolerating an absent table"
     assert "const grid = await db.query(" in source, "the grid is not optional and should still throw"
+
+
+def test_no_query_reads_a_file_over_http():
+    """Pages serves the parquet gzipped, and then the content-length it reports is the
+    compressed length while a byte range comes from the uncompressed file. DuckDB-WASM
+    reads the footer where it was told the end is and answers "No magic bytes found at end
+    of file" - and since the CDN may hold either variant, the same code made every FINREP
+    page lose its dimensions while the COREP pages passed. fetch() decompresses, so each
+    file is fetched once and registered as a buffer.
+    """
+    source = page()
+    assert "registerFileBuffer" in source, "the page no longer hands DuckDB the bytes"
+    for reach in ("FROM '${at(", "FROM '${base}"):
+        assert reach not in source, f"a query reads {reach}…, which is DuckDB over HTTP again"
+
+
+def test_an_absent_table_is_iterable():
+    """Inputs.table and Inputs.search take something iterable, and an object carrying a
+    numRows is not one: a failed read put "TypeError: e is not iterable" on the page where
+    the dimensions table belongs."""
+    source = page()
+    assert "Object.assign([]" in source, "the placeholder for an absent table is not an array"
