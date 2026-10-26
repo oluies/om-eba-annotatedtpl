@@ -274,3 +274,33 @@ def test_the_publish_tells_the_catalogue_which_releases_it_writes():
     assert "OBS_RELEASES" in loader, "the loader no longer reads the window"
     assert "OBS_RELEASES=" in workflow, "the publish no longer passes it"
     assert "inputs.releases" in workflow.split("OBS_RELEASES=")[1][:120], "it passes something else"
+
+
+def test_the_tables_are_not_left_at_the_prose_measure():
+    """The theme caps `p, table, figure, h1-h6` at 640px and ends every cell it cannot fit
+    with an ellipsis. That is right for a table inside an essay and wrong for a page whose
+    content is the table: 157 of 550 cells on C_03.00 were clipped, including each of the
+    three languages at about fifteen characters. Nothing fails when this comes back.
+    """
+    config = (OBS / "observablehq.config.js").read_text(encoding="utf-8")
+    css = (OBS / "src" / "dpm.css").read_text(encoding="utf-8")
+    assert "dpm.css" in config, "the stylesheet is no longer loaded"
+    assert "max-width: none" in css, "the tables are back at the prose measure"
+    assert "white-space: normal" in css, "the cells truncate with an ellipsis again"
+
+
+def test_no_table_gives_every_column_a_width():
+    """Under `table-layout: fixed` the columns with no width share what is left, which is
+    what keeps a table exactly as wide as the page. Giving every column a width made the
+    table wider than the column it sits in, and the last two - the cell reference and the
+    datapoint id - were simply not on the page.
+    """
+    for call in page().split("Inputs.table(")[1:]:
+        block = call[: call.find("})")]
+        named = re.search(r"columns: \[(.*?)\]", block, re.S)
+        sized = re.search(r"width: \{(.*?)\}", block, re.S)
+        if not named or not sized:
+            continue
+        columns = set(re.findall(r'"(\w+)"', named.group(1)))
+        widths = set(re.findall(r"(\w+):", sized.group(1)))
+        assert widths < columns, f"every column of {sorted(columns)} has a width, so the table overflows"

@@ -8,6 +8,9 @@ export default {
   // pages without touching this, and a template the EBA withdraws stops having one.
   dynamicPaths: templates().map(({code}) => `/t/${code}`),
   pages: [{name: "What this is", path: "/"}],
+  // The theme caps every table at the prose measure. On a page whose content is tables,
+  // that is what clips the labels, so this is loaded after it.
+  head: '<link rel="stylesheet" href="/dpm.css">',
   footer: `Derived from the EBA DPM 2.0 database. Reproduction of EBA material is
     authorised provided the source is acknowledged
     (<a href="https://www.eba.europa.eu/legal-notice">eba.europa.eu/legal-notice</a>).

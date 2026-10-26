@@ -1,0 +1,105 @@
+/* What the default theme does not know about this site: the table is the content.
+ *
+ * The theme caps `p, table, figure, h1-h6` at 640px, which is the right measure for a
+ * table inside an essay and the wrong one for the only thing a reader came for. At 640
+ * the three languages get about fifteen characters each and every label ends in an
+ * ellipsis - 157 of 550 cells on C_03.00 were clipped. The prose keeps its measure; the
+ * data gets the page.
+ */
+#observablehq-main form[class*="-table"] {
+  max-width: none;
+  /* A safety net for a narrow window: the columns are sized to fit the page, but a phone
+   * is narrower than the narrowest useful table, and scrolling beats hiding. */
+  overflow-x: auto;
+}
+
+#observablehq-main form[class*="-table"] table {
+  max-width: none;
+  width: 100%;
+}
+
+/* The ellipsis is the theme's answer to a column too narrow for its text. With a width
+ * given per column, wrapping is the better one: a row label is a sentence, and a sentence
+ * that takes two lines is readable where half a sentence is not.
+ */
+#observablehq-main form[class*="-table"] td,
+#observablehq-main form[class*="-table"] th {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+#observablehq-main form[class*="-table"] td {
+  vertical-align: top;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+/* Row codes, releases and counts are read down the column, so they align on the digit. */
+#observablehq-main form[class*="-table"] table {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The four numbers a page opens with. `.card` and `.big` are the theme's own, which keeps
+ * them in step with light and dark; what is added is the label under the number and the
+ * strip being readable at a narrow window.
+ */
+/* The theme's own grid-cols-4 needs a 1080px container to be four across, and the column
+ * is 864 - so four numbers came out as a 2x2 block taking two rows. These are a number and
+ * a word; they fit across any screen worth reading this on.
+ */
+.counts {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 1rem 0 1.5rem;
+}
+
+@container (min-width: 560px) {
+  .counts {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.counts .card {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.25rem;
+}
+
+.counts .big {
+  line-height: 1.1;
+}
+
+.counts .what {
+  color: var(--theme-foreground-muted);
+  font: 500 12px var(--sans-serif);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.counts .card.quiet .big {
+  color: var(--theme-foreground-muted);
+}
+
+/* The explanations that are the same on all 312 pages. They are worth reading once and
+ * worth having to hand after that, so they fold rather than go.
+ */
+#observablehq-main details.why {
+  max-width: 640px;
+  margin: 0.5rem 0 1rem;
+  font: 14px/1.5 var(--sans-serif);
+  color: var(--theme-foreground-muted);
+}
+
+#observablehq-main details.why > summary {
+  cursor: pointer;
+  color: var(--theme-foreground-focus);
+}
+
+#observablehq-main details.why p {
+  margin: 0.5rem 0 0;
+}

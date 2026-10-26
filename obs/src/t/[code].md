@@ -151,13 +151,24 @@ const nothing = grid.numRows === 0;
 ```
 
 ```js
-display(html`<p>${nothing
-  ? html`<em>${code} has no reportable cells in DPM ${release} under ${framework}. A template is
-      introduced and withdrawn; try another release, or the other framework.</em>`
-  : html`<strong>${grid.numRows.toLocaleString("sv")} reportable cells</strong>,
-      ${dimensions.numRows} dimensions, ${checks.numRows} validation rules reaching it,
-      ${off} of them switched off — in DPM ${release}. These numbers are the query's
-      answer, asked again when you change the release above.`}</p>`);
+// Four numbers rather than a sentence of four numbers: this is what the page answers, and
+// a reader scanning for it should not have to read a paragraph to find it. `.card`, `.big`
+// and the grid are the theme's own, so they follow light and dark without being told.
+const count = (number, what, quiet = false) => html`<div class="card ${quiet ? "quiet" : ""}">
+  <span class="big">${number}</span><span class="what">${what}</span></div>`;
+
+display(nothing
+  ? html`<p><em>${code} has no reportable cells in DPM ${release} under ${framework}. A
+      template is introduced and withdrawn; try another release, or the other
+      framework.</em></p>`
+  : html`<div class="counts">
+      ${count(grid.numRows.toLocaleString("sv"), "reportable cells")}
+      ${count(dimensions.numRows, "dimensions")}
+      ${count(checks.numRows, "validation rules")}
+      ${count(off, "switched off", off === 0)}
+    </div>
+    <p>In DPM ${release} — the query's answer, asked again when you change the release
+      above.</p>`);
 ```
 
 ## Every cell
@@ -171,6 +182,11 @@ Inputs.table(found, {
   columns: ["row_code", "row_label", "column_code", "column_label", "cell", "datapoint"],
   header: {row_code: "row", row_label: "row label", column_code: "col", column_label: "column label"},
   rows: 16,
+  // Only the narrow columns are given a width. Under `table-layout: fixed` the rest share
+  // what is left, so the table is always exactly as wide as the page and the labels - the
+  // sentences a reader came for - take whatever that leaves. Giving every column a width
+  // instead made the table wider than the page, which hid the last two columns entirely.
+  width: {row_code: 50, column_code: 45, cell: 170, datapoint: 80},
 })
 ```
 
@@ -197,6 +213,8 @@ Inputs.table(inSwedish, {
   columns: ["row", "en", "sv", "de", "from"],
   header: {en: "English", sv: "Svenska", de: "Deutsch"},
   rows: 14,
+  // Three languages of the same sentence, so the three share the rest equally.
+  width: {row: 50, from: 60},
 })
 ```
 
@@ -205,7 +223,8 @@ Inputs.table(inSwedish, {
 // "null" onto the page. Nothing is displayed by not calling display.
 if (reworded.numRows > 0) display(html`<h3>Rows the regulation has reworded</h3>
   <p>The datapoint did not change and neither did the cell. The sentence did.</p>
-  ${Inputs.table(reworded, {columns: ["row", "celex", "en"], rows: 8})}`);
+  ${Inputs.table(reworded, {columns: ["row", "celex", "en"], rows: 8,
+                            width: {row: 50, celex: 165}})}`);
 ```
 
 ## What the regulation says these rows are
@@ -230,23 +249,35 @@ Inputs.table(defined, {
   columns: ["row", "en", "sv"],
   header: {en: "What the regulation says", sv: "Vad förordningen säger"},
   rows: 8,
-  width: {en: 420, sv: 420},
+  width: {row: 50},
 })
 ```
 
 ## What it breaks down by
 
-The members are in the model's own wording, which is the wording a query has to match: a
-near miss matches nothing rather than erroring, and a trailing space is a real difference.
+<details class="why">
+<summary>Why the wording matters</summary>
+<p>The members are in the model's own wording, which is the wording a query has to match: a
+near miss matches nothing rather than erroring, and a trailing space is a real
+difference.</p>
+</details>
 
 ```js
-Inputs.table(dimensions, {columns: ["dimension", "members", "wording"], rows: 8})
+Inputs.table(dimensions, {
+  columns: ["dimension", "members", "wording"],
+  rows: 8,
+  // The wording is what a query has to match, so it gets what the other two leave.
+  width: {dimension: 220, members: 70},
+})
 ```
 
 ## What has changed
 
-The EBA ships no account of this — the DPM's `ChangeLog` table is present and empty in
-every release — so it is read off the version rows.
+<details class="why">
+<summary>Where this comes from</summary>
+<p>The EBA ships no account of this — the DPM's <code>ChangeLog</code> table is present and
+empty in every release — so it is read off the version rows.</p>
+</details>
 
 ```js
 display(drift.numRows === 0
@@ -268,15 +299,19 @@ display(reworded_rows.numRows === 0
       not — which is the change nobody notices, because nothing in a report looks
       different.</p>
       ${Inputs.table(reworded_rows, {columns: ["row_code", "from_release", "to_release", "label"],
-                                     header: {row_code: "row"}, rows: 10})}`);
+                                     header: {row_code: "row"}, rows: 10,
+                                     width: {row_code: 50, from_release: 90, to_release: 80}})}`);
 ```
 
 ## What checks it
 
-`active` is the EBA's deactivated-rules list. A description telling a reader to satisfy a
-rule nobody runs is worse than one naming none. A code is not a stable statement either —
-2 005 of 7 514 consecutive versions of a rule change the expression — so each links to
-what it checks under this release.
+<details class="why">
+<summary>Why <code>active</code>, and why every code is a link</summary>
+<p><code>active</code> is the EBA's deactivated-rules list. A description telling a reader
+to satisfy a rule nobody runs is worse than one naming none. A code is not a stable
+statement either — 2 005 of 7 514 consecutive versions of a rule change the expression — so
+each links to what it checks under this release.</p>
+</details>
 
 ```js
 const whichRules = view(Inputs.search(checks, {placeholder: "a rule code, a severity, a module…"}));
@@ -285,6 +320,7 @@ const whichRules = view(Inputs.search(checks, {placeholder: "a rule code, a seve
 ```js
 Inputs.table(whichRules, {
   rows: 12,
+  width: {rule_code: 100, severity: 80, active: 60, module: 120},
   format: {
     rule_code: (d) => html`<a href="https://oluies.github.io/om-eba-annotatedtpl/?q=rule&rule_code=${d}&release=${release}">${d}</a>`,
   },
