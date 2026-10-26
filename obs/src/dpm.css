@@ -256,3 +256,10 @@
   outline: 2px solid var(--theme-foreground-focus);
   outline-offset: 2px;
 }
+
+/* Said once, under the counts, on the templates where the count means something else. */
+#observablehq-main .open-table {
+  border-left: solid 2px var(--theme-foreground-fainter);
+  padding-left: 0.75rem;
+  color: var(--theme-foreground-muted);
+}

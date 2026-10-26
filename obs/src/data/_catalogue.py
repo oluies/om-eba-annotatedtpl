@@ -46,6 +46,12 @@ json.dump(
             "name": of_code[code][0]["name"],
             "frameworks": sorted({framework for framework, row in found if row["table_code"] == code}),
             "modules": sorted({module for row in of_code[code] for module in (row["modules"] or "").split()}),
+            # What the reporter adds rather than fills in. 14 of DORA's 15 templates and
+            # 66 of COREP's 159 are open, and on those the cell count is the shape of one
+            # row rather than the size of the submission.
+            "open": [
+                what for what in ("rows", "columns", "sheets") if any(row[f"open_{what}"] for row in of_code[code])
+            ],
         }
         for code in sorted(of_code)
     ],

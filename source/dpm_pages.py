@@ -111,8 +111,17 @@ SELECT   tv.Code AS table_code,
          -- Which modules file this template. It is the grouping a reporter already has:
          -- own funds, leverage, large exposures, LCR, NSFR are separate submissions, and
          -- a list of 312 template codes in one run is not navigable by anyone.
-         string_agg(DISTINCT mv.Code, ' ' ORDER BY mv.Code) AS modules
+         string_agg(DISTINCT mv.Code, ' ' ORDER BY mv.Code) AS modules,
+         -- Whether the reporter adds rows, columns or sheets. On a closed table "19
+         -- reportable cells" is the whole template; on an open one it is the shape of a
+         -- row and the count says nothing about how much is filed. Every DORA register
+         -- template is open - one row per contractual arrangement - so a page that does
+         -- not say so describes something else.
+         max(CASE WHEN tb.HasOpenRows THEN 1 ELSE 0 END) AS open_rows,
+         max(CASE WHEN tb.HasOpenColumns THEN 1 ELSE 0 END) AS open_columns,
+         max(CASE WHEN tb.HasOpenSheets THEN 1 ELSE 0 END) AS open_sheets
 FROM     TableVersion tv
+JOIN     "Table" tb ON tb.TableID = tv.TableID
 JOIN     ModuleVersionComposition mvc ON mvc.TableVID = tv.TableVID
 JOIN     ModuleVersion mv ON mv.ModuleVID = mvc.ModuleVID
 JOIN     Module m ON m.ModuleID = mv.ModuleID

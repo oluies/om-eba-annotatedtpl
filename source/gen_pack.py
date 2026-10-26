@@ -1748,10 +1748,10 @@ when describing tables, columns and glossary terms in OpenMetadata.
 
 Two published pages, neither of which needs anything installed:
 
-- **[A page per template](https://oluies.github.io/om-eba-annotatedtpl/templates/)** — 312
-  of them, COREP and FINREP: every cell searchable, the official Swedish and German beside
-  the English, what the instructions annex says a row is, what has changed since the first
-  release, and which rules check it. The DPM release is a control on the page.
+- **[A page per template](https://oluies.github.io/om-eba-annotatedtpl/templates/)** — 327
+  of them, COREP, FINREP and DORA: every cell searchable, the official Swedish and German
+  beside the English, what the instructions annex says a row is, what has changed since
+  the first release, and which rules check it. The DPM release is a control on the page.
 - **[Ask a question](https://oluies.github.io/om-eba-annotatedtpl/)** — eleven questions
   over the same model, answered in your browser with DuckDB-WASM, each with the SQL and the
   file it read beside the answer.
@@ -2281,6 +2281,19 @@ while every FINREP page lost its dimensions, and the query page showed a reader
 `NetworkError: Failed to execute 'send' on 'XMLHttpRequest'`. Both pages now fetch each
 file once, which decompresses it, and hand DuckDB the bytes. Anything else built over this
 tree should do the same.
+
+**DORA is in, with two of seven sections empty and saying so.** Its 15 register templates
+are in the same model and the publish already wrote their partitions, so they cost nothing
+but the catalogue entry. What they do not have is the Official Journal: the Swedish and
+German labels and the instructions come from the supervisory reporting ITS, 2021/451, and
+DORA's templates are an annex to 2024/2956 - a different regulation, not fetched. The
+page says that rather than showing an empty table.
+
+**An open table is not its cell count.** 14 of DORA's 15 templates and 66 of COREP's 159
+are open: the reporter adds the rows, the columns or the sheets, so "4 reportable cells"
+is the shape of one row and says nothing about how much is filed. B_02.01 is one row per
+contractual arrangement, C_06.02 one per group entity, C_09.01.b one sheet per country.
+The pages say so under the counts, from `Table.HasOpenRows` and its two siblings.
 
 **A table is the content, not an illustration.** Observable's theme caps `p, table, figure`
 at the prose measure, 640px, and ends what does not fit with an ellipsis - which showed

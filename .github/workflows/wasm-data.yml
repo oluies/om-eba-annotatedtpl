@@ -19,7 +19,11 @@ on:
       framework:
         description: "Also render a page per template of these frameworks, space separated, under /templates/. Empty skips it."
         required: false
-        default: "COREP FINREP"
+        # DORA's 15 register templates come from the same model and the publish already
+        # writes their partitions. Two of their seven sections say so honestly: the
+        # official Swedish and German, and the instructions, are read from the supervisory
+        # reporting ITS, and DORA is a different regulation (2024/2956), not fetched.
+        default: "COREP FINREP DORA"
       templates_from:
         description: "Which release's DPM the template catalogue is read from. The pages themselves offer every published release."
         required: false

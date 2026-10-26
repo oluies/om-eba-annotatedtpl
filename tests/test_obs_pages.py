@@ -414,3 +414,22 @@ def test_a_reader_can_choose_light_or_dark():
     assert ':root[data-theme="light"]' in css and ':root[data-theme="dark"]' in css, "no forced themes"
     assert "appearance.js" in config, "the control is not loaded"
     assert "--theme-background-a: #ffffff" in css, "forced light is not white"
+
+
+@needs_dpm2
+def test_an_open_table_is_marked_as_one():
+    """On a closed template the cell count is the whole thing. On an open one it is the
+    shape of a row and says nothing about how much is filed - every DORA register template
+    is one row per contractual arrangement, and C_09.01.b is one sheet per country."""
+    import dpm_pages as dpm
+
+    with dpm.connect(str(DPM2_DB)) as con:
+        corep = {row["table_code"]: row for row in dpm.templates_of(con, "COREP", ["4.2.1", "4.3", "4.4"])}
+        dora = dpm.templates_of(con, "DORA", ["4.2.1", "4.3", "4.4"])
+    assert dora, "DORA has no templates, so the frameworks are not what they were"
+    closed = [row["table_code"] for row in dora if not (row["open_rows"] or row["open_columns"] or row["open_sheets"])]
+    assert closed == ["B_99.01"], f"DORA's registers are open but these are not: {closed}"
+    assert corep["C_06.02"]["open_rows"], "C_06.02 is one row per group entity"
+    assert corep["C_09.01.b"]["open_sheets"], "C_09.01.b is one sheet per country"
+    assert not corep["C_01.00"]["open_rows"], "C_01.00 is a closed template"
+    assert "open-table" in page(), "the page never says a template is open"

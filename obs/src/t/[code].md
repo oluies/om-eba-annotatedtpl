@@ -10,6 +10,11 @@ const published = await FileAttachment("../data/releases.json").json();
 // setting but one produced "no reportable cells in DPM x" - an empty page that reads like
 // a fault. It stays a list in case a publish ever holds one that is in two.
 const belongs = listed.frameworks?.length ? listed.frameworks : [code.startsWith("F_") ? "FINREP" : "COREP"];
+
+// What the reporter adds rather than fills in. On a closed template the cell count is the
+// whole thing; on an open one it is the shape of a row, and the number of rows is however
+// many contracts, entities or exposures there are. Every DORA register template is open.
+const openness = listed.open ?? [];
 ```
 
 ```js
@@ -177,7 +182,14 @@ display(nothing
       ${count(off, "switched off", off === 0)}
     </div>
     <p>${framework}, in DPM ${release} — the query's answer, asked again when you change
-      the release above.</p>`);
+      the release above.</p>
+    ${openness.length === 0
+      ? ""
+      : html`<p class="open-table"><strong>An open table.</strong> The reporter adds the
+          ${openness.join(" and the ")}, so the ${grid.numRows.toLocaleString("sv")} cells
+          below are the shape of what is filed rather than the size of it — one
+          ${openness[0] === "rows" ? "row" : openness[0].replace(/s$/, "")} per thing
+          reported, as many as there are.</p>`}`);
 ```
 
 ## Every cell
