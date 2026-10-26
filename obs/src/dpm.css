@@ -103,3 +103,45 @@
 #observablehq-main details.why p {
   margin: 0.5rem 0 0;
 }
+
+/* The index, grouped by what a reporter actually files. Collapsed, because nine groups
+ * open at once is the list of 312 again with headings in it.
+ */
+.filings details {
+  border-bottom: solid 1px var(--theme-foreground-faintest);
+  padding: 0.5rem 0;
+}
+
+.filings summary {
+  cursor: pointer;
+  font: 600 15px var(--sans-serif);
+  color: var(--theme-foreground-alt);
+}
+
+.filings .how-many {
+  color: var(--theme-foreground-muted);
+  font-weight: 400;
+}
+
+.filings .codes {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.15rem 1.5rem;
+  margin: 0.75rem 0 0.5rem;
+  font: 13px/1.4 var(--sans-serif);
+}
+
+@container (min-width: 560px) {
+  .filings .codes {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.filings .codes a {
+  font-family: var(--monospace);
+  font-size: 12px;
+}
+
+.filings .codes span {
+  color: var(--theme-foreground-muted);
+}

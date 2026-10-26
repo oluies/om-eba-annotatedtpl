@@ -31,3 +31,13 @@ pre { overflow: auto; padding: .6rem; border: 1px solid var(--edge); border-radi
 .about summary { cursor: pointer; font-weight: 600; font-size: .9rem; }
 .about p { max-width: 46rem; opacity: .85; }
 input.rows { width: 5rem; }
+
+/* Where the answer will be, before anything has been asked. The page used to open on a
+   row of controls and a screenful of nothing. */
+.starters { margin: .6rem 0 1.2rem; max-width: 46rem; }
+.starters .what { font-size: .85rem; opacity: .75; margin: 0 0 .6rem; }
+.starters .examples { display: flex; flex-wrap: wrap; gap: .5rem; }
+.starters .examples button { font-weight: 500; text-align: left; border-radius: 999px;
+  padding: .35rem .8rem; opacity: .95; }
+.starters .examples button:hover { border-color: currentColor; }
+.starters .elsewhere { font-size: .85rem; opacity: .75; margin: .9rem 0 0; }

@@ -1,8 +1,15 @@
 ```js
 const code = observable.params.code;
 const catalogue = await FileAttachment("../data/catalogue.json").json();
-const name = (catalogue.find((d) => d.code === code) || {}).name ?? "";
+const listed = catalogue.find((d) => d.code === code) || {};
+const name = listed.name ?? "";
 const published = await FileAttachment("../data/releases.json").json();
+
+// Which framework files this template, from the catalogue rather than from the reader.
+// No template of the 312 belongs to two, so a free choice was a control whose every
+// setting but one produced "no reportable cells in DPM x" - an empty page that reads like
+// a fault. It stays a list in case a publish ever holds one that is in two.
+const belongs = listed.frameworks?.length ? listed.frameworks : [code.startsWith("F_") ? "FINREP" : "COREP"];
 ```
 
 ```js
@@ -75,7 +82,10 @@ const release = view(Inputs.select(published, {
 ```
 
 ```js
-const framework = view(Inputs.select(["FINREP", "COREP"], {label: "Framework", value: code.startsWith("F_") ? "FINREP" : "COREP"}));
+// A select only where there is something to select.
+const framework = belongs.length > 1
+  ? view(Inputs.select(belongs, {label: "Framework", value: belongs[0]}))
+  : belongs[0];
 ```
 
 ```js
@@ -158,17 +168,16 @@ const count = (number, what, quiet = false) => html`<div class="card ${quiet ? "
   <span class="big">${number}</span><span class="what">${what}</span></div>`;
 
 display(nothing
-  ? html`<p><em>${code} has no reportable cells in DPM ${release} under ${framework}. A
-      template is introduced and withdrawn; try another release, or the other
-      framework.</em></p>`
+  ? html`<p><em>${code} is a ${framework} template, and it has no reportable cells in DPM
+      ${release}: a template is introduced and withdrawn. Try another release.</em></p>`
   : html`<div class="counts">
       ${count(grid.numRows.toLocaleString("sv"), "reportable cells")}
       ${count(dimensions.numRows, "dimensions")}
       ${count(checks.numRows, "validation rules")}
       ${count(off, "switched off", off === 0)}
     </div>
-    <p>In DPM ${release} — the query's answer, asked again when you change the release
-      above.</p>`);
+    <p>${framework}, in DPM ${release} — the query's answer, asked again when you change
+      the release above.</p>`);
 ```
 
 ## Every cell

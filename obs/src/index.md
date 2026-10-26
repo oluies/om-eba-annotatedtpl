@@ -38,12 +38,44 @@ const search = view(Inputs.search(catalogue, {placeholder: `one of ${catalogue.l
 
 ```js
 Inputs.table(search, {
-  columns: ["code", "name"],
-  header: {code: "template", name: "name"},
-  format: {code: (d) => html`<a href="./t/${d}">${d}</a>`},
+  columns: ["code", "name", "modules"],
+  header: {code: "template", name: "name", modules: "filed in"},
+  format: {
+    code: (d) => html`<a href="./t/${d}">${d}</a>`,
+    modules: (d) => (d ?? []).join(", "),
+  },
+  width: {code: 110},
   rows: 20,
 })
 ```
+
+## Or by what you file
+
+```js
+// The module is the submission: own funds, leverage, large exposures, LCR and NSFR go in
+// separately, and a reader who has to fill one in knows which. 312 codes in one run is a
+// list nobody can navigate; this is the grouping they already have.
+const filings = new Map();
+for (const template of catalogue) {
+  for (const module of template.modules ?? []) {
+    if (!filings.has(module)) filings.set(module, []);
+    filings.get(module).push(template);
+  }
+}
+const ordered = [...filings].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+```
+
+```js
+display(html`<div class="filings">${ordered.map(([module, templates]) => html`<details>
+  <summary>${module} <span class="how-many">${templates.length} templates</span></summary>
+  <div class="codes">${templates.map((template) => html`<div>
+    <a href="./t/${template.code}">${template.code}</a> <span>${template.name}</span>
+  </div>`)}</div>
+</details>`)}</div>`);
+```
+
+A template is often in more than one: `C_00.01` says what kind of report this is, so it
+heads every COREP submission. The counts therefore add up to more than ${catalogue.length}.
 
 ## Where the rest is
 

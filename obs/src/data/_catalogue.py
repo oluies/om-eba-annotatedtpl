@@ -27,8 +27,27 @@ FRAMEWORKS = os.environ.get("OBS_FRAMEWORKS", "COREP FINREP").split()
 RELEASES = os.environ.get("OBS_RELEASES", "").split()
 
 con = dpm.connect(os.environ.get("DPM2_DB") or None)
-seen: dict[str, str] = {}
-for framework in FRAMEWORKS:
-    for row in dpm.templates_of(con, framework, RELEASES):
-        seen.setdefault(row["table_code"], row["name"])
-json.dump([{"code": code, "name": name} for code, name in sorted(seen.items())], sys.stdout)
+
+# The framework and the modules go with the template, not only its name. A page asked
+# under the wrong framework can only answer "no reportable cells" - and no template of the
+# 312 is in two frameworks, so that choice was a control whose every other setting was
+# wrong. The modules are what the index groups by: own funds, leverage, large exposures,
+# LCR and NSFR are separate submissions, and a run of 312 codes is not navigable.
+found = [(framework, row) for framework in FRAMEWORKS for row in dpm.templates_of(con, framework, RELEASES)]
+of_code = {
+    code: [row for framework, row in found if row["table_code"] == code]
+    for code in {row["table_code"] for _, row in found}
+}
+
+json.dump(
+    [
+        {
+            "code": code,
+            "name": of_code[code][0]["name"],
+            "frameworks": sorted({framework for framework, row in found if row["table_code"] == code}),
+            "modules": sorted({module for row in of_code[code] for module in (row["modules"] or "").split()}),
+        }
+        for code in sorted(of_code)
+    ],
+    sys.stdout,
+)

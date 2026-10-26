@@ -107,7 +107,11 @@ SELECT   tv.Code AS table_code,
          -- index and the page it links to disagreeing about a template's name is the
          -- kind of small wrongness that makes a reader doubt the rest.
          arg_max(tv.Name, tv.StartReleaseID) AS name,
-         arg_max(tv.TableVID, tv.StartReleaseID) AS table_vid
+         arg_max(tv.TableVID, tv.StartReleaseID) AS table_vid,
+         -- Which modules file this template. It is the grouping a reporter already has:
+         -- own funds, leverage, large exposures, LCR, NSFR are separate submissions, and
+         -- a list of 312 template codes in one run is not navigable by anyone.
+         string_agg(DISTINCT mv.Code, ' ' ORDER BY mv.Code) AS modules
 FROM     TableVersion tv
 JOIN     ModuleVersionComposition mvc ON mvc.TableVID = tv.TableVID
 JOIN     ModuleVersion mv ON mv.ModuleVID = mvc.ModuleVID

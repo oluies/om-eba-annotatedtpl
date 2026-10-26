@@ -1746,9 +1746,15 @@ when describing tables, columns and glossary terms in OpenMetadata.
 **{len(DPS)} datapoints · {len(TEMPLATES)} templates · {len(VOCAB["dimensions"])} dimensions over
 {len(VOCAB["domains"])} domains · {sum(len(m) for m in VOCAB["domains"].values())} controlled values.**
 
-Ask the model a question without installing anything:
-**<https://oluies.github.io/om-eba-annotatedtpl/>** — DPM 4.2.1, 4.3 and 4.4,
-queried in the browser with DuckDB-WASM.
+Two published pages, neither of which needs anything installed:
+
+- **[A page per template](https://oluies.github.io/om-eba-annotatedtpl/templates/)** — 312
+  of them, COREP and FINREP: every cell searchable, the official Swedish and German beside
+  the English, what the instructions annex says a row is, what has changed since the first
+  release, and which rules check it. The DPM release is a control on the page.
+- **[Ask a question](https://oluies.github.io/om-eba-annotatedtpl/)** — eleven questions
+  over the same model, answered in your browser with DuckDB-WASM, each with the SQL and the
+  file it read beside the answer.
 
 ![The pack loaded as Knowledge Pages in OpenMetadata](docs/knowledge-pages.png)
 
@@ -1766,7 +1772,7 @@ queried in the browser with DuckDB-WASM.
 | `dpm_lookup.py` | Ten lookups over the whole DPM 2.0 database: a template, a cell, a reported datapoint id, a report's column header, a validation code, every rule reaching a template, what a template breaks down by, the cells one dimension member covers, which rows add up to which, and what has happened to a datapoint or a coordinate across releases | A warehouse table is COREP, FINREP or anything but PAY and DORA, you need the codes behind a business aggregate, or you are reading a report or a validation outcome |
 | `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file, as a CLI and as the `check_report` tool | You want to know whether a report adds up before you send it, or want an agent to check its own arithmetic |
 | `web/` | A query page in Scala.js over that tree: pick a question, fill it in, see the answer and the SQL, with a small model that turns a question into one of eleven — published at [oluies.github.io/om-eba-annotatedtpl](https://oluies.github.io/om-eba-annotatedtpl/) | You want the model without installing anything |
-| `obs/` | A page per template in Observable Framework: every cell searchable, the official Swedish and German beside the English, and the release a control rather than a build | You are reading about one template |
+| `obs/` | A page per template in Observable Framework: every cell searchable, the official Swedish and German beside the English, and the release a control rather than a build — published at [/templates/](https://oluies.github.io/om-eba-annotatedtpl/templates/) | You are reading about one template |
 | `source/gen_wasm_data.py` | Writes the model as partitioned parquet a browser can query with DuckDB-WASM | You are building a web page over the DPM |
 | `source/score_translation.py` | Scores a local translation model against the Official Journal's own wording, since we hold it | Someone proposes machine-translating the labels |
 | `source/fetch_its_labels.py` | The official Swedish and German row labels, from the Official Journal: the DPM is English only, but the templates are an annex to an Implementing Regulation and that is published in all 24 languages | You want a label in a language the model does not carry |
@@ -2257,6 +2263,32 @@ rows and pointed at a CSV.
 
 Quarto still renders the same content as markdown, which is what goes into OpenMetadata.
 A catalogue article is static text; a public page should not be.
+
+**Which templates get a page.** The catalogue is built from the release named in
+`templates_from`, but it is scoped to the releases actually being published: a template
+withdrawn before the oldest of them answers "no reportable cells" under every release a
+reader can choose. That was 37 of 349 pages - C_02.00, C_16.00.a, C_24.01, C_91 through
+C_96 - each honest and each useless. 312 remain. The framework comes from the catalogue
+too rather than being a control: no template of the 312 is filed under two frameworks, so
+a free choice was one whose every setting but one produced an empty page.
+
+**The page fetches each file; it does not let DuckDB read it.** httpfs reads a parquet over
+HTTP ranges, and GitHub Pages serves these gzipped - the `content-length` is then the
+compressed length while a byte range comes from the uncompressed file, so DuckDB reads the
+footer where it was told the end is and answers `No magic bytes found at end of file`.
+Which of the two variants the CDN holds decides whether it happens: the COREP pages passed
+while every FINREP page lost its dimensions, and the query page showed a reader
+`NetworkError: Failed to execute 'send' on 'XMLHttpRequest'`. Both pages now fetch each
+file once, which decompresses it, and hand DuckDB the bytes. Anything else built over this
+tree should do the same.
+
+**A table is the content, not an illustration.** Observable's theme caps `p, table, figure`
+at the prose measure, 640px, and ends what does not fit with an ellipsis - which showed
+about fifteen characters of a row label and of each of the three languages, 157 of 550
+cells clipped on one page. The prose keeps its measure and the tables get the column. Only
+the narrow columns are given a width: under `table-layout: fixed` the rest share what is
+left, so a table is exactly as wide as the page, where sizing every column made it wider
+and pushed the last two off the edge.
 
 The regulation's own versions are the opposite case and get no control. The four
 consolidations of 2021/451 are two distinct texts, and they differ in 58 of 4 273

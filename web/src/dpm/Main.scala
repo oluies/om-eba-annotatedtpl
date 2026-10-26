@@ -307,6 +307,57 @@ object Main:
             case js.JavaScriptException(value) => value.toString
             case other => other.getMessage)
 
+  /** What stands where the answer will be, before anything has been asked.
+    *
+    * The page opened on a row of controls and then a screenful of nothing, which tells a
+    * reader neither what it can answer nor that the answer appears here. These are three
+    * questions worth asking, as buttons that fill the blanks and ask. Nothing is loaded
+    * until one is pressed - that is why this is a set of starting points and not an
+    * answer rendered at startup, which would cost every visitor the 8 MB engine.
+    */
+  private def starters: HtmlElement =
+    val examples = List(
+      (
+        "Which cells does C_01.00 have?",
+        "cells",
+        Map("framework" -> "COREP", "table" -> "C_01.00", "module" -> "COREP_OF"),
+      ),
+      ("What does v0174_m check, and is it still switched on?", "rule", Map("rule_code" -> "v0174_m")),
+      (
+        "Which rules reach F_02.00?",
+        "rules",
+        Map("framework" -> "FINREP", "table" -> "F_02.00", "module" -> "FINREP9"),
+      ),
+    )
+    div(
+      cls := "starters",
+      p(
+        cls := "what",
+        s"${Questions.all.size} questions, each one a statement that is known to be right and whose only ",
+        "variables are the blanks above. Start with one of these:",
+      ),
+      div(
+        cls := "examples",
+        examples.map: (asked, id, filled) =>
+          button(
+            tpe := "button",
+            asked,
+            onClick --> { _ =>
+              question.set(Questions.byId(id))
+              slots.set(filled)
+              ask()
+            },
+          ),
+      ),
+      p(
+        cls := "elsewhere",
+        "Or read a template rather than query it: ",
+        a(href := "templates/", "a page per template"),
+        " — every cell, the official Swedish and German beside the English, what has changed ",
+        "since the first release, and which rules check it.",
+      ),
+    )
+
   private def page: HtmlElement =
     div(
       cls := "page",
@@ -314,7 +365,8 @@ object Main:
       p(
         cls := "lede",
         "Pick a question and fill it in. Every answer shows the SQL that produced it, and the ",
-        "file it read. No server: DuckDB-WASM queries parquet over HTTP range requests.",
+        "file it read. No server: the parquet is fetched into DuckDB-WASM and queried in ",
+        "your browser.",
       ),
       div(
         cls := "controls",
@@ -416,6 +468,10 @@ object Main:
         case _ => emptyNode
       ,
       p(cls := "status", child.text <-- status.signal),
+      child <-- answer.signal.map:
+        case None => starters
+        case Some(_) => emptyNode
+      ,
       detailsTag(
         cls := "assistant",
         summaryTag("…or ask in your own words (needs a model, 376 MB, loaded only if you ask)"),

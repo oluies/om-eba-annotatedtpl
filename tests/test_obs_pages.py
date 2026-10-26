@@ -304,3 +304,35 @@ def test_no_table_gives_every_column_a_width():
         columns = set(re.findall(r'"(\w+)"', named.group(1)))
         widths = set(re.findall(r"(\w+):", sized.group(1)))
         assert widths < columns, f"every column of {sorted(columns)} has a width, so the table overflows"
+
+
+@needs_dpm2
+def test_the_catalogue_carries_the_framework_and_the_modules():
+    """The page reads the framework off the catalogue instead of asking the reader, and the
+    index groups by what a reporter files. Both need more than a code and a name."""
+    import dpm_pages as dpm
+
+    with dpm.connect(str(DPM2_DB)) as con:
+        found = dpm.templates_of(con, "COREP", ["4.2.1", "4.3", "4.4"])
+    assert found, "no COREP templates, which cannot be right"
+    assert all(row["modules"] for row in found), "a template is filed in no module"
+    nature = next(row for row in found if row["table_code"] == "C_00.01")
+    assert len(nature["modules"].split()) > 1, "C_00.01 heads every COREP submission"
+
+
+def test_the_framework_is_not_a_free_choice_on_a_template_page():
+    """A template belongs to one framework, and under the other it has no cells at all -
+    so the selector could only produce "no reportable cells in DPM x", an empty page that
+    reads like a fault. It is a select only where the catalogue lists more than one."""
+    source = page()
+    assert 'Inputs.select(["FINREP", "COREP"]' not in source, "the framework is a free choice again"
+    assert "listed.frameworks" in source, "the page no longer reads the framework off the catalogue"
+
+
+def test_the_index_groups_by_what_is_filed():
+    """312 codes in one run is a list nobody can navigate. The module is the submission -
+    own funds, leverage, large exposures, LCR, NSFR - and it is what a reader already
+    knows they are filling in."""
+    index = (OBS / "src" / "index.md").read_text(encoding="utf-8")
+    assert "template.modules" in index, "the index no longer reads the modules"
+    assert "filings" in index, "the grouping is gone"
