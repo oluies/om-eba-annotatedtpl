@@ -2765,7 +2765,14 @@ _OFFENDERS = {"+": "renders as &amp;#43; in OpenMetadata"}
 # correct document impossible to generate.
 _NOT_IMPORTED = {"README_DPM2.md"}
 
-_GUARDED = [p for p in sorted(OUT.rglob("*.md")) if "source" not in p.parts and p.name not in _NOT_IMPORTED]
+# The same scoping, by directory: `source`, `obs` and `web` hold code. `obs/src/t/[code].md`
+# is an Observable page - JavaScript in a markdown file, never imported - and the regex in
+# it that keeps a file name safe cannot be written without a plus.
+_NOT_IMPORTED_FROM = {"source", "obs", "web"}
+
+_GUARDED = [
+    p for p in sorted(OUT.rglob("*.md")) if not (_NOT_IMPORTED_FROM & set(p.parts)) and p.name not in _NOT_IMPORTED
+]
 _problems = [
     f"{path.relative_to(OUT)}:{n}: {reason}\n    {line.strip()[:100]}"
     for path in _GUARDED

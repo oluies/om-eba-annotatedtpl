@@ -235,3 +235,15 @@ def test_an_absent_table_is_iterable():
     the dimensions table belongs."""
     source = page()
     assert "Object.assign([]" in source, "the placeholder for an absent table is not an array"
+
+
+def test_the_page_is_not_guarded_as_openmetadata_markdown():
+    """gen_pack.py fails the build on a plus sign, because OpenMetadata's viewer shows one
+    as a literal &amp;#43; - and it found them by globbing every *.md in the repository.
+    This page is markdown by extension and JavaScript by content: the regex that keeps a
+    registered file name safe cannot be written without a plus, and it is never imported.
+    """
+    guard = (REPO / "source" / "gen_pack.py").read_text(encoding="utf-8")
+    scope = guard[guard.index("_NOT_IMPORTED_FROM") :].split("\n\n")[0]
+    assert '"obs"' in scope, "the guard globs the Observable page again"
+    assert "+" in page(), "the page no longer needs the exemption, so take it back out"
