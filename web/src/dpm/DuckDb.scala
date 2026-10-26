@@ -44,5 +44,8 @@ object DuckDbModule extends js.Object:
   class AsyncDuckDB(logger: js.Object, worker: js.Object) extends js.Object:
     def instantiate(mainModule: String, pthreadWorker: js.UndefOr[String]): js.Promise[Unit] = js.native
     def connect(): js.Promise[Connection] = js.native
+    // Bytes rather than a URL, because Pages gzips the parquet and httpfs then reads
+    // the footer at the compressed length. See Files.
+    def registerFileBuffer(name: String, buffer: js.typedarray.Uint8Array): js.Promise[Unit] = js.native
   @js.native
   class VoidLogger() extends js.Object

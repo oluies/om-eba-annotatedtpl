@@ -113,6 +113,7 @@ object Main:
               worker = makeWorker(bundle.mainWorker)
               db = new DuckDbModule.AsyncDuckDB(new DuckDbModule.VoidLogger(), worker)
               _ <- db.instantiate(bundle.mainModule, bundle.pthreadWorker).toFuture
+              _ = Files.use(db)
               con <- db.connect().toFuture
               ready <- preload(con)
             yield
@@ -137,7 +138,7 @@ object Main:
   private def preload(con: Connection): scala.concurrent.Future[Connection] =
     Data.cached
       .foldLeft(scala.concurrent.Future.successful(())): (before, name) =>
-        before.flatMap(_ => con.query(Data.preload(name)).toFuture.map(_ => ()))
+        before.flatMap(_ => Files.localise(Data.preload(name)).flatMap(con.query(_).toFuture).map(_ => ()))
       .map(_ => con)
 
   /** The worker has to come from this origin, so it is a blob that imports the CDN one -
@@ -165,9 +166,9 @@ object Main:
       wanted.foldLeft(scala.concurrent.Future.successful(())): (before, slot) =>
         val (name, forSlot) = slot
         before.flatMap: _ =>
-          con
-            .query(forSlot(filled))
-            .toFuture
+          Files
+            .localise(forSlot(filled))
+            .flatMap(con.query(_).toFuture)
             .map: table =>
               // entries, not values: the Scala.js facade has the first and not the
               // second, and the query returns one column called value either way.
@@ -195,7 +196,9 @@ object Main:
     val started = System.currentTimeMillis()
     val result = for
       con <- connection()
-      table <- con.query(sql).toFuture
+      // The statement shown under the answer keeps the URL; this is the copy DuckDB runs.
+      statement <- Files.localise(sql)
+      table <- con.query(statement).toFuture
     yield table
     result.onComplete:
       case Success(table) =>
