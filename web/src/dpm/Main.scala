@@ -342,9 +342,18 @@ object Main:
           button(
             tpe := "button",
             asked,
+            // The Ask button is disabled while a query runs and these were not, although
+            // they stay on screen for the whole of the first one - there is no answer yet.
+            // Two clicks during the 8 MB engine load started two queries, and the slower
+            // one landed last: C_01.00's cells under a question that reads `rule`, which
+            // is the page disagreeing with itself that the dropdown above guards against.
+            disabled <-- running.signal,
             onClick --> { _ =>
               question.set(Questions.byId(id))
               slots.set(filled)
+              // What the dropdown does for the same reason: `module` has no options query,
+              // so another question's module list would survive into this one's datalist.
+              choices.set(Map.empty)
               ask()
             },
           ),
