@@ -122,10 +122,15 @@ def test_a_missing_catalogue_is_a_site_with_no_pages_not_a_broken_build():
     """A fresh checkout has no catalogue.json. The config still has to load."""
     helper = OBS / "src" / "data" / "known.js"
     got = subprocess.run(
-        ["node", "--input-type=module", "-e",
-         f"import {{templates}} from {json.dumps(str(helper))};"
-         "console.log(JSON.stringify(templates().length));"],
-        capture_output=True, text=True, cwd=OBS,
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            f"import {{templates}} from {json.dumps(str(helper))};console.log(JSON.stringify(templates().length));",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=OBS,
     )
     assert got.returncode == 0, got.stderr
     assert got.stdout.strip().isdigit(), got.stdout
