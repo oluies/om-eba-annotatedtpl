@@ -346,27 +346,57 @@ TABLES = [
     ),
     # Rows whose wording changed while the coordinate and the datapoint stayed - the
     # change nobody notices, because nothing in a report looks different.
+    #
+    # The condition is on the coordinate and not on the header. A header's label can vary
+    # across versions that this template never carried, and the framework join fans a row
+    # out once per framework the template is in - so filtering on "this HeaderID has more
+    # than one wording somewhere" published rows that show one wording, several times
+    # over. What a page claims is that *this row* was reworded, so that is what is asked.
     Published(
         "relabelled",
         f"""
-        WITH fw AS ({FRAMEWORK_OF_TABLE})
-        SELECT   fw.framework, tv.Code AS table_code, hv.Code AS row_code,
+        WITH fw AS ({FRAMEWORK_OF_TABLE}),
+        said AS (
+          SELECT DISTINCT
+                 fw.framework, tv.Code AS table_code, hv.Code AS row_code,
+                 th.HeaderID AS header_id,
                  rs.Code AS from_release, coalesce(re.Code, '') AS to_release,
                  trim(hv.Label) AS label, hv.StartReleaseID AS start_release_id
-        FROM     TableVersionHeader th
-        JOIN     TableVersion tv ON tv.TableVID = th.TableVID
-        JOIN     HeaderVersion hv ON hv.HeaderID = th.HeaderID
-        JOIN     fw ON fw.table_code = tv.Code
-        LEFT JOIN Release rs ON rs.ReleaseID = hv.StartReleaseID
-        LEFT JOIN Release re ON re.ReleaseID = hv.EndReleaseID
-        WHERE    hv.Code IS NOT NULL
-             AND th.HeaderID IN (SELECT HeaderID FROM HeaderVersion
-                                 GROUP BY HeaderID HAVING count(DISTINCT trim(Label)) > 1)
+          FROM   TableVersionHeader th
+          JOIN   TableVersion tv ON tv.TableVID = th.TableVID
+          JOIN   HeaderVersion hv ON hv.HeaderID = th.HeaderID
+          JOIN   fw ON fw.table_code = tv.Code
+          LEFT JOIN Release rs ON rs.ReleaseID = hv.StartReleaseID
+          LEFT JOIN Release re ON re.ReleaseID = hv.EndReleaseID
+          WHERE  hv.Code IS NOT NULL
+        )
+        -- header_id is published because the row is the header, not the code: a page that
+        -- groups two rows sharing a code tells the same story this query had to be fixed
+        -- for telling.
+        SELECT   framework, table_code, row_code, header_id, from_release, to_release,
+                 label, start_release_id
+        FROM     said
+        -- By header and not by row code: a template can serve one code from two headers -
+        -- C_17.01.a has both "TOTAL EVENT TYPES" and "Total recovery from insurance" at
+        -- 0080 - and those are two rows sharing a code, not a row that was reworded.
+        QUALIFY  count(DISTINCT label) OVER (PARTITION BY framework, table_code, header_id) > 1
         """,
         "table_code, row_code, start_release_id",
         partition_by="framework",
     ),
 ]
+
+
+def lookup(name: str) -> Published:
+    """One published table by name, raising rather than returning None.
+
+    So that a test naming a table turns a rename into a failure instead of quietly
+    checking nothing.
+    """
+    for table in TABLES:
+        if table.name == name:
+            return table
+    raise KeyError(f"{name!r} is not published; there is {', '.join(t.name for t in TABLES)}")
 
 
 def copy_statement(table: Published, out: Path) -> str:

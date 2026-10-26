@@ -77,10 +77,13 @@ const drift = await db.query(`
   FROM '${at(release, `template_changes/framework=${framework}/data_0.parquet`)}'
   WHERE table_code = '${code}'`);
 
+// Ordered by header and not by row code: a template can serve one code from two
+// headers, and reading them as one row makes a pair of unrelated labels look like a
+// rewording. The row is the header.
 const reworded_rows = await db.query(`
   SELECT row_code, from_release, to_release, label
   FROM '${at(release, `relabelled/framework=${framework}/data_0.parquet`)}'
-  WHERE table_code = '${code}' ORDER BY row_code, start_release_id`);
+  WHERE table_code = '${code}' ORDER BY row_code, header_id, start_release_id`);
 
 const checks = await db.query(`
   WITH here AS (SELECT DISTINCT operation_vid
