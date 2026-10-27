@@ -433,3 +433,30 @@ def test_an_open_table_is_marked_as_one():
     assert corep["C_09.01.b"]["open_sheets"], "C_09.01.b is one sheet per country"
     assert not corep["C_01.00"]["open_rows"], "C_01.00 is a closed template"
     assert "open-table" in page(), "the page never says a template is open"
+
+
+def test_the_theme_is_applied_by_a_script_that_runs_before_the_page_is_painted():
+    """A `type="module"` script is deferred by the HTML spec: it runs after the document
+    is parsed, and nothing makes the browser wait for it before painting. So the stored
+    appearance cannot be applied from a module - a reader on a dark machine who chose
+    light would see dark first, on every page, because Framework navigates with a full
+    load. It is a classic inline script in <head>, the way the query page does it.
+    """
+    config = (OBS / "observablehq.config.js").read_text(encoding="utf-8")
+    head = config[config.index("head: `") : config.index("header:")]
+    applied = head.index("data-theme")
+    module = head.index('type="module"')
+    assert applied < module, "the appearance is applied from a module script, which is deferred"
+    inline = head[head.index("<script>") : applied]
+    assert "type=" not in inline, "the pre-paint script is not a classic script"
+    query_page = (REPO / "web" / "public" / "index.html").read_text(encoding="utf-8")
+    assert "dpm-appearance" in query_page, "the query page lost its own pre-paint script"
+
+
+def test_a_table_is_named_after_its_own_heading():
+    """display() can put a heading and a table in one cell, and both reworded-rows tables
+    do. A walk that starts at the box's parent skips those headings and announces the
+    table as the section above: a screen reader read "Rows the regulation has reworded"
+    as "The same rows in Swedish and German"."""
+    walk = (OBS / "src" / "keyboard.js").read_text(encoding="utf-8")
+    assert "let before = box;" in walk, "the walk starts above the box and skips its own heading"

@@ -9,9 +9,24 @@ export default {
   dynamicPaths: templates().map(({code}) => `/t/${code}`),
   pages: [{name: "What this is", path: "/"}],
   // The theme caps every table at the prose measure. On a page whose content is tables,
-  // that is what clips the labels, so this is loaded after it. The script runs before the
-  // first paint: a reader who chose light should not see dark first.
+  // that is what clips the labels, so the stylesheet is loaded after it.
+  //
+  // The stored appearance is applied by a classic inline script rather than by the module
+  // below, because a module script is deferred: it runs after the document is parsed, and
+  // nothing makes the browser wait for it before painting. A reader on a dark machine who
+  // chose light would see dark first, on every page, because Framework navigates between
+  // pages with a full load. The key is repeated here rather than imported for the same
+  // reason - an import is a module - and web/public/index.html does the same for the
+  // query page.
   head: `<link rel="stylesheet" href="/dpm.css">
+    <script>
+      try {
+        var chosen = localStorage.getItem("dpm-appearance");
+        if (chosen === "light" || chosen === "dark") document.documentElement.setAttribute("data-theme", chosen);
+      } catch (problem) {
+        // Storage switched off. Following the machine is the default anyway.
+      }
+    </script>
     <script type="module" src="/appearance.js"></script>
     <script type="module" src="/keyboard.js"></script>`,
   // The bar every page gets, which is where the light/dark control puts itself.

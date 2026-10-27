@@ -9,7 +9,11 @@
 // So each one is made focusable, and named after the heading it sits under, which is what
 // a screen reader announces when the focus lands there: "Every cell, region".
 const named = (box) => {
-  let before = box.parentElement;
+  // From the box itself, not from its parent: a display() can put the heading and the
+  // table in one cell, and both reworded-rows tables do. Starting a level up skipped
+  // their <h3> and announced them as the section above - "The same rows in Swedish and
+  // German" for a table of what the regulation reworded.
+  let before = box;
   while (before) {
     for (let node = before.previousElementSibling; node; node = node.previousElementSibling) {
       if (/^H[1-6]$/.test(node.tagName)) return node.textContent.trim();

@@ -47,8 +47,9 @@ function control() {
   return held;
 }
 
-// Applied while <head> is parsing, before the first paint, so a reader who chose light
-// never sees dark first. The control itself needs the header, which comes later.
+// A repeat of what the inline script in <head> has already done - this module is deferred
+// and cannot be what beats the first paint. It stands for the case where the inline script
+// could not run, and for keeping the stored value and the attribute in step.
 apply(remembered());
 
 const place = () => document.querySelector("#observablehq-header")?.append(control());
