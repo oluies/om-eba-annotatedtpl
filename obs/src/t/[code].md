@@ -120,6 +120,14 @@ const reads = [
   `${base}its_label_changes.csv`,
 ];
 
+// The four numbers the page opens with, precomputed by the publish from the same
+// statements the queries below use. This is the one read whose answer is wanted before
+// DuckDB-WASM exists - 360 ms to instantiate, 144 for the queries - so it is fetched as
+// JSON and read by hand rather than through the engine.
+const headline = fetch(at(release, `counts/${framework}.json`))
+  .then((answer) => (answer.ok ? answer.json() : {}))
+  .catch(() => ({}));
+
 // This cell names no engine, so Framework runs it while DuckDB-WASM is still arriving.
 // The relabelled partition is absent for a framework with no reworded row, and a fetch
 // that rejects with nobody waiting is an unhandled rejection in the console - so each is
@@ -202,24 +210,39 @@ const checks = await maybe(
 # ${code} — ${name}
 
 ```js
-const off = checks.toArray().filter((d) => !d.active).length;
-const nothing = grid.numRows === 0;
-```
-
-```js
 // Four numbers rather than a sentence of four numbers: this is what the page answers, and
 // a reader scanning for it should not have to read a paragraph to find it. `.card`, `.big`
 // and the grid are the theme's own, so they follow light and dark without being told.
+//
+// Read from the precomputed file and not from the queries, so the page answers before the
+// engine arrives. They are the same numbers: the publish computes them from the same
+// statements, which is what keeps one fact from becoming two that disagree while the
+// tables are still loading. A tree published before this existed has no file, and then
+// the numbers wait for the queries as they used to.
+// Naming `grid` or `checks` here as a fallback would undo the whole point: Observable
+// resolves a cell's inputs from the names in it, so one mention makes this wait for the
+// engine. The tree and the pages are published by the same workflow, so the file is there;
+// `?data=` pointed at an older tree is the one case where it is not, and that says so
+// rather than pretending the template has no cells.
+const numbers = await headline;
+const precomputed = Object.keys(numbers).length > 0;
+const counted = numbers[code];
+const cellCount = counted ? counted[0] : 0;
+const off = counted ? counted[3] : 0;
+
 const count = (number, what, quiet = false) => html`<div class="card ${quiet ? "quiet" : ""}">
   <span class="big">${number}</span><span class="what">${what}</span></div>`;
 
-display(nothing
+display(!precomputed
+  ? html`<p><em>The tree this page is reading was published before the counts were, so the
+      numbers are in the tables below rather than up here.</em></p>`
+  : !counted
   ? html`<p><em>${code} is a ${framework} template, and it has no reportable cells in DPM
       ${release}: a template is introduced and withdrawn. Try another release.</em></p>`
   : html`<div class="counts">
-      ${count(grid.numRows.toLocaleString("sv"), "reportable cells")}
-      ${count(dimensions.numRows, "dimensions")}
-      ${count(checks.numRows, "validation rules")}
+      ${count(cellCount.toLocaleString("sv"), "reportable cells")}
+      ${count(counted[1], "dimensions")}
+      ${count(counted[2], "validation rules")}
       ${count(off, "switched off", off === 0)}
     </div>
     <p>${framework}, in DPM ${release} — the query's answer, asked again when you change
@@ -227,7 +250,7 @@ display(nothing
     ${openness.length === 0
       ? ""
       : html`<p class="open-table"><strong>An open table.</strong> The reporter adds the
-          ${openness.join(" and the ")}, so the ${grid.numRows.toLocaleString("sv")} cells
+          ${openness.join(" and the ")}, so the ${cellCount.toLocaleString("sv")} cells
           below are the shape of what is filed rather than the size of it — one
           ${openness[0] === "rows" ? "row" : openness[0].replace(/s$/, "")} per thing
           reported, as many as there are.</p>`}`);

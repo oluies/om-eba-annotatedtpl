@@ -399,6 +399,69 @@ def lookup(name: str) -> Published:
     raise KeyError(f"{name!r} is not published; there is {', '.join(t.name for t in TABLES)}")
 
 
+# The four numbers a template page opens with, so that the page can show them before the
+# engine exists. DuckDB-WASM takes about 360 ms to instantiate and the queries another 144,
+# and until both have happened a reader has a heading and nothing under it.
+#
+# Built out of the published statements themselves rather than written again here: the
+# DISTINCT in each one is load-bearing - the page counts distinct (row, label, column,
+# label, datapoint) for cells and distinct (code, severity, active, module, taxonomy) for
+# rules, so a rule in two modules counts twice - and a second copy of that reasoning would
+# be two numbers for one fact, disagreeing in front of a reader as the tables arrive.
+HEADLINE = """
+WITH grid AS (
+    SELECT framework, table_code, count(*) AS cells
+    FROM (SELECT DISTINCT framework, table_code, row_code, row_label, column_code, column_label, datapoint
+          FROM ({cells}))
+    GROUP BY ALL
+), breakdown AS (
+    SELECT framework, table_code, count(DISTINCT dimension) AS dimensions
+    FROM ({members}) GROUP BY ALL
+), checks AS (
+    SELECT reaching.framework, reaching.table_code, r.rule_code, r.severity, r.active, r.module, r.taxonomy_version
+    FROM (SELECT DISTINCT framework, table_code, operation_vid FROM ({reaching})) reaching
+    JOIN ({rules}) r USING (operation_vid)
+    GROUP BY ALL
+), checked AS (
+    SELECT framework, table_code, count(*) AS rules,
+           count(*) FILTER (WHERE NOT active) AS switched_off
+    FROM checks GROUP BY ALL
+)
+SELECT   g.framework, g.table_code, g.cells,
+         coalesce(b.dimensions, 0)   AS dimensions,
+         coalesce(c.rules, 0)        AS rules,
+         coalesce(c.switched_off, 0) AS switched_off
+FROM     grid g
+LEFT JOIN breakdown b USING (framework, table_code)
+LEFT JOIN checked c USING (framework, table_code)
+ORDER BY g.framework, g.table_code
+"""
+
+
+def headline_statement() -> str:
+    """The statement, with each published table's own SQL inlined."""
+    return HEADLINE.format(
+        cells=lookup("cells").sql,
+        members=lookup("cell_members").sql,
+        reaching=lookup("rule_cells").sql,
+        rules=lookup("rules").sql,
+    )
+
+
+def headline(con: duckdb.DuckDBPyConnection, dpm_release: str | None) -> dict[str, dict[str, list[int]]]:
+    """Those numbers, one entry per template, grouped by the framework that files it.
+
+    One file per framework rather than one for everything: a COREP page has no use for
+    FINREP's numbers, and this is read on the critical path of every page load.
+    """
+    sql = headline_statement()
+    rows = con.execute(sql, [dpm_release, dpm_release] * sql.count("? IS NULL")).fetchall()
+    by_framework: dict[str, dict[str, list[int]]] = {}
+    for framework, code, cells, dimensions, rules, off in rows:
+        by_framework.setdefault(framework, {})[code] = [cells, dimensions, rules, off]
+    return by_framework
+
+
 def copy_statement(table: Published, out: Path) -> str:
     """The COPY that writes one table. Pure, so the layout is testable without a database.
 
@@ -516,6 +579,18 @@ def main() -> None:
             print(f"  {table.name:14} {counts[table.name]:>9,} rows", flush=True)
     finally:
         con.close()
+
+    # After the tables, because it is read instead of them rather than beside them.
+    with duckdb.connect(str(args.db), read_only=True) as counting:
+        quick = headline(counting, args.dpm_release)
+    (args.out / "counts").mkdir(exist_ok=True)
+    for framework, numbers in quick.items():
+        (args.out / "counts" / f"{framework}.json").write_text(
+            json.dumps(numbers, separators=(",", ":")), encoding="utf-8"
+        )
+    print(
+        f"  {'counts':14} {sum(len(n) for n in quick.values()):>9,} templates in {len(quick)} framework(s)", flush=True
+    )
 
     written = manifest(args.out, args.db, args.dpm_release, releases, counts, args.draft)
     (args.out / "manifest.json").write_text(json.dumps(written, indent=2) + "\n", encoding="utf-8")

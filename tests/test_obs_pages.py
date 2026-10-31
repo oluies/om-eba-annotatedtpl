@@ -25,7 +25,9 @@ OBS = REPO / "obs"
 PAGE = OBS / "src" / "t" / "[code].md"
 
 # `at(release, `cells/framework=${framework}/data_0.parquet`)` and `'${base}x.csv'`.
-PARQUET = re.compile(r"at\(release, `([a-z_]+)(/framework=\$\{framework\})?/?[^`]*`\)")
+# Anchored on .parquet: the page also reads counts/<framework>.json through at(), which is
+# not a published table and has no partition.
+PARQUET = re.compile(r"at\(release, `([a-z_]+)(/framework=\$\{framework\})?/?[^`]*\.parquet`\)")
 CSV = re.compile(r"\$\{base\}([a-z_]+\.csv)")
 
 
@@ -490,3 +492,63 @@ def test_every_file_the_page_reads_is_fetched_up_front():
     assert '"rules.parquet"' in warming, "rules.parquet is read but not fetched up front"
     for name in ("its_labels.csv", "its_instructions.csv", "its_label_changes.csv"):
         assert name in warming, f"{name} is read but not fetched up front"
+
+
+@needs_dpm2
+def test_the_precomputed_counts_are_what_the_queries_would_answer():
+    """The page shows four numbers before the engine exists, and the tables that arrive
+    after are computed from the same data. Two sources for one fact is a page that can
+    contradict itself in front of a reader, so this asks both and compares - the headline
+    statement inlines the published statements for that reason, and this is the assertion
+    that keeps it honest.
+    """
+    import duckdb
+
+    with duckdb.connect(str(DPM2_DB), read_only=True) as con:
+        # Whichever release this database is, rather than a release it may not carry: the
+        # default store is 4.2.1 and naming 4.4 made the one test that matters here skip.
+        newest = con.execute("SELECT Code FROM Release ORDER BY ReleaseID DESC LIMIT 1").fetchone()
+        assert newest, "the database has no releases at all"
+        release = newest[0]
+        quick = gen.headline(con, release)
+        cells, members, reaching, rules = (gen.lookup(n).sql for n in ("cells", "cell_members", "rule_cells", "rules"))
+        for framework in ("COREP", "FINREP", "DORA"):
+            for code in sorted(quick.get(framework, {}))[:6]:
+                reaches = (
+                    f"SELECT DISTINCT r.rule_code, r.severity, r.active, r.module, r.taxonomy_version "
+                    f"FROM ({rules}) r JOIN (SELECT DISTINCT operation_vid FROM ({reaching}) "
+                    f"WHERE table_code = '{code}') USING (operation_vid)"
+                )
+                asked = f"""
+                    SELECT (SELECT count(*) FROM (SELECT DISTINCT row_code, row_label, column_code,
+                                                         column_label, datapoint
+                                                  FROM ({cells}) WHERE table_code = '{code}')) AS cells,
+                           (SELECT count(DISTINCT dimension)
+                            FROM ({members}) WHERE table_code = '{code}') AS dimensions,
+                           (SELECT count(*) FROM ({reaches})) AS rules,
+                           (SELECT count(*) FROM ({reaches}) WHERE NOT active) AS switched_off
+                """
+                answered = con.execute(asked, [release, release] * asked.count("? IS NULL")).fetchone()
+                assert answered, f"{framework} {code} answered nothing at all"
+                assert list(answered) == quick[framework][code], (
+                    f"{framework} {code}: the page would show {quick[framework][code]} "
+                    f"and its own queries answer {list(answered)}"
+                )
+
+
+def test_the_headline_waits_for_nothing_but_its_own_file():
+    """Observable resolves a cell's inputs from the names in it, so one mention of `grid`
+    or `checks` - as a fallback, say - makes the four numbers wait for the engine again,
+    silently, and the 8x is gone with no test failing."""
+    source = page()
+    cell = source[source.index("const numbers = await headline;") : source.index("## Every cell")]
+    for engine in ("grid.", "dimensions.", "checks.", "db.query", "await maybe"):
+        assert engine not in cell, f"the headline cell names {engine}, so it waits for the engine"
+
+
+def test_the_publish_writes_the_counts_the_page_reads():
+    """Two halves that have to agree on a path: the publish writes counts/<framework>.json
+    per release and the page fetches exactly that."""
+    writer = (REPO / "source" / "gen_wasm_data.py").read_text(encoding="utf-8")
+    assert 'counts" / f"{framework}.json"' in writer, "the publish no longer writes a file per framework"
+    assert "counts/${framework}.json" in page(), "the page no longer reads it"
