@@ -136,9 +136,15 @@ object Main:
     * every question re-reading the files it names - measured, not assumed.
     */
   private def preload(con: Connection): scala.concurrent.Future[Connection] =
-    Data.cached
-      .foldLeft(scala.concurrent.Future.successful(())): (before, name) =>
-        before.flatMap(_ => Files.localise(Data.preload(name)).flatMap(con.query(_).toFuture).map(_ => ()))
+    // The five files are fetched together and the statements run in order. Registering is
+    // what has to be serial - one connection, one statement at a time - and the network is
+    // not: folding over `localise` fetched 464 kB one file after another, so the slowest
+    // link paid for all five in sequence.
+    scala.concurrent.Future
+      .traverse(Data.cached)(name => Files.localise(Data.preload(name)))
+      .flatMap: statements =>
+        statements.foldLeft(scala.concurrent.Future.successful(())): (before, statement) =>
+          before.flatMap(_ => con.query(statement).toFuture.map(_ => ()))
       .map(_ => con)
 
   /** The worker has to come from this origin, so it is a blob that imports the CDN one -
