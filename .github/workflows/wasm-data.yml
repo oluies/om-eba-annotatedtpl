@@ -108,9 +108,10 @@ jobs:
           [ -f "$db" ] || { echo "No $db - is ${{ inputs.templates_from }} in the releases list?"; exit 1; }
           # The regulation's own wording, which the pages read by URL like everything
           # else. Not release-scoped: a regulation has its own versions, and each row
-          # carries the celex it came from.
-          cp source/its_labels.csv source/its_instructions.csv source/its_label_changes.csv \
-            web/public/data/
+          # carries the celex it came from - so it is written once, at the root, and
+          # partitioned by framework because a page reads one framework. As CSV a COREP
+          # page fetched 378 kB of them to find eighty rows, on every load.
+          uv run source/gen_wasm_data.py --db "$db" --out web/public/data --wording
           cd obs && npm ci && cd ..
           # The releases as well as the frameworks: a template withdrawn before the
           # oldest published release would otherwise be listed with a page that answers

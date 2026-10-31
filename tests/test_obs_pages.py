@@ -28,7 +28,9 @@ PAGE = OBS / "src" / "t" / "[code].md"
 # Anchored on .parquet: the page also reads counts/<framework>.json through at(), which is
 # not a published table and has no partition.
 PARQUET = re.compile(r"at\(release, `([a-z_]+)(/framework=\$\{framework\})?/?[^`]*\.parquet`\)")
-CSV = re.compile(r"\$\{base\}([a-z_]+\.csv)")
+# `wordingOf("its_labels", framework)` - the regulation's own wording, at the root rather
+# than under a release, because a regulation has its own versions.
+WORDING = re.compile(r'wordingOf\("([a-z_]+)", framework\)')
 
 
 def page() -> str:
@@ -62,25 +64,31 @@ def test_a_partitioned_table_is_read_with_its_partition():
 
 
 def test_the_page_reads_only_wording_files_that_exist():
-    """The three CSVs are committed, and the workflow copies them into the published
-    tree. A rename on one side is silent on the other."""
-    for name in {found.group(1) for found in CSV.finditer(page())}:
-        here = REPO / "source" / name
-        assert here.exists(), f"the page reads {name}, which is not in source/"
+    """The three CSVs are committed and the publish writes them as parquet partitioned by
+    framework. A rename on one side is silent on the other."""
+    read = {found.group(1) for found in WORDING.finditer(page())}
+    assert read, "the page reads no wording at all, which cannot be right"
+    assert read <= set(gen.WORDING), (
+        f"the page reads {sorted(read - set(gen.WORDING))}, which the publish does not write"
+    )
+    for name in read:
+        assert (REPO / "source" / f"{name}.csv").exists(), f"{name}.csv is not in source/"
 
 
 def test_the_wording_files_have_the_columns_the_page_selects():
-    """`SELECT row, en, sv, de, celex, "from"` against a CSV with other headers is a
-    binder error, and a binder error in one cell stops every cell under it."""
+    """`SELECT row, en, sv, de, celex, "from"` against a file with other headers is a
+    binder error, and a binder error in one cell stops every cell under it. The parquet is
+    written from these CSVs, so their header is what the page ends up selecting from."""
     wanted = {
-        "its_labels.csv": {"template", "row", "en", "sv", "de", "celex", "from"},
-        "its_instructions.csv": {"template", "row", "en", "sv", "celex"},
-        "its_label_changes.csv": {"template", "row", "celex", "en"},
+        "its_labels": {"template", "row", "en", "sv", "de", "celex", "from"},
+        "its_instructions": {"template", "row", "en", "sv", "celex"},
+        "its_label_changes": {"template", "row", "celex", "en"},
     }
     for name, columns in wanted.items():
-        header = (REPO / "source" / name).read_text(encoding="utf-8").splitlines()[0]
+        header = (REPO / "source" / f"{name}.csv").read_text(encoding="utf-8").splitlines()[0]
         present = set(header.split(","))
-        assert columns <= present, f"{name} is missing {sorted(columns - present)}"
+        assert columns <= present, f"{name}.csv is missing {sorted(columns - present)}"
+        assert "framework" not in present, f"{name}.csv already has a framework column, which the publish adds"
 
 
 def test_every_partition_of_every_table_is_named_data_0():
@@ -490,7 +498,7 @@ def test_every_file_the_page_reads_is_fetched_up_front():
     for table in ("cells", "cell_members", "template_changes", "relabelled", "rule_cells"):
         assert f"{table}/framework=" in warming, f"{table} is read but not fetched up front"
     assert '"rules.parquet"' in warming, "rules.parquet is read but not fetched up front"
-    for name in ("its_labels.csv", "its_instructions.csv", "its_label_changes.csv"):
+    for name in gen.WORDING:
         assert name in warming, f"{name} is read but not fetched up front"
 
 

@@ -462,6 +462,49 @@ def headline(con: duckdb.DuckDBPyConnection, dpm_release: str | None) -> dict[st
     return by_framework
 
 
+# The regulation's own wording, which is not release-scoped: the templates are an annex to
+# an Implementing Regulation, a regulation has its own versions, and every row carries the
+# CELEX it came from. So these are written once at the root rather than once per release.
+#
+# As parquet partitioned by framework rather than as the CSVs they are kept in. A page read
+# the whole of its_labels.csv and its_instructions.csv - 378 kB gzipped - to find the
+# eighty rows of one template, on every load. By framework it is 291 kB for a COREP page
+# and 62 for a FINREP one, and a DORA page fetches nothing at all, because the supervisory
+# reporting ITS has no DORA templates in it.
+WORDING = ("its_labels", "its_instructions", "its_label_changes")
+
+# The framework comes from the model rather than from the template code: `C` is COREP most
+# of the time and `C_18.00` is also IF, which is why 13 codes are written into two
+# partitions - each framework's page needs them. A row naming a template no release in this
+# database has goes to OTHER, where no page looks for it.
+WORDING_SQL = """
+SELECT   wording.*, coalesce(known.framework, 'OTHER') AS framework
+FROM     read_csv(?) wording
+LEFT JOIN (SELECT DISTINCT table_code, framework FROM ({cells})) known
+       ON known.table_code = wording.template
+"""
+
+
+def write_wording(con: duckdb.DuckDBPyConnection, source: Path, out: Path) -> dict[str, int]:
+    """The three wording files, as parquet partitioned by framework."""
+    cells = lookup("cells")
+    written = {}
+    for name in WORDING:
+        csv = source / f"{name}.csv"
+        if not csv.exists():
+            raise SystemExit(f"{csv} is not there; source/fetch_its_labels.py --out writes it.")
+        sql = WORDING_SQL.format(cells=cells.sql)
+        parameters = [str(csv), *([None, None] * cells.sql.count("? IS NULL"))]
+        con.execute(
+            f"COPY ({sql}) TO '{out / name}' "
+            "(FORMAT parquet, PARTITION_BY framework, OVERWRITE_OR_IGNORE 1, COMPRESSION zstd)",
+            parameters,
+        )
+        counted = con.execute(f"SELECT count(*) FROM ({sql})", parameters).fetchone()
+        written[name] = counted[0] if counted else 0
+    return written
+
+
 def copy_statement(table: Published, out: Path) -> str:
     """The COPY that writes one table. Pure, so the layout is testable without a database.
 
@@ -548,6 +591,11 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=OUT, help=f"where to write (default {OUT})")
     parser.add_argument("--dpm-release", default=None, help="only what this release ships, e.g. 4.4")
     parser.add_argument(
+        "--wording",
+        action="store_true",
+        help="write the regulation's own wording (the three its_*.csv) as parquet, and nothing else",
+    )
+    parser.add_argument(
         "--draft",
         action="store_true",
         help="this release is a draft technical package, so anything built from it is a draft too",
@@ -564,6 +612,13 @@ def main() -> None:
     if args.dpm_release:
         args.out = args.out / args.dpm_release
         args.out.mkdir(parents=True, exist_ok=True)
+
+    # Not release-scoped, so it is written to the root and on its own.
+    if args.wording:
+        with duckdb.connect(str(args.db), read_only=True) as con:
+            for name, rows in write_wording(con, Path(__file__).resolve().parent, args.out).items():
+                print(f"  {name:20} {rows:>9,} rows", flush=True)
+        return
 
     con = duckdb.connect(str(args.db), read_only=True)
     try:

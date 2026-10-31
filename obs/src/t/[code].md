@@ -30,6 +30,11 @@ const openness = listed.open ?? [];
 const base = new URL(new URLSearchParams(location.search).get("data") ?? "../../data/", document.baseURI).href;
 const at = (release, path) => `${base}${release}/${path}`;
 
+// The regulation's own wording is not release-scoped - a regulation has its own versions,
+// and every row carries the CELEX it came from - so it sits at the root rather than under
+// a release, partitioned by framework like everything else.
+const wordingOf = (name, framework) => `${base}${name}/framework=${framework}/data_0.parquet`;
+
 // DuckDB picks its reader from the extension, so the name keeps it.
 const named = (url) => url.replace(/^https?:\/\//, "").replace(/[^\w.]+/g, "_");
 ```
@@ -115,9 +120,9 @@ const reads = [
   at(release, `relabelled/framework=${framework}/data_0.parquet`),
   at(release, `rule_cells/framework=${framework}/data_0.parquet`),
   at(release, "rules.parquet"),
-  `${base}its_labels.csv`,
-  `${base}its_instructions.csv`,
-  `${base}its_label_changes.csv`,
+  wordingOf("its_labels", framework),
+  wordingOf("its_instructions", framework),
+  wordingOf("its_label_changes", framework),
 ];
 
 // The four numbers the page opens with, precomputed by the publish from the same
@@ -164,17 +169,17 @@ const dimensions = await maybe(
 // an Implementing Regulation and one is published in all 24 official languages. Not
 // release-scoped the way everything above is - a regulation has its own versions, and the
 // `celex` column says which text a row came from.
-const wording = await maybe([`${base}its_labels.csv`], (labels) => `
+const wording = await maybe([wordingOf("its_labels", framework)], (labels) => `
   SELECT row, en, sv, de, celex, "from"
   FROM '${labels}'
   WHERE template = '${code}' ORDER BY row`);
 
-const spelled = await maybe([`${base}its_instructions.csv`], (instructions) => `
+const spelled = await maybe([wordingOf("its_instructions", framework)], (instructions) => `
   SELECT row, en, sv, celex
   FROM '${instructions}'
   WHERE template = '${code}' ORDER BY row`);
 
-const reworded = await maybe([`${base}its_label_changes.csv`], (changes) => `
+const reworded = await maybe([wordingOf("its_label_changes", framework)], (changes) => `
   SELECT row, celex, en
   FROM '${changes}'
   WHERE template = '${code}' ORDER BY row, celex`);
