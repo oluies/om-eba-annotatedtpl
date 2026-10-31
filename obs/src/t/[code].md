@@ -18,6 +18,23 @@ const openness = listed.open ?? [];
 ```
 
 ```js
+// Two levels up from /<site>/templates/t/<code> is /<site>/, where the publish puts the
+// parquet - and resolving against the document rather than against import.meta.url keeps
+// that true wherever the site is mounted, which on Pages is a project path and not a root.
+// `?data=` points the page at another published tree, which is how it is driven against
+// the published data from a local preview.
+//
+// In its own cell because the cell that fetches must not name the one that holds the
+// engine: two cells that reference each other are a circular definition, and Observable
+// answers that by failing every cell on the page.
+const base = new URL(new URLSearchParams(location.search).get("data") ?? "../../data/", document.baseURI).href;
+const at = (release, path) => `${base}${release}/${path}`;
+
+// DuckDB picks its reader from the extension, so the name keeps it.
+const named = (url) => url.replace(/^https?:\/\//, "").replace(/[^\w.]+/g, "_");
+```
+
+```js
 import {DuckDBClient} from "npm:@observablehq/duckdb";
 
 // Read over HTTP from the tree the publish already writes, rather than attached as
@@ -29,14 +46,6 @@ import {DuckDBClient} from "npm:@observablehq/duckdb";
 // release is a different URL, not a different build.
 const db = await DuckDBClient.of();
 
-// Two levels up from /<site>/templates/t/<code> is /<site>/, where the publish puts the
-// parquet - and resolving against the document rather than against import.meta.url keeps
-// that true wherever the site is mounted, which on Pages is a project path and not a root.
-// `?data=` points the page at another published tree, which is how it is driven against
-// the published data from a local preview.
-const base = new URL(new URLSearchParams(location.search).get("data") ?? "../../data/", document.baseURI).href;
-const at = (release, path) => `${base}${release}/${path}`;
-
 // Every file is fetched once and handed to DuckDB as bytes, rather than letting DuckDB read
 // it over HTTP. Pages serves these gzipped, and then the content-length it reports is the
 // compressed length while a byte range comes from the uncompressed file: DuckDB reads the
@@ -44,16 +53,19 @@ const at = (release, path) => `${base}${release}/${path}`;
 // with "No magic bytes found at end of file". Which of the two variants the CDN holds
 // decides whether a page works - that is how the FINREP pages failed while the COREP ones
 // passed on the same code. fetch() decompresses, so the bytes are the file.
+// Fetching is one half and registering is the other, and only the second needs the
+// engine. Measured on a cold cache: 1.8 s passes before the first byte of data is asked
+// for, because DuckDB-WASM is 8 MB and everything waited for it - and then the files were
+// fetched one after another because each query awaited the one before. Both halves of
+// that are avoidable: `arriving` starts every fetch as soon as the URLs are known, which
+// is before the engine exists, and they run together.
 const loaded = new Map();
-const bytes = (url) => {
+const bytes = async (url) => {
   if (!loaded.has(url)) {
     loaded.set(url, (async () => {
-      // DuckDB picks its reader from the extension, so the name keeps it.
-      const name = url.replace(/^https?:\/\//, "").replace(/[^\w.]+/g, "_");
-      const answer = await fetch(url);
-      if (!answer.ok) throw new Error(`${answer.status} ${answer.statusText} for ${url}`);
-      await db._db.registerFileBuffer(name, new Uint8Array(await answer.arrayBuffer()));
-      return name;
+      const buffer = await arriving(url);
+      await db._db.registerFileBuffer(named(url), new Uint8Array(buffer));
+      return named(url);
     })());
   }
   return loaded.get(url);
@@ -91,6 +103,35 @@ const release = view(Inputs.select(published, {
 const framework = belongs.length > 1
   ? view(Inputs.select(belongs, {label: "Framework", value: belongs[0]}))
   : belongs[0];
+```
+
+```js
+// Every file this page reads, named in one place so that the fetching and the queries
+// cannot drift apart.
+const reads = [
+  at(release, `cells/framework=${framework}/data_0.parquet`),
+  at(release, `cell_members/framework=${framework}/data_0.parquet`),
+  at(release, `template_changes/framework=${framework}/data_0.parquet`),
+  at(release, `relabelled/framework=${framework}/data_0.parquet`),
+  at(release, `rule_cells/framework=${framework}/data_0.parquet`),
+  at(release, "rules.parquet"),
+  `${base}its_labels.csv`,
+  `${base}its_instructions.csv`,
+  `${base}its_label_changes.csv`,
+];
+
+// This cell names no engine, so Framework runs it while DuckDB-WASM is still arriving.
+// The relabelled partition is absent for a framework with no reworded row, and a fetch
+// that rejects with nobody waiting is an unhandled rejection in the console - so each is
+// marked handled here, and the rejection is still there for whoever awaits it.
+const inFlight = new Map(reads.map((url) => {
+  const started = fetch(url).then((answer) =>
+    answer.ok ? answer.arrayBuffer() : Promise.reject(new Error(`${answer.status} ${answer.statusText} for ${url}`)));
+  started.catch(() => {});
+  return [url, started];
+}));
+
+const arriving = (url) => inFlight.get(url) ?? fetch(url).then((answer) => answer.arrayBuffer());
 ```
 
 ```js

@@ -460,3 +460,33 @@ def test_a_table_is_named_after_its_own_heading():
     as "The same rows in Swedish and German"."""
     walk = (OBS / "src" / "keyboard.js").read_text(encoding="utf-8")
     assert "let before = box;" in walk, "the walk starts above the box and skips its own heading"
+
+
+def test_the_files_are_fetched_without_waiting_for_the_engine():
+    """Measured on a cold load: 1.8 s passed before the first byte of data was asked for,
+    because every read waited for DuckDB-WASM, and then the files arrived one after
+    another because each query awaited the one before. The fetching cell names no engine,
+    so Framework runs it while the engine is still arriving - which took the data from in
+    hand at ~780 ms to in hand at ~130 ms.
+    """
+    source = page()
+    warming = source[source.index("const reads = [") : source.index("const arriving")]
+    assert "const inFlight" in source, "the fetches are no longer started up front"
+    assert "db" not in warming.replace("duckdb", ""), "the fetching cell names the engine, so it waits for it"
+    assert ".catch(() => {})" in source, (
+        "a fetch that rejects with nobody waiting is an unhandled rejection in the console; "
+        "the relabelled partition is absent for a framework with no reworded row"
+    )
+
+
+def test_every_file_the_page_reads_is_fetched_up_front():
+    """The warming list and the queries are two places naming the same files, and a file
+    left out of the list is fetched late and alone - the old behaviour, silently, for that
+    one read."""
+    source = page()
+    warming = source[source.index("const reads = [") : source.index("const arriving")]
+    for table in ("cells", "cell_members", "template_changes", "relabelled", "rule_cells"):
+        assert f"{table}/framework=" in warming, f"{table} is read but not fetched up front"
+    assert '"rules.parquet"' in warming, "rules.parquet is read but not fetched up front"
+    for name in ("its_labels.csv", "its_instructions.csv", "its_label_changes.csv"):
+        assert name in warming, f"{name} is read but not fetched up front"
