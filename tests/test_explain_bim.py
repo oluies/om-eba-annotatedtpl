@@ -235,3 +235,43 @@ def test_the_tool_is_registered_in_all_three_places(monkeypatch, small):
     answered = agent_tools.dispatch(bim.EXPLAIN_BIM_MEASURE_TOOL_NAME, {"bim": "Model.bim", "measure": "One cell"})
     assert answered["found"], answered
     assert answered["coordinates"][0]["written"] == "C 28.00 r999 c330"
+
+
+@needs_dpm2
+def test_a_formula_can_be_read_with_the_coordinates_written_out(monkeypatch):
+    """`r0090 c0010` is the unreadable part of a measure, not DAX. Only that is replaced,
+    so a reader can still see which part of the formula they are looking at."""
+    monkeypatch.setenv("DPM2_DB", str(DPM2_DB))
+    cells = bim.published(None)
+    dax = (
+        "CALCULATE ( SUM ( 'Fakta_F'[VardeDecimal] ), "
+        "'Dim_F'[TabellKod] = \"F 04.04.1\", 'Dim_F'[RadKod] = \"0090\", 'Dim_F'[KolumnKod] = \"0010\" )"
+    )
+    said = bim.in_words(dax, cells)
+    assert "CALCULATE ( SUM ( 'Fakta_F'[VardeDecimal] )" in said, "the formula is otherwise untouched"
+    assert "TabellKod" not in said, "the three codes are gone"
+    assert "«F 04.04.1 ·" in said
+    assert "Carrying amount»" in said
+
+
+@needs_dpm2
+def test_the_rows_are_said_in_the_regulation_s_own_swedish(monkeypatch):
+    """Not a translation of the model's English: the wording the Official Journal
+    published, which is what makes it usable in a Swedish review."""
+    monkeypatch.setenv("DPM2_DB", str(DPM2_DB))
+    cells = bim.published(None)
+    dax = "'Dim_F'[TabellKod] = \"F 04.04.1\", 'Dim_F'[RadKod] = \"0090\", 'Dim_F'[KolumnKod] = \"0010\""
+    swedish = bim.wording({"F_04.04.1"})
+    if not swedish:
+        pytest.skip("source/its_labels.csv is not built")
+    assert "Offentlig" in bim.in_words(dax, cells, swedish), bim.in_words(dax, cells, swedish)
+
+
+def test_filters_that_do_not_stand_together_are_left_alone():
+    """Reassembling them would produce a formula nobody wrote, which is the same reason
+    the parser refuses to pair unbalanced ones."""
+    scattered = (
+        "VAR a = CALCULATE ( x, 'Dim_C'[TabellKod] = \"C 01.00\" )\n"
+        "VAR b = CALCULATE ( y, 'Dim_C'[RadKod] = \"0010\", 'Dim_C'[KolumnKod] = \"0010\" )"
+    )
+    assert bim.in_words(scattered, {}) == scattered

@@ -21,6 +21,7 @@ model against the DPM and says so.
     uv run explain_bim.py Model.bim --coordinates        # every coordinate, resolved
     uv run explain_bim.py Model.bim --unresolved         # only the ones the DPM does not have
     uv run explain_bim.py Model.bim --measure "Exponering efter CRM"
+    uv run explain_bim.py Model.bim --measure "..." --in-words   # the formula, readable
     uv run explain_bim.py Model.bim --release 4.3        # ask an older release
     uv run explain_bim.py Model.bim --coordinates --csv  # for a spreadsheet
 
@@ -415,8 +416,54 @@ def report(
     return lines
 
 
+# The three filters as they stand next to each other in the DAX. The dimension table
+# differs per framework and is matched only to be dropped: what replaces the triple is
+# what the three of them mean together, which is one cell.
+TRIPLE = re.compile(
+    r"'[^']+'\[TabellKod\]\s*=\s*\"(?P<template>[^\"]+)\"\s*,\s*"
+    r"'[^']+'\[RadKod\]\s*=\s*\"(?P<row>[^\"]+)\"\s*,\s*"
+    r"'[^']+'\[KolumnKod\]\s*=\s*\"(?P<column>[^\"]+)\"",
+    re.MULTILINE,
+)
+
+
+def in_words(
+    expression: str,
+    cells: dict[tuple[str, str, str], dict[str, Any]],
+    swedish: dict[tuple[str, str], dict[str, str]] | None = None,
+) -> str:
+    """The DAX with each coordinate written as the cell it is rather than as three codes.
+
+    The formula is otherwise untouched. Rewriting it into prose would be a second language
+    to learn, and it would hide which part of the measure a reader is looking at - what is
+    unreadable here is not DAX, it is `r0350 c0010`, so only that is replaced.
+
+    A triple whose three filters do not stand together is left alone rather than
+    reassembled, for the same reason the parser does not pair unbalanced ones: the result
+    would be a formula nobody wrote.
+    """
+
+    def said(match: re.Match[str]) -> str:
+        coordinate = Coordinate(match["template"], match["row"], match["column"])
+        found = resolve(coordinate, cells)
+        if not found.found:
+            return f"«{coordinate} - not in this release»"
+        # The regulation's own Swedish for the row where it has one, which is not a
+        # translation of the model's English but the wording the Journal published. The
+        # column keeps the model's wording: the Journal's grid names rows, not columns.
+        says = (swedish or {}).get((found.found["table_code"], found.found["row_code"]), {})
+        row = says.get("sv") or found.found["row_label"] or "the filed row"
+        return f"«{coordinate.template} · {row} · {found.found['column_label']}»"
+
+    return TRIPLE.sub(said, expression)
+
+
 def explain_measure(
-    measure: Measure, cells: dict[tuple[str, str, str], dict[str, Any]], release: str | None
+    measure: Measure,
+    cells: dict[tuple[str, str, str], dict[str, Any]],
+    release: str | None,
+    plainly: bool = False,
+    swedish: dict[tuple[str, str], dict[str, str]] | None = None,
 ) -> list[str]:
     """One measure in full: what it computes, and what each cell it names is.
 
@@ -428,7 +475,8 @@ def explain_measure(
     lines = [f"{measure.name}   [{measure.table}]"]
     if measure.folder:
         lines.append(f"  folder: {measure.folder}")
-    lines += ["", "  " + measure.expression.replace("\n", "\n  "), ""]
+    written = in_words(measure.expression, cells, swedish) if plainly else measure.expression
+    lines += ["", "  " + written.replace("\n", "\n  "), ""]
     for coordinate in measure.coordinates:
         item = resolve(coordinate, cells)
         if not item.found:
@@ -466,6 +514,11 @@ def main() -> None:
         "--unpaired", action="store_true", help="measures naming a template without a matching row and column"
     )
     parser.add_argument("--measure", help="one measure, in full, with its cells resolved")
+    parser.add_argument(
+        "--in-words",
+        action="store_true",
+        help="with --measure: the formula with each coordinate written as the cell it is",
+    )
     parser.add_argument("--release", default=None, help="which DPM release to resolve against, e.g. 4.3")
     parser.add_argument("--source", action="store_true", help="print the data source's address, which a .bim carries")
     parser.add_argument("--csv", action="store_true", help="write the coordinates as CSV instead of text")
@@ -493,7 +546,8 @@ def main() -> None:
             )
         cells = published(args.release)
         for measure in wanted:
-            print("\n".join(explain_measure(measure, cells, args.release)))
+            said = wording({as_dpm(c.template) for c in measure.coordinates}) if args.in_words else {}
+            print("\n".join(explain_measure(measure, cells, args.release, args.in_words, said)))
         return
 
     if args.coordinates or args.unresolved:
