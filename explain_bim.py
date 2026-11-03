@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -536,3 +537,112 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# --------------------------------------------------------------------------------------
+# As a tool an agent can call
+# --------------------------------------------------------------------------------------
+
+# Only this one view is offered. "What does this measure mean?" is a question with a
+# bounded answer; `--coordinates` over 1 228 of them is a release-time job for a person or
+# a pipeline, and its answer is hundreds of lines nobody should spend a context window on.
+EXPLAIN_BIM_MEASURE_TOOL_NAME = "explain_bim_measure"
+
+# Where .bim files may be read from. Every other tool in this pack reads a database or an
+# API; this one takes a path, and a tool that takes a path is a file reader unless it is
+# told where to stop. Set BIM_ROOT to move it.
+DEFAULT_BIM_ROOT = "/mnt/y/Dockuments"
+
+EXPLAIN_BIM_MEASURE_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": EXPLAIN_BIM_MEASURE_TOOL_NAME,
+        "description": (
+            "Explain one measure of an SSAS tabular model (.bim) whose DAX names DPM "
+            "coordinates, resolving each to the reporting cell it is: the row and column "
+            "labels, the datapoint id, whether the template is open, and whether the "
+            "coordinate still exists in the release asked for. Use it when a measure "
+            "returns a figure whose provenance is unclear, or when a model needs checking "
+            "against a newer DPM release. Reads only; the model's connection string is "
+            "never returned."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "bim": {
+                    "type": "string",
+                    "description": "The .bim file, named relative to the configured model directory.",
+                },
+                "measure": {"type": "string", "description": "The measure's name, exactly as the model spells it."},
+                "release": {
+                    "type": ["string", "null"],
+                    "description": (
+                        "Which DPM release to resolve against, e.g. '4.4'. Null means any release the database carries."
+                    ),
+                },
+            },
+            "required": ["bim", "measure"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+def model_root() -> Path:
+    """Read at call time, not at import, so a host can set it after importing this."""
+    return Path(os.environ.get("BIM_ROOT", DEFAULT_BIM_ROOT))
+
+
+def within_root(name: str) -> Path:
+    """The file, if it is a .bim inside the configured directory, and an error if not.
+
+    Resolved before the check, which is the whole point: `../../etc/passwd` and a symlink
+    out of the directory both look like a name inside it until the path is resolved.
+    """
+    root = model_root().resolve()
+    wanted = Path(name)
+    wanted = (wanted if wanted.is_absolute() else root / wanted).resolve()
+    if wanted.suffix.lower() != ".bim":
+        raise ValueError(f"{name} is not a .bim file")
+    if not wanted.is_relative_to(root):
+        raise ValueError(f"{name} is outside {root}")
+    return wanted
+
+
+def explain_bim_measure(bim: str, measure: str, release: str | None = None) -> dict[str, Any]:
+    """One measure, with every DPM coordinate in it resolved. The tool behind the name."""
+    try:
+        path = within_root(bim)
+    except ValueError as refused:
+        return {"found": False, "message": str(refused)}
+    if not path.exists():
+        return {"found": False, "message": f"{bim} is not there"}
+    if not dpm_lookup.available():
+        return {"found": False, "message": dpm_lookup.BUILD_IT}
+
+    wanted = [m for m in measures_of(read(path)) if m.name == measure]
+    if not wanted:
+        return {"found": False, "measure": measure, "message": f"no measure called {measure!r} in {bim}"}
+
+    cells = published(release)
+    found = wanted[0]
+    return {
+        "found": True,
+        "measure": found.name,
+        "table": found.table,
+        "folder": found.folder,
+        "expression": found.expression,
+        "release": release,
+        "coordinates": [
+            {
+                "written": str(item.coordinate),
+                "in_release": bool(item.found),
+                "matched_as": item.how or None,
+                "open_table": is_open(item),
+                "row_label": (item.found or {}).get("row_label"),
+                "column_label": (item.found or {}).get("column_label"),
+                "datapoint": (item.found or {}).get("datapoint"),
+            }
+            for item in (resolve(c, cells) for c in found.coordinates)
+        ],
+    }

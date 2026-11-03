@@ -1,7 +1,7 @@
 """The tool definitions an agent registers, and the one dispatcher that runs them.
 
-Sixteen tools, from four modules, assembled here so a host application imports one name
-instead of sixteen and cannot end up with a definition registered but not dispatched:
+Seventeen tools, from five modules, assembled here so a host application imports one name
+instead of seventeen and cannot end up with a definition registered but not dispatched:
 
     lookup_datapoint        resolve a column name to its datapoint, and to the display
                             name to use for it                      (pay42_lookup.py)
@@ -24,6 +24,9 @@ instead of sixteen and cannot end up with a definition registered but not dispat
                             and what each column header means
     check_report            run a module's rules against a reported xBRL-CSV file, and
                             say which it could not evaluate       (check_instance.py)
+    explain_bim_measure     one measure of an SSAS tabular model, with every DPM
+                            coordinate in its DAX resolved to the cell it is
+                                                                    (explain_bim.py)
 
 A tool lives in three places - the `ToolName` member, the `case` arm in `_run` and the
 definition in `TOOLS` - and dropping one means dropping all three. Removing only the
@@ -73,6 +76,7 @@ from typing import Any
 import check_instance
 import describe_table
 import dpm_lookup
+import explain_bim
 import pay42_lookup
 
 
@@ -95,6 +99,7 @@ class ToolName(enum.StrEnum):
     LOOKUP_DPM_HISTORY = dpm_lookup.LOOKUP_DPM_HISTORY_TOOL_NAME
     CHECK_REPORT = check_instance.CHECK_REPORT_TOOL_NAME
     EXPLAIN_REPORT = check_instance.EXPLAIN_REPORT_TOOL_NAME
+    EXPLAIN_BIM_MEASURE = explain_bim.EXPLAIN_BIM_MEASURE_TOOL_NAME
 
 
 TOOLS = (
@@ -107,6 +112,10 @@ TOOLS = (
         if dpm_lookup.available()
         else ()
     ),
+    # Same database again: a coordinate is resolved against it. Only the single-measure
+    # view is offered - the bulk reports are a release-time job for a person, and their
+    # answer is hundreds of lines.
+    *((explain_bim.EXPLAIN_BIM_MEASURE_TOOL_DEFINITION,) if dpm_lookup.available() else ()),
 )
 
 
@@ -184,6 +193,8 @@ def _run(name: str, args: dict[str, Any]) -> dict[str, Any]:
                 args.get("display_name"),
                 args.get("expect_current"),
             )
+        case ToolName.EXPLAIN_BIM_MEASURE:
+            return explain_bim.explain_bim_measure(args["bim"], args["measure"], args.get("release"))
         case ToolName.LOOKUP_DPM_TABLE:
             return dpm_lookup.lookup_dpm_table(args["table"])
         case ToolName.LOOKUP_DPM_CELL:

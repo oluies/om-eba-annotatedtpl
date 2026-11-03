@@ -172,3 +172,66 @@ def test_a_fixed_row_is_preferred_over_the_open_one(monkeypatch):
     cells = bim.published(None)
     found = bim.resolve(bim.Coordinate("F 04.04.1", "0090", "0010"), cells)
     assert found.exact and not bim.is_open(found)
+
+
+def test_the_tool_reads_only_bim_files_inside_the_configured_directory(tmp_path, monkeypatch, small):
+    """Every other tool in this pack reads a database or an API. This one takes a path,
+    and a tool that takes a path is a file reader unless it is told where to stop.
+
+    The resolving happens before the check, which is the point: `../../etc/passwd` and a
+    symlink out of the directory both look like a name inside it until resolved.
+    """
+    monkeypatch.setenv("BIM_ROOT", str(small.parent))
+    outside = tmp_path.parent / "elsewhere.bim"
+    outside.write_text("{}", encoding="utf-8")
+
+    assert bim.within_root("Model.bim") == small.resolve()
+    for refused in ("../../../../etc/passwd", "/etc/passwd", str(outside), "Model.txt"):
+        with pytest.raises(ValueError):
+            bim.within_root(refused)
+
+
+def test_a_symlink_out_of_the_directory_is_refused(tmp_path, monkeypatch, small):
+    """A name inside the directory that is not a file inside the directory."""
+    monkeypatch.setenv("BIM_ROOT", str(small.parent))
+    secret = tmp_path.parent / "secret.bim"
+    secret.write_text("{}", encoding="utf-8")
+    pointer = small.parent / "innocent.bim"
+    pointer.symlink_to(secret)
+    with pytest.raises(ValueError):
+        bim.within_root("innocent.bim")
+
+
+def test_the_tool_refuses_rather_than_raises(monkeypatch, small):
+    """A tool call that fails should come back as an answer the model can read, not as an
+    exception the host has to catch."""
+    monkeypatch.setenv("BIM_ROOT", str(small.parent))
+    refused = bim.explain_bim_measure("/etc/passwd", "anything")
+    assert refused["found"] is False
+    assert "not a .bim" in refused["message"]
+
+
+def test_the_tool_never_returns_the_connection_string(monkeypatch, small):
+    """A .bim carries where someone's warehouse lives. The CLI prints it only with
+    --source, and the tool has no such flag."""
+    monkeypatch.setenv("BIM_ROOT", str(small.parent))
+    answered = bim.explain_bim_measure("Model.bim", "No cell at all")
+    assert "dataSources" not in json.dumps(answered)
+    assert "somewhere" not in json.dumps(answered), "the data source's name reached the answer"
+
+
+@needs_dpm2
+def test_the_tool_is_registered_in_all_three_places(monkeypatch, small):
+    """A tool lives as a ToolName member, a TOOLS definition and a `case` arm, and
+    dropping one means dropping all three. This is the arm: dispatch by name."""
+    import agent_tools
+
+    monkeypatch.setenv("BIM_ROOT", str(small.parent))
+    assert bim.EXPLAIN_BIM_MEASURE_TOOL_NAME in {name.value for name in agent_tools.ToolName}
+    # Read the way test_lookups reads it: the definitions are a tuple of dicts whose
+    # values are themselves dicts, and a checker has no way to know which is which.
+    shown = {str(function["name"]) for tool in agent_tools.TOOLS if isinstance(function := tool.get("function"), dict)}
+    assert bim.EXPLAIN_BIM_MEASURE_TOOL_NAME in shown, "the definition is not among the ones a model is shown"
+    answered = agent_tools.dispatch(bim.EXPLAIN_BIM_MEASURE_TOOL_NAME, {"bim": "Model.bim", "measure": "One cell"})
+    assert answered["found"], answered
+    assert answered["coordinates"][0]["written"] == "C 28.00 r999 c330"
