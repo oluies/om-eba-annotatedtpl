@@ -715,7 +715,14 @@ def explain_measure(
                 f"      an open table: {matched[0]} has no fixed {axis}, and the DPM writes that axis "
                 f"as `*`. The model's {wrote} is its own convention for what the reporter files."
             )
-        cell = dpm_lookup.lookup_dpm_cell(item.found["table_code"], item.found["row_code"], item.found["column_code"])
+        # The release goes with it: the rules a cell is under are scoped to a module version,
+        # so asking without it answers for the newest module rather than the one being read.
+        cell = dpm_lookup.lookup_dpm_cell(
+            item.found["table_code"], item.found["row_code"], item.found["column_code"], None, release
+        )
+        if not cell.get("found"):
+            lines.append(f"      no rules read: {cell.get('message', 'the lookup found nothing')}")
+            continue
         rules = cell.get("validation_rules") or []
         off = [r for r in rules if not r.get("active", True)]
         if rules:
@@ -952,8 +959,6 @@ def explain_bim_measure(
         return {"found": False, "message": str(refused)}
     if not path.exists():
         return {"found": False, "message": f"{bim} is not there"}
-    if not dpm_lookup.available():
-        return {"found": False, "message": dpm_lookup.BUILD_IT}
 
     try:
         model = read(path)
@@ -963,6 +968,12 @@ def explain_bim_measure(
     wanted = [m for m in measures_of(model) if m.name == measure]
     if not wanted:
         return {"found": False, "measure": measure, "message": f"no measure called {measure!r} in {bim}"}
+
+    # The DPM last: what the file is and whether it holds that measure are facts about the
+    # .bim, and answering them with "download the database" sends the caller to fix the
+    # wrong thing - as it did in CI, where there is no database and both were asserted.
+    if not dpm_lookup.available():
+        return {"found": False, "measure": measure, "message": dpm_lookup.BUILD_IT}
 
     try:
         cells = published(release)

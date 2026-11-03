@@ -472,7 +472,7 @@ EBA DPM 2.0 database directly:
 | Tool | Answers |
 |---|---|
 | `lookup_dpm_table` | A template in any framework: its name, the module versions it belongs to, which axes are open, and every row, column and sheet with its code, label and parent |
-| `lookup_dpm_cell` | One cell: its dimension members, data type, period type, whether it is reportable, and the validation rules with their expressions |
+| `lookup_dpm_cell` | One cell: its dimension members, data type, period type, whether it is reportable, and the validation rules with their expressions - pass `dpm_release` to get the template version and the rules of one release rather than the newest of each |
 
 `parent_code` on a row is what an "Of which" row is a breakdown of — the nesting the
 annotated layout shows only by indentation.

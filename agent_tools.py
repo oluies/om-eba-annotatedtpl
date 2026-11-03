@@ -201,7 +201,9 @@ def _run(name: str, args: dict[str, Any]) -> dict[str, Any]:
         case ToolName.LOOKUP_DPM_TABLE:
             return dpm_lookup.lookup_dpm_table(args["table"])
         case ToolName.LOOKUP_DPM_CELL:
-            return dpm_lookup.lookup_dpm_cell(args["table"], args["row"], args["column"], args.get("sheet"))
+            return dpm_lookup.lookup_dpm_cell(
+                args["table"], args["row"], args["column"], args.get("sheet"), args.get("dpm_release")
+            )
         case ToolName.LOOKUP_DPM_DIMENSIONS:
             return dpm_lookup.lookup_dpm_dimensions(
                 args["table"], args.get("module"), args.get("version"), args.get("dpm_release")
