@@ -11,6 +11,7 @@ it is not available rather than failing. Nothing else in the pack depends on it.
 
     uv run dpm_lookup.py Y_01_01                      # a template
     uv run dpm_lookup.py Y_01_01 0010 0010 0010       # one cell
+    uv run dpm_lookup.py C_01.00 0010 0010 '' 4.4     # the same cell as DPM release 4.4 has it
 """
 
 import json
@@ -225,6 +226,19 @@ JOIN     OperationScopeComposition osc ON osc.OperationScopeID = os.OperationSco
 JOIN     ModuleVersion mv ON mv.ModuleVID = osc.ModuleVID
 WHERE    l."Table" = ? AND coalesce(l."Row", '') = ? AND coalesce(l."Column", '') = ?
      AND coalesce(l.Sheet, '') = ?
+     -- The release, twice, as the generators pass theirs: null means every module version
+     -- the database carries, which is what a caller who named no release asked for. A rule
+     -- is scoped to a module version, so without this the severities and the deactivations
+     -- are whatever the newest module says - a different answer from the release's own.
+     AND (
+         ? IS NULL
+         OR EXISTS (
+             SELECT 1 FROM Release asked
+             WHERE asked.Code = ?
+               AND mv.StartReleaseID <= asked.ReleaseID
+               AND (mv.EndReleaseID IS NULL OR mv.EndReleaseID > asked.ReleaseID)
+         )
+     )
 GROUP BY rule_code, severity, expression, module, active
 ORDER BY rule_code, module
 """
@@ -466,13 +480,55 @@ def cell_code(table: str, row: str, column: str, sheet: str = "") -> str:
     return "{" + ", ".join(parts) + "}"
 
 
+# The template as a release has it. Through the module composition rather than through
+# TableVersion's own start and end: a version can be current by its own dates while no
+# module in that release composes it - C_02.00 runs from 4.0 with no end release and has
+# been out of every module since 4.2, which is the sense in which it is gone.
+TABLE_IN_RELEASE_SQL = """
+SELECT   tv.TableVID, tv.TableID, tv.Code, tv.Name,
+         t.HasOpenRows <> 0 AS open_rows, t.HasOpenColumns <> 0 AS open_columns,
+         t.HasOpenSheets <> 0 AS open_sheets
+FROM     TableVersion tv
+JOIN     "Table" t ON t.TableID = tv.TableID
+JOIN     ModuleVersionComposition mvc ON mvc.TableVID = tv.TableVID
+JOIN     ModuleVersion mv ON mv.ModuleVID = mvc.ModuleVID
+JOIN     Release asked ON asked.Code = ?
+WHERE    upper(regexp_replace(tv.Code, '[^A-Za-z0-9]', '', 'g')) = ?
+     AND mv.StartReleaseID <= asked.ReleaseID
+     AND (mv.EndReleaseID IS NULL OR mv.EndReleaseID > asked.ReleaseID)
+ORDER BY tv.StartReleaseID DESC, tv.TableVID DESC
+LIMIT    1
+"""
+
+
 def _table_version(
-    con: duckdb.DuckDBPyConnection, table: str, module: str | None = None, version: str | None = None
+    con: duckdb.DuckDBPyConnection,
+    table: str,
+    module: str | None = None,
+    version: str | None = None,
+    dpm_release: str | None = None,
 ) -> dict[str, Any]:
-    """The template, newest first, or as one module version has it when that is given."""
+    """The template, newest first, or as one module version or one release has it."""
     key = code_key(table)
     if not key:
         raise DpmError(f"{table!r} is not a template code. They look like Y_01_01, C_01.00 or F_12.01.a.")
+    if dpm_release and module:
+        raise DpmError(
+            f"Asked for both module {module!r} and DPM release {dpm_release!r}. "
+            "They are different ways of choosing a version - pass one."
+        )
+    if dpm_release:
+        found = _rows(con, TABLE_IN_RELEASE_SQL, dpm_release, key)
+        if not found:
+            releases = [row["Code"] for row in _rows(con, RELEASES_IN_FILE_SQL)]
+            if dpm_release not in releases:
+                raise DpmError(
+                    f"No DPM release {dpm_release!r} in this copy of the database. "
+                    f"It has: {', '.join(releases)}. "
+                    "A newer release is a separate download - see source/fetch_dpm2.py --release."
+                )
+            raise DpmError(f"No template matching {table!r} in DPM release {dpm_release!r}.")
+        return found[0]
     if module:
         # version twice: the predicate is `(? IS NULL OR mv.VersionNumber = ?)`, so that a
         # null version means the newest of that module rather than no match at all.
@@ -527,17 +583,24 @@ def lookup_dpm_table(table: str) -> dict[str, Any]:
     }
 
 
-def lookup_dpm_cell(table: str, row: str, column: str, sheet: str | None = None) -> dict[str, Any]:
+def lookup_dpm_cell(
+    table: str, row: str, column: str, sheet: str | None = None, dpm_release: str | None = None
+) -> dict[str, Any]:
     """One cell of any template: its dimension members, data type and validation rules.
 
     The sheet is the third axis, which not every template has - PAY's six metric-and-geography
     variants are sheets. Pass null where the template has none.
+
+    `dpm_release` asks the question of one release: the template version that release has,
+    and the rules scoped to the module versions in force in it. Without it the answer is
+    the newest of each, which is the right default and the wrong answer for anyone holding
+    a report filed under an older one.
     """
     if not available():
         return {"found": False, "table": table, "message": BUILD_IT}
     try:
         with _connect() as con:
-            version = _table_version(con, table)
+            version = _table_version(con, table, dpm_release=dpm_release)
             code = cell_code(version["Code"], row, column, sheet or "")
             cells = _rows(con, CELL_SQL, version["TableVID"], code)
             if not cells:
@@ -549,7 +612,9 @@ def lookup_dpm_cell(table: str, row: str, column: str, sheet: str | None = None)
             cell = cells[0]
             dimensions = _rows(con, CELL_DIMENSIONS_SQL, cell["VariableVID"])
             types = _rows(con, DATATYPE_SQL, cell["VariableVID"])
-            rules = fold_rules(_rows(con, RULES_SQL, version["Code"], row, column, sheet or ""))
+            rules = fold_rules(
+                _rows(con, RULES_SQL, version["Code"], row, column, sheet or "", dpm_release, dpm_release)
+            )
     except DpmError as exc:
         return {"found": False, "table": table, "message": str(exc)}
 
@@ -558,6 +623,7 @@ def lookup_dpm_cell(table: str, row: str, column: str, sheet: str | None = None)
         "cell_code": cell["CellCode"],
         "table": version["Code"],
         "table_name": version["Name"],
+        "dpm_release": dpm_release,
         "is_excluded": cell["is_excluded"],
         "sign": cell["sign"],
         "data_type": types[0]["data_type"] if types else None,
@@ -1805,8 +1871,18 @@ LOOKUP_DPM_CELL_TOOL_DEFINITION = {
                         "sheets, 0010 to 0060. Null for a template without one."
                     ),
                 },
+                "dpm_release": {
+                    "type": ["string", "null"],
+                    "description": (
+                        "The DPM release to ask the question of, such as 4.2 or 4.4 - what a "
+                        "reporting institution usually means by the version. The answer is then the "
+                        "template version that release has and the rules in force in it. Null for "
+                        "the newest of each, which is right for a cell being reported now and wrong "
+                        "for one in a report filed under an older release."
+                    ),
+                },
             },
-            "required": ["table", "row", "column", "sheet"],
+            "required": ["table", "row", "column", "sheet", "dpm_release"],
             "additionalProperties": False,
         },
     },
@@ -1830,5 +1906,5 @@ if __name__ == "__main__":
     args = sys.argv[1:]
     if not args:
         raise SystemExit(__doc__)
-    answer = lookup_dpm_table(args[0]) if len(args) == 1 else lookup_dpm_cell(*args[:4])
+    answer = lookup_dpm_table(args[0]) if len(args) == 1 else lookup_dpm_cell(*args[:5])
     print(json.dumps(answer, indent=2, default=str))

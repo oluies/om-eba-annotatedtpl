@@ -715,7 +715,14 @@ def explain_measure(
                 f"      an open table: {matched[0]} has no fixed {axis}, and the DPM writes that axis "
                 f"as `*`. The model's {wrote} is its own convention for what the reporter files."
             )
-        cell = dpm_lookup.lookup_dpm_cell(item.found["table_code"], item.found["row_code"], item.found["column_code"])
+        # The release goes with it: the rules a cell is under are scoped to a module version,
+        # so asking without it answers for the newest module rather than the one being read.
+        cell = dpm_lookup.lookup_dpm_cell(
+            item.found["table_code"], item.found["row_code"], item.found["column_code"], None, release
+        )
+        if not cell.get("found"):
+            lines.append(f"      no rules read: {cell.get('message', 'the lookup found nothing')}")
+            continue
         rules = cell.get("validation_rules") or []
         off = [r for r in rules if not r.get("active", True)]
         if rules:

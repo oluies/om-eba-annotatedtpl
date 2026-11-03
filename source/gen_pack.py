@@ -1012,7 +1012,7 @@ EBA DPM 2.0 database directly:
 | Tool | Answers |
 |---|---|
 | `lookup_dpm_table` | A template in any framework: its name, the module versions it belongs to, which axes are open, and every row, column and sheet with its code, label and parent |
-| `lookup_dpm_cell` | One cell: its dimension members, data type, period type, whether it is reportable, and the validation rules with their expressions |
+| `lookup_dpm_cell` | One cell: its dimension members, data type, period type, whether it is reportable, and the validation rules with their expressions - pass `dpm_release` to get the template version and the rules of one release rather than the newest of each |
 
 `parent_code` on a row is what an "Of which" row is a breakdown of — the nesting the
 annotated layout shows only by indentation.
@@ -2137,6 +2137,9 @@ Every lookup reports both, as `taxonomy_version` and `dpm_release`, and takes ei
 `version` is the taxonomy one, `dpm_release` is the DPM one, and passing both is two
 questions rather than one, so it is refused. Asking by release does the translation the
 caller cannot: DPM 4.0 and 4.1 both resolve to FINREP9 3.2.0, DPM 4.2 onwards to 3.3.0.
+`lookup_dpm_cell` is the one that takes the release alone, since a cell is not asked about
+per module: the release picks the template version and scopes the rules, and the answer
+echoes it back as `dpm_release`.
 
 **`FromReferenceDate` equal to `ToReferenceDate` means the module version is not to be
 used.** It was published and superseded without ever covering a reporting period, so
@@ -2541,8 +2544,13 @@ the page itself.
 The same code is re-issued per module version, and both the expression and the severity
 change between them. `v09247_s` is a `warning` in PSD_FRP 1.1.0 and an `error` in 1.2.0.
 `09-validation-rules.csv` is scoped to the two module versions this pack describes;
-`lookup_dpm_cell` is not, and returns one entry per version with the versions listed, so
-two entries with the same code there are a change, not a duplicate.
+`lookup_dpm_cell` is not unless it is asked to be, and returns one entry per version with
+the versions listed, so two entries with the same code there are a change, not a duplicate.
+Pass `dpm_release` to ask one release instead: the template version that release has, and
+only the rules in force in it. That is the question anyone holding a filed report is
+actually asking, and the unscoped answer mixes the versions - `F_04.04.1` row `0090`,
+column `0010` has six rules unscoped, spread over five module versions of two modules, and
+three under release 4.2.
 
 ## Environment
 

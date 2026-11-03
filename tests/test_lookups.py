@@ -849,6 +849,63 @@ def test_a_release_that_is_not_there_is_distinguished_from_a_module_that_is_not_
     assert phrase in answer["message"]
 
 
+@needs_dpm2
+@pytest.mark.parametrize(
+    ("release", "rules", "modules"),
+    [(None, 6, 5), ("3.5", 4, 1), ("4.0", 3, 1), ("4.2", 3, 2)],
+)
+def test_a_cell_asked_of_one_release_carries_only_that_release_s_rules(release, rules, modules):
+    """Unscoped, F_04.04.1 r0090 c0010 comes back with six rules spread over five module
+    versions of two modules - every version the database carries, folded together. Anyone
+    holding a report filed under 4.0 is being shown three rules that do not apply to it."""
+    answer = dpm_lookup.lookup_dpm_cell("F_04.04.1", "0090", "0010", None, release)
+    assert answer["found"] is True
+    assert answer["dpm_release"] == release, "the answer says which release it answered for"
+    assert len(answer["validation_rules"]) == rules
+    assert len({m for rule in answer["validation_rules"] for m in rule["modules"]}) == modules
+
+
+@needs_dpm2
+def test_a_release_also_decides_which_version_of_the_template_is_read():
+    """Not only the rules: C_02.00 had a cell at r0010/c0010 in release 3.4 and does not
+    in 4.0, so the release has to reach the template version too or the cell is reported
+    missing from a release that has it."""
+    assert dpm_lookup.lookup_dpm_cell("C_02.00", "0010", "0010", None, "3.4")["found"] is True
+    for newer in (None, "4.0", "4.2"):
+        answer = dpm_lookup.lookup_dpm_cell("C_02.00", "0010", "0010", None, newer)
+        assert answer["found"] is False, newer
+        assert "No cell" in answer["message"]
+
+
+@needs_dpm2
+def test_a_cell_asked_of_a_release_that_is_not_here_is_refused_rather_than_emptied():
+    """The failure that matters: a release the download does not carry matches no module
+    version, so a silent answer would be every rule reported as not reaching the cell."""
+    answer = dpm_lookup.lookup_dpm_cell("F_04.04.1", "0090", "0010", None, "9.9")
+    assert answer["found"] is False
+    assert "No DPM release '9.9' in this copy" in answer["message"]
+    assert "fetch_dpm2.py" in answer["message"]
+
+
+@needs_dpm2
+def test_dispatch_carries_the_release_through_to_the_cell_lookup():
+    """A parameter in the schema that the dispatcher drops is the worst shape of this bug:
+    the model asks for one release and is answered for all of them, with no sign of it."""
+    answer = agent_tools.dispatch(
+        "lookup_dpm_cell",
+        {"table": "F_04.04.1", "row": "0090", "column": "0010", "sheet": None, "dpm_release": "4.0"},
+    )
+    assert len(answer["validation_rules"]) == 3
+
+
+@needs_dpm2
+def test_asking_a_template_version_by_module_and_by_release_at_once_is_two_questions():
+    """_table_version takes both because its callers differ; answering one of them
+    silently would be a version the caller did not ask for."""
+    with dpm_lookup._connect() as con, pytest.raises(dpm_lookup.DpmError, match="pass one"):
+        dpm_lookup._table_version(con, "C_01.00", module="COREP_OF", dpm_release="4.2")
+
+
 def tool_schema(tool: Any) -> tuple[str, dict[str, Any], list[str]]:
     """A definition's name, properties and required list, narrowed.
 
@@ -865,11 +922,13 @@ def tool_schema(tool: Any) -> tuple[str, dict[str, Any], list[str]]:
 
 
 def test_every_tool_that_takes_a_version_takes_a_release():
-    """The two are alternatives, so a tool offering one and not the other sends the model
-    back to guessing the translation itself."""
+    """The two are alternatives, so a tool offering a version and not a release sends the
+    model back to guessing the translation itself. Not the converse: lookup_dpm_cell takes
+    a release and no version, because a cell is not asked about per module."""
     for tool in dpm_lookup.DPM_TOOL_DEFINITIONS:
         name, properties, required = tool_schema(tool)
-        assert ("version" in properties) == ("dpm_release" in properties), name
+        if "version" in properties:
+            assert "dpm_release" in properties, name
         if "dpm_release" in properties:
             assert "dpm_release" in required, name
 
