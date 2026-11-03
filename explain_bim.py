@@ -31,6 +31,13 @@ release that was current when someone wrote it, and a coordinate that has since 
 withdrawn, moved or renumbered goes on returning a number - the wrong one, or none - with
 nothing anywhere saying so.
 
+A measure need not hold a coordinate to be about one. `DIVIDE ( [C7200W_r0040_c0010], ... )`
+names another measure, and 499 of the 2 131 measures of the model this was written for hold
+no filter of their own at all - they are ratios and sums of the 1 152 that do, each named
+after the warehouse column it carries. `--measure` follows those references, says which
+measures it walked to reach a cell, and with `--in-words` writes each reference as the cell
+it is.
+
 The file is read and never written. A `.bim` holds a connection string, so nothing here
 prints the data source's address unless asked with --source.
 """
@@ -44,6 +51,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
+from itertools import groupby
 from pathlib import Path
 from typing import Any
 
@@ -80,6 +88,17 @@ FILTER = re.compile(
     r"\[(?P<kind>TabellKod|Table_code|RadKod|Row_code|KolumnKod|Column_code)\]\s*"
     r"(?:=\s*\"(?P<one>[^\"]*)\"|IN\s*\{(?P<many>[^}]*)\})"
 )
+
+# `[Name]` with nothing in front of it is a measure; `'Dim_C'[RadKod]` and `Dim_C[RadKod]`
+# are columns. That one distinction is the whole rule for following a reference, and it is
+# why the name is then checked against the model's own measures rather than trusted: an
+# unqualified `[RadKod]` inside a FILTER is a column reference and not a measure.
+#
+# A model may hold its coordinates one hop away. 1 152 measures of the model this was
+# written for are named after the warehouse column they hold - `C7200W_r0040_c0010` - and
+# 426 others are written entirely in terms of those, so `--measure` on one of them could
+# only print the formula back.
+REFERENCE = re.compile(r"(?<![\w'\]])\[(?P<name>[^\[\]]+)\]")
 
 AXIS = {
     "TabellKod": "template",
@@ -289,6 +308,71 @@ def measured(table: BimTable, measure: BimMeasure) -> Measure:
 def measures_of(model: BimModel) -> list[Measure]:
     """Every measure in the model, in the order the file holds them."""
     return [measured(table, measure) for table in model.tables for measure in table.measures]
+
+
+def by_name(measures: list[Measure]) -> dict[str, Measure]:
+    """The measures by name. A tabular model's measure names are unique model-wide."""
+    return {measure.name: measure for measure in measures}
+
+
+def references_in(expression: str, among: frozenset[str]) -> tuple[str, ...]:
+    """The measures an expression names, in the order written, each once. Pure.
+
+    `among` is the model's own measure names, and it is what tells a measure reference from
+    an unqualified column reference. Asking the model is the only honest way: the two are
+    the same syntax.
+    """
+    named = (match["name"].strip() for match in REFERENCE.finditer(expression))
+    return tuple(dict.fromkeys(name for name in named if name in among))
+
+
+@dataclass(frozen=True)
+class Step:
+    """A measure reached from another, and the names walked to reach it."""
+
+    path: tuple[str, ...]
+    measure: Measure
+
+
+def followed(measure: Measure, measures: dict[str, Measure], depth: int = 8) -> tuple[Step, ...]:
+    """Every measure reachable through this one's references, nearest hop first.
+
+    Breadth first, so what the measure names itself is reported before what those name in
+    turn. Each measure once however many paths reach it, because the second path adds no
+    coordinate and doubles the output. A cycle is impossible in a model Analysis Services
+    will load and perfectly possible in a file on disk, so the walk keeps a seen set and a
+    depth as well.
+    """
+    among = frozenset(measures)
+    seen = {measure.name}
+    queue: list[tuple[Measure, tuple[str, ...]]] = [(measure, ())]
+    reached: list[Step] = []
+    while queue:
+        here, path = queue.pop(0)
+        if len(path) >= depth:
+            continue
+        for name in references_in(here.expression, among):
+            if name in seen:
+                continue
+            seen.add(name)
+            onward = measures[name]
+            reached.append(Step((*path, name), onward))
+            queue.append((onward, (*path, name)))
+    return tuple(reached)
+
+
+def reached(measure: Measure, measures: dict[str, Measure]) -> tuple[tuple[tuple[str, ...], Coordinate], ...]:
+    """Every coordinate the measure stands for, each with the path walked to reach it.
+
+    Its own first, with an empty path, then those of the measures it references. This is
+    the one walk, used by the single-measure view and by the tool, so the two cannot come
+    to different answers about the same measure.
+    """
+    own = tuple(((), coordinate) for coordinate in measure.coordinates)
+    through = tuple(
+        (step.path, coordinate) for step in followed(measure, measures) for coordinate in step.measure.coordinates
+    )
+    return own + through
 
 
 def as_dpm(code: str) -> str:
@@ -514,6 +598,16 @@ def summarise(model: BimModel, found: list[Measure], show_source: bool) -> list[
         # not something a summary should do without being asked.
         lines.append(f"{len(model.dataSources)} data source(s) - pass --source to print the address")
 
+    # A measure may hold no coordinate of its own and still stand for one, through the
+    # measures it references. Counted here because the figure above reads as "the rest of
+    # the model is not about reporting", and for this model that is wrong by 426 measures.
+    measures = by_name(found)
+    composed = [
+        measure
+        for measure in found
+        if not measure.coordinates and any(step.measure.coordinates for step in followed(measure, measures))
+    ]
+
     lines += [
         "",
         f"{len(with_coordinates):,} of {len(found):,} measures name a DPM coordinate, "
@@ -521,6 +615,10 @@ def summarise(model: BimModel, found: list[Measure], show_source: bool) -> list[
         "  as the model writes them: "
         + ", ".join(f"{letter} {count:,}" for letter, count in sorted(frameworks.items())),
     ]
+    if composed:
+        lines.append(
+            f"  {len(composed):,} more name none of their own but reference a measure that does; --measure follows them"
+        )
     unpaired = [measure for measure in found if measure.unpaired]
     if unpaired:
         lines.append(
@@ -598,8 +696,9 @@ def in_words(
     cells: dict[tuple[str, str, str], dict[str, Any]],
     swedish: dict[tuple[str, str], dict[str, str]] | None = None,
     frameworks: set[str] | None = None,
+    measures: dict[str, Measure] | None = None,
 ) -> str:
-    """The DAX with each group of filters written as the cells it selects.
+    """The DAX with each group of filters, and each reference, written as the cell it is.
 
     The formula is otherwise untouched. Rewriting it into prose would be a second language
     to learn, and it would hide which part of the measure a reader is looking at - what is
@@ -668,13 +767,91 @@ def in_words(
         )
         return f"«{templates} ({whose_framework}) · {rows} · {columns}»"
 
+    def reference_said(name: str) -> str | None:
+        """What a referenced measure is, where it is exactly one cell.
+
+        One cell only: a measure that is itself a sum of six is not a cell, and writing
+        the first of them in its place would be a formula nobody wrote. Those stay as
+        written, and the coordinate list below the formula says what they hold.
+        """
+        held = (measures or {}).get(name)
+        if not held or len(held.coordinates) != 1:
+            return None
+        cell = held.coordinates[0]
+        return group_said({"template": (cell.template,), "row": (cell.row,), "column": (cell.column,)})
+
+    # The filter groups and the references in one pass over one list of spans. Two passes
+    # would mean the second reading what the first wrote: a row label is prose and prose
+    # has brackets in it - "On demand [call] and short notice [current account]" is a
+    # FINREP row - and `[call]` is a reference as far as a regex can tell.
+    spans = [(begins, ends, group_said(group)) for begins, ends, group in groups(expression)[0]]
+    spans += [
+        (match.start(), match.end(), said)
+        for match in REFERENCE.finditer(expression)
+        if (said := reference_said(match["name"].strip()))
+    ]
     written: list[str] = []
     last = 0
-    for begins, ends, group in groups(expression)[0]:
-        written += [expression[last:begins], group_said(group)]
+    for begins, ends, text in sorted(spans):
+        # A span inside one already written is dropped rather than written twice, which is
+        # only reachable by a measure named like a filter column but costs one comparison.
+        if begins < last:
+            continue
+        written += [expression[last:begins], text]
         last = ends
     written.append(expression[last:])
     return "".join(written)
+
+
+def cell_said(
+    coordinate: Coordinate,
+    cells: dict[tuple[str, str, str], dict[str, Any]],
+    release: str | None,
+    frameworks: set[str] | None,
+    indent: str = "  ",
+) -> list[str]:
+    """One coordinate in full: what cell it is, and what reaches it.
+
+    This is the part that goes through `lookup_dpm_cell`, because for a single coordinate
+    the dimensions and the validation rules are worth the extra queries - a measure whose
+    cell is checked by a rule that was switched off is a different thing to maintain from
+    one whose rule is live.
+    """
+    item = resolve(coordinate, cells, frameworks)
+    if not item.found:
+        refusal = f" (a {item.refused} template has that code)" if item.refused else ""
+        return [f"{indent}{coordinate} - not in {release or 'any release this database carries'}{refusal}"]
+    label = f"{item.found['row_label'] or '(the filed row)'} / {item.found['column_label']}"
+    lines = [
+        f"{indent}{coordinate} - [{whose(item.found, frameworks)}] {label}",
+        f"{indent}    datapoint: {item.found['datapoint']}",
+    ]
+    # Bound rather than reached for twice: the axis that matched as open decides both
+    # halves of the sentence, and a type checker cannot see through the helper.
+    matched = item.matched_as
+    if matched and OPEN in matched:
+        axis, wrote = ("rows", coordinate.row) if matched[1] == OPEN else ("columns", coordinate.column)
+        lines.append(
+            f"{indent}    an open table: {matched[0]} has no fixed {axis}, and the DPM writes that axis "
+            f"as `*`. The model's {wrote} is its own convention for what the reporter files."
+        )
+    # The release goes with it: the rules a cell is under are scoped to a module version,
+    # so asking without it answers for the newest module rather than the one being read.
+    cell = dpm_lookup.lookup_dpm_cell(
+        item.found["table_code"], item.found["row_code"], item.found["column_code"], None, release
+    )
+    if not cell.get("found"):
+        return [*lines, f"{indent}    no rules read: {cell.get('message', 'the lookup found nothing')}"]
+    rules = cell.get("validation_rules") or []
+    off = [rule for rule in rules if not rule.get("active", True)]
+    if rules:
+        lines.append(f"{indent}    {len(rules)} validation rule(s) reach it, {len(off)} switched off")
+        lines += [
+            f"{indent}      {rule.get('rule_code', '?')}  {rule.get('severity', '?')}"
+            + ("" if rule.get("active", True) else "  (switched off)")
+            for rule in rules[:5]
+        ]
+    return lines
 
 
 def explain_measure(
@@ -684,52 +861,34 @@ def explain_measure(
     plainly: bool = False,
     swedish: dict[tuple[str, str], dict[str, str]] | None = None,
     frameworks: set[str] | None = None,
+    measures: dict[str, Measure] | None = None,
 ) -> list[str]:
-    """One measure in full: what it computes, and what each cell it names is.
+    """One measure in full: what it computes, and what each cell it stands for is.
 
-    This is the view that goes through `lookup_dpm_cell`, because for a single coordinate
-    the dimensions and the validation rules are worth the extra queries - a measure whose
-    cell is checked by a rule that was switched off is a different thing to maintain from
-    one whose rule is live.
+    `measures` is the rest of the model, and passing it is what lets the references be
+    followed. Without it this says what the measure names itself, which for a measure
+    written in terms of other measures is nothing at all.
     """
     lines = [f"{measure.name}   [{measure.table}]"]
     if measure.folder:
         lines.append(f"  folder: {measure.folder}")
-    written = in_words(measure.expression, cells, swedish, frameworks) if plainly else measure.expression
+    written = in_words(measure.expression, cells, swedish, frameworks, measures) if plainly else measure.expression
     lines += ["", "  " + written.replace("\n", "\n  "), ""]
-    for coordinate in measure.coordinates:
-        item = resolve(coordinate, cells, frameworks)
-        if not item.found:
-            refusal = f" (a {item.refused} template has that code)" if item.refused else ""
-            lines.append(f"  {coordinate} - not in {release or 'any release this database carries'}{refusal}")
-            continue
-        label = f"{item.found['row_label'] or '(the filed row)'} / {item.found['column_label']}"
-        lines.append(f"  {coordinate} - [{whose(item.found, frameworks)}] {label}")
-        lines.append(f"      datapoint: {item.found['datapoint']}")
-        # Bound rather than reached for twice: the axis that matched as open decides both
-        # halves of the sentence, and a type checker cannot see through the helper.
-        matched = item.matched_as
-        if matched and OPEN in matched:
-            axis, wrote = ("rows", coordinate.row) if matched[1] == OPEN else ("columns", coordinate.column)
-            lines.append(
-                f"      an open table: {matched[0]} has no fixed {axis}, and the DPM writes that axis "
-                f"as `*`. The model's {wrote} is its own convention for what the reporter files."
-            )
-        # The release goes with it: the rules a cell is under are scoped to a module version,
-        # so asking without it answers for the newest module rather than the one being read.
-        cell = dpm_lookup.lookup_dpm_cell(
-            item.found["table_code"], item.found["row_code"], item.found["column_code"], None, release
+    walk = reached(measure, measures or {})
+    # Grouped by the path, which `reached` already orders: the hop is named once, above the
+    # coordinates it brought. A coordinate two measures away is a different thing to
+    # maintain from one the measure names itself, and the way there is what says which.
+    for path, pairs in groupby(walk, key=lambda pair: pair[0]):
+        if path:
+            lines.append("  via " + " -> ".join(f"[{name}]" for name in path))
+        for _, coordinate in pairs:
+            lines += cell_said(coordinate, cells, release, frameworks, "    " if path else "  ")
+    if not walk:
+        lines.append(
+            "  no DPM coordinate in this measure, nor in any measure it references."
+            if measures
+            else "  no DPM coordinate in this measure."
         )
-        if not cell.get("found"):
-            lines.append(f"      no rules read: {cell.get('message', 'the lookup found nothing')}")
-            continue
-        rules = cell.get("validation_rules") or []
-        off = [r for r in rules if not r.get("active", True)]
-        if rules:
-            lines.append(f"      {len(rules)} validation rule(s) reach it, {len(off)} switched off")
-            for rule in rules[:5]:
-                state = "" if rule.get("active", True) else "  (switched off)"
-                lines.append(f"        {rule.get('rule_code', '?')}  {rule.get('severity', '?')}{state}")
     return lines
 
 
@@ -790,8 +949,11 @@ def main() -> None:
                 f"no measure called {args.measure!r}." + (f" Did you mean: {', '.join(near)}" if near else "")
             )
         cells = cells_for(args.release)
+        measures = by_name(found)
         for measure in wanted:
-            said = wording({as_dpm(c.template) for c in measure.coordinates}) if args.in_words else {}
+            # The templates of the measures it references as well as its own, or the Swedish
+            # would be missing from exactly the coordinates that needed following to find.
+            templates = {as_dpm(c.template) for _, c in reached(measure, measures)}
             print(
                 "\n".join(
                     explain_measure(
@@ -799,8 +961,9 @@ def main() -> None:
                         cells,
                         args.release,
                         args.in_words,
-                        said,
+                        wording(templates) if args.in_words else {},
                         set(args.frameworks.split()) if args.frameworks else None,
+                        measures,
                     )
                 )
             )
@@ -887,7 +1050,9 @@ EXPLAIN_BIM_MEASURE_TOOL_DEFINITION = {
             "Explain one measure of an SSAS tabular model (.bim) whose DAX names DPM "
             "coordinates, resolving each to the reporting cell it is: the row and column "
             "labels, the datapoint id, whether the template is open, and whether the "
-            "coordinate still exists in the release asked for. Use it when a measure "
+            "coordinate still exists in the release asked for. A measure written in terms "
+            "of other measures is followed into them, and each coordinate says under "
+            "`through` which measures were walked to reach it. Use it when a measure "
             "returns a figure whose provenance is unclear, or when a model needs checking "
             "against a newer DPM release. Reads only; the model's connection string is "
             "never returned."
@@ -981,6 +1146,10 @@ def explain_bim_measure(
         return {"found": False, "message": str(refused)}
     asked = set(frameworks) if frameworks else None
     found = wanted[0]
+    # The measures it references as well as its own filters: a measure written in terms of
+    # other measures holds no coordinate itself, and 499 of this model's 2 131 are. `through`
+    # is the way there, empty for a coordinate the measure names.
+    walk = reached(found, by_name(measures_of(model)))
     return {
         "found": True,
         "measure": found.name,
@@ -992,6 +1161,7 @@ def explain_bim_measure(
         "coordinates": [
             {
                 "written": str(item.coordinate),
+                "through": list(path),
                 "in_release": bool(item.found),
                 "matched_as": item.how or None,
                 "open_table": is_open(item),
@@ -1001,6 +1171,6 @@ def explain_bim_measure(
                 "column_label": (item.found or {}).get("column_label"),
                 "datapoint": (item.found or {}).get("datapoint"),
             }
-            for item in (resolve(c, cells, asked) for c in found.coordinates)
+            for path, item in ((path, resolve(c, cells, asked)) for path, c in walk)
         ],
     }
