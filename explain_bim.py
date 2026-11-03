@@ -74,7 +74,9 @@ import gen_wasm_data  # noqa: E402
 FILTER = re.compile(
     # The table qualifier is part of the match so that replacing a group replaces the
     # whole filter: without it `'Dim_F'` is left standing in front of what replaced it.
-    r"(?:'[^']+'\s*)?"
+    # Quoting is optional in DAX - `Dim_C[TabellKod]` is as valid as `'Dim_C'[TabellKod]`
+    # - and a model that writes it the other way read as nothing at all.
+    r"(?:'[^']+'|[A-Za-z_]\w*)?\s*"
     r"\[(?P<kind>TabellKod|Table_code|RadKod|Row_code|KolumnKod|Column_code)\]\s*"
     r"(?:=\s*\"(?P<one>[^\"]*)\"|IN\s*\{(?P<many>[^}]*)\})"
 )
@@ -199,7 +201,9 @@ def chosen(match: re.Match[str]) -> tuple[str, ...]:
 # document order alone, `CALCULATE ( x, [TabellKod] = "C 01.00" )` and the row filter of
 # the CALCULATE after it look like one group, and the cell they would make is a cell
 # nobody wrote.
-BETWEEN = re.compile(r"^[\s,]*$")
+# `&&` as well as a comma: `FILTER ( t, a = x && b = y && c = z )` is the same three
+# filters standing together, written the way a FILTER() wants them.
+BETWEEN = re.compile(r"^[\s,]*$|^\s*&&\s*$")
 
 
 def groups(expression: str) -> tuple[list[tuple[int, int, dict[str, tuple[str, ...]]]], bool]:
@@ -218,7 +222,10 @@ def groups(expression: str) -> tuple[list[tuple[int, int, dict[str, tuple[str, .
     for match in FILTER.finditer(expression):
         axis = AXIS[match["kind"]]
         adjacent = bool(group) and bool(BETWEEN.match(expression[ends : match.start()]))
-        if group and (not adjacent or axis in group or axis == "template"):
+        # Any order within a group. Template, row, column is how the model this was written
+        # for writes them, but nothing in DAX requires it, and treating a template as the
+        # start of a group threw away every group that began with a row.
+        if group and (not adjacent or axis in group):
             dangling = True
             group = {}
         if not group:
@@ -331,8 +338,27 @@ def published(release: str | None) -> dict[tuple[str, str, str], dict[str, Any]]
         )
         names = [column[0] for column in con.description or []]
         rows = con.fetchall()
-    found = (dict(zip(names, row, strict=True)) for row in rows)
-    return {(cell["table_code"], cell["row_code"], cell["column_code"]): cell for cell in found}
+    # Every framework a cell is filed under, not whichever row came last. Thirteen
+    # templates are in two - C_18.00 is COREP and IF - and keeping one meant that asking
+    # for IF refused a cell that exists in IF, on the grounds that it is COREP. That is
+    # the guarantee --frameworks was added to give, undone by a dict comprehension.
+    cells_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        cell = dict(zip(names, row, strict=True))
+        key = (cell["table_code"], cell["row_code"], cell["column_code"])
+        held = cells_by_key.setdefault(key, {**cell, "frameworks": set()})
+        held["frameworks"].add(cell.pop("framework"))
+    return cells_by_key
+
+
+def whose(found: dict[str, Any], frameworks: set[str] | None) -> str:
+    """Which framework to name for a cell: the one asked for, where that narrows it.
+
+    A template in two frameworks named as both is noise when the caller has already said
+    which it means, and the only honest answer when they have not.
+    """
+    held = set(found.get("frameworks") or ())
+    return "/".join(sorted(held & frameworks if frameworks and held & frameworks else held))
 
 
 @dataclass(frozen=True)
@@ -391,8 +417,8 @@ def resolve(
                 found = cells.get(key)
                 if not found:
                     continue
-                if frameworks and found["framework"] not in frameworks:
-                    refused = refused or found["framework"]
+                if frameworks and found["frameworks"].isdisjoint(frameworks):
+                    refused = refused or "/".join(sorted(found["frameworks"]))
                     continue
                 return Resolved(coordinate, found, key)
     return Resolved(coordinate, None, None, refused)
@@ -522,7 +548,7 @@ def report(
             if every is not None:
                 lines.append(f"{'':34} {elsewhere(item.coordinate, every, frameworks)}")
             continue
-        label = f"[{item.found['framework']}] {item.found['row_label']} / {item.found['column_label']}"
+        label = f"[{whose(item.found, frameworks)}] {item.found['row_label']} / {item.found['column_label']}"
         note = f"  (written {item.coordinate.template}, matched {item.how})" if item.how else ""
         lines.append(f"{str(item.coordinate):34} {label[:76]}{note}")
         says = swedish.get((item.found["table_code"], item.found["row_code"]))
@@ -557,8 +583,8 @@ def in_words(
     def row_said(coordinate: Coordinate) -> str:
         found = resolve(coordinate, cells, frameworks)
         if not found.found:
-            whose = f" (a {found.refused} template has that code)" if found.refused else ""
-            return f"{coordinate.row}?{whose}"
+            refusal = f" (a {found.refused} template has that code)" if found.refused else ""
+            return f"{coordinate.row}?{refusal}"
         says = (swedish or {}).get((found.found["table_code"], found.found["row_code"]), {})
         english = found.found["row_label"]
         if says.get("sv") and agrees(says.get("en", ""), english):
@@ -574,9 +600,9 @@ def in_words(
         first = Coordinate(group["template"][0], group["row"][0], group["column"][0])
         found = resolve(first, cells, frameworks)
         if not found.found:
-            whose = f" (a {found.refused} template has that code)" if found.refused else ""
-            return f"«{first} - not in this release{whose}»"
-        whose_framework = found.found["framework"]
+            refusal = f" (a {found.refused} template has that code)" if found.refused else ""
+            return f"«{first} - not in this release{refusal}»"
+        whose_framework = whose(found.found, frameworks)
         rows = some([row_said(Coordinate(first.template, row, first.column)) for row in group["row"]])
         columns = some([column_said(Coordinate(first.template, first.row, column)) for column in group["column"]])
         templates = some(list(group["template"]))
@@ -617,7 +643,7 @@ def explain_measure(
             lines.append(f"  {coordinate} - not in {release or 'any release this database carries'}")
             continue
         label = f"{item.found['row_label'] or '(the filed row)'} / {item.found['column_label']}"
-        lines.append(f"  {coordinate} - [{item.found['framework']}] {label}")
+        lines.append(f"  {coordinate} - [{whose(item.found, frameworks)}] {label}")
         lines.append(f"      datapoint: {item.found['datapoint']}")
         # Bound rather than reached for twice: the axis that matched as open decides both
         # halves of the sentence, and a type checker cannot see through the helper.
@@ -735,7 +761,7 @@ def main() -> None:
                         item.coordinate.row,
                         item.coordinate.column,
                         "yes" if item.found else "no",
-                        got.get("framework", ""),
+                        whose(got, allowed),
                         item.how,
                         got.get("row_label", ""),
                         got.get("column_label", ""),
@@ -799,6 +825,17 @@ EXPLAIN_BIM_MEASURE_TOOL_DEFINITION = {
                     "description": "The .bim file, named relative to the configured model directory.",
                 },
                 "measure": {"type": "string", "description": "The measure's name, exactly as the model spells it."},
+                "frameworks": {
+                    "type": ["array", "null"],
+                    "items": {"type": "string"},
+                    "description": (
+                        "Which frameworks the model's codes belong to, e.g. "
+                        "['COREP','FINREP']. A template code is not unique across "
+                        "frameworks - a model's own S 01.01 matches the EBA's PAY template "
+                        "of that code - so without this a coordinate can be answered from "
+                        "a template nobody meant."
+                    ),
+                },
                 "release": {
                     "type": ["string", "null"],
                     "description": (
@@ -834,7 +871,12 @@ def within_root(name: str) -> Path:
     return wanted
 
 
-def explain_bim_measure(bim: str, measure: str, release: str | None = None) -> dict[str, Any]:
+def explain_bim_measure(
+    bim: str,
+    measure: str,
+    release: str | None = None,
+    frameworks: list[str] | None = None,
+) -> dict[str, Any]:
     """One measure, with every DPM coordinate in it resolved. The tool behind the name."""
     try:
         path = within_root(bim)
@@ -850,6 +892,7 @@ def explain_bim_measure(bim: str, measure: str, release: str | None = None) -> d
         return {"found": False, "measure": measure, "message": f"no measure called {measure!r} in {bim}"}
 
     cells = published(release)
+    asked = set(frameworks) if frameworks else None
     found = wanted[0]
     return {
         "found": True,
@@ -858,17 +901,19 @@ def explain_bim_measure(bim: str, measure: str, release: str | None = None) -> d
         "folder": found.folder,
         "expression": found.expression,
         "release": release,
+        "frameworks": sorted(asked) if asked else None,
         "coordinates": [
             {
                 "written": str(item.coordinate),
                 "in_release": bool(item.found),
                 "matched_as": item.how or None,
                 "open_table": is_open(item),
-                "framework": (item.found or {}).get("framework"),
+                "frameworks": sorted((item.found or {}).get("frameworks") or ()),
+                "refused": item.refused,
                 "row_label": (item.found or {}).get("row_label"),
                 "column_label": (item.found or {}).get("column_label"),
                 "datapoint": (item.found or {}).get("datapoint"),
             }
-            for item in (resolve(c, cells) for c in found.coordinates)
+            for item in (resolve(c, cells, asked) for c in found.coordinates)
         ],
     }

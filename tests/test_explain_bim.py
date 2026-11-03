@@ -402,3 +402,77 @@ def test_the_rendering_replaces_the_whole_filter_including_its_table():
     said = bim.in_words(dax, {})
     assert "'Dim_F'«" not in said, said
     assert "«F 99.99" in said
+
+
+def test_the_shapes_dax_allows_are_all_read():
+    """The model this was written for quotes its table qualifiers, writes its filters in
+    template-row-column order and separates them with commas. DAX requires none of that,
+    and a reader that assumes all three answers nothing for a model written otherwise.
+    """
+    shapes = {
+        "quoted": "'Dim_C'[TabellKod] = \"C 01.00\", 'Dim_C'[RadKod] = \"0010\", 'Dim_C'[KolumnKod] = \"0010\"",
+        "unquoted": 'Dim_C[TabellKod] = "C 01.00", Dim_C[RadKod] = "0010", Dim_C[KolumnKod] = "0010"',
+        "joined with &&": (
+            "FILTER ( t, 'Dim_C'[TabellKod] = \"C 01.00\" && 'Dim_C'[RadKod] = \"0010\" "
+            "&& 'Dim_C'[KolumnKod] = \"0010\" )"
+        ),
+        "row first": "'Dim_C'[RadKod] = \"0010\", 'Dim_C'[KolumnKod] = \"0010\", 'Dim_C'[TabellKod] = \"C 01.00\"",
+    }
+    for name, dax in shapes.items():
+        coordinates, unpaired = bim.coordinates_in(dax)
+        assert not unpaired, f"{name} was left dangling"
+        assert coordinates == (bim.Coordinate("C 01.00", "0010", "0010"),), name
+
+
+def test_two_calculates_are_still_not_one_group():
+    """Widening what counts as adjacent must not widen it to this: a template in one
+    CALCULATE and a row in the next are not a cell."""
+    _, unpaired = bim.coordinates_in(
+        "CALCULATE ( x, 'Dim_C'[TabellKod] = \"C 01.00\" ) "
+        "+ CALCULATE ( y, 'Dim_C'[RadKod] = \"0010\", 'Dim_C'[KolumnKod] = \"0010\" )"
+    )
+    assert unpaired
+
+
+@needs_dpm2
+def test_a_template_in_two_frameworks_answers_to_either(monkeypatch):
+    """Thirteen templates are filed under two frameworks - C_18.00 is COREP and IF - and
+    keeping one framework per cell meant asking for IF refused a cell that exists in IF,
+    on the grounds that it is COREP. That is the guarantee --frameworks exists to give.
+    """
+    monkeypatch.setenv("DPM2_DB", str(DPM2_DB))
+    cells = bim.published(None)
+    key = next(k for k in cells if k[0] == "C_18.00")
+    held = cells[key]["frameworks"]
+    assert {"COREP", "IF"} <= held, f"C_18.00 should be filed under both, not {held}"
+
+    for asked in ({"COREP"}, {"IF"}):
+        found = bim.resolve(bim.Coordinate("C 18.00", key[1], key[2]), cells, asked)
+        assert found.found, f"{asked} should find its own cell"
+        assert bim.whose(found.found, asked) == next(iter(asked))
+
+    refused = bim.resolve(bim.Coordinate("C 18.00", key[1], key[2]), cells, {"FINREP"})
+    assert not refused.found and refused.refused == "COREP/IF"
+
+
+@needs_dpm2
+def test_the_tool_can_be_told_which_frameworks_apply(monkeypatch, small):
+    """Without it an agent asking about the model's `S 01.01` is answered from the EBA's
+    PAY template of that code - which is the mismatch --frameworks was added to prevent,
+    reaching the one caller that could not pass it."""
+    monkeypatch.setenv("DPM2_DB", str(DPM2_DB))
+    monkeypatch.setenv("BIM_ROOT", str(small.parent))
+    import agent_tools
+
+    # Narrowed step by step rather than subscripted through: the definitions are literal
+    # dicts whose values are themselves dicts, and a checker has one wide union for them.
+    shown = {
+        str(function["name"]): function
+        for tool in agent_tools.TOOLS
+        if isinstance(function := tool.get("function"), dict)
+    }
+    parameters = shown[bim.EXPLAIN_BIM_MEASURE_TOOL_NAME].get("parameters")
+    assert isinstance(parameters, dict)
+    properties = parameters.get("properties")
+    assert isinstance(properties, dict)
+    assert "frameworks" in properties, "the model is never offered the one thing that disambiguates"

@@ -194,7 +194,9 @@ def _run(name: str, args: dict[str, Any]) -> dict[str, Any]:
                 args.get("expect_current"),
             )
         case ToolName.EXPLAIN_BIM_MEASURE:
-            return explain_bim.explain_bim_measure(args["bim"], args["measure"], args.get("release"))
+            return explain_bim.explain_bim_measure(
+                args["bim"], args["measure"], args.get("release"), args.get("frameworks")
+            )
         case ToolName.LOOKUP_DPM_TABLE:
             return dpm_lookup.lookup_dpm_table(args["table"])
         case ToolName.LOOKUP_DPM_CELL:
