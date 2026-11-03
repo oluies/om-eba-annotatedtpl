@@ -286,15 +286,30 @@ class Resolved:
         return "/".join(self.matched_as)
 
 
+# An open table has no row codes: the reporter files one row per exposure, per contract,
+# per entity, and the DPM writes the row as `*`. A model still has to name something, and
+# this one names `999` - so a literal match fails on a coordinate that is not wrong.
+OPEN = "*"
+
+
 def resolve(coordinate: Coordinate, cells: dict[tuple[str, str, str], dict[str, Any]]) -> Resolved:
-    """The coordinate as the DPM has it, trying the forms a human might have written."""
+    """The coordinate as the DPM has it, trying the forms a human might have written.
+
+    Literal forms first, and only then the open-table form, so that a template with both a
+    real row and an open one is never reported as open when the row exists.
+    """
     for template in template_variants(coordinate.template):
-        for row in variants(coordinate.row):
-            for column in variants(coordinate.column):
+        for row in [*variants(coordinate.row), OPEN]:
+            for column in [*variants(coordinate.column), OPEN]:
                 key = (template, row, column)
                 if key in cells:
                     return Resolved(coordinate, cells[key], key)
     return Resolved(coordinate, None, None)
+
+
+def is_open(found: Resolved) -> bool:
+    """Whether it only matched because the template's row or column is filed, not fixed."""
+    return bool(found.matched_as) and OPEN in found.matched_as
 
 
 def wording(templates: set[str]) -> dict[tuple[str, str], dict[str, str]]:
@@ -418,8 +433,18 @@ def explain_measure(
         if not item.found:
             lines.append(f"  {coordinate} - not in {release or 'any release this database carries'}")
             continue
-        lines.append(f"  {coordinate} - {item.found['row_label']} / {item.found['column_label']}")
+        label = f"{item.found['row_label'] or '(the filed row)'} / {item.found['column_label']}"
+        lines.append(f"  {coordinate} - {label}")
         lines.append(f"      datapoint: {item.found['datapoint']}")
+        # Bound rather than reached for twice: the axis that matched as open decides both
+        # halves of the sentence, and a type checker cannot see through the helper.
+        matched = item.matched_as
+        if matched and OPEN in matched:
+            axis, wrote = ("rows", coordinate.row) if matched[1] == OPEN else ("columns", coordinate.column)
+            lines.append(
+                f"      an open table: {matched[0]} has no fixed {axis}, and the DPM writes that axis "
+                f"as `*`. The model's {wrote} is its own convention for what the reporter files."
+            )
         cell = dpm_lookup.lookup_dpm_cell(item.found["table_code"], item.found["row_code"], item.found["column_code"])
         rules = cell.get("validation_rules") or []
         off = [r for r in rules if not r.get("active", True)]

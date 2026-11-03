@@ -147,3 +147,28 @@ def test_a_withdrawn_template_is_told_apart_from_one_that_never_existed(monkeypa
     withdrawn = bim.Coordinate("C 02.00", "0010", "0010")
     assert "older release" in bim.elsewhere(withdrawn, every), "C 02.00 was split into .a and .b"
     assert "no release" in bim.elsewhere(bim.Coordinate("C 99.99", "0010", "0010"), every)
+
+
+@needs_dpm2
+def test_an_open_table_is_matched_rather_than_called_missing(monkeypatch):
+    """C_28.00 is large exposures: the reporter files one row per exposure, so the DPM
+    writes the row as `*` and the model writes `999` as its own convention. Matched
+    literally it looks withdrawn, which reads as broken when it is not - and the first
+    measure of the model this was written for is exactly that case.
+    """
+    monkeypatch.setenv("DPM2_DB", str(DPM2_DB))
+    cells = bim.published(None)
+    found = bim.resolve(bim.Coordinate("C 28.00", "999", "330"), cells)
+    assert found.found, "C 28.00 c330 is a real column of an open table"
+    assert bim.is_open(found), "it should be reported as open rather than as exact"
+    assert found.found["column_label"] == "Total"
+
+
+@needs_dpm2
+def test_a_fixed_row_is_preferred_over_the_open_one(monkeypatch):
+    """The open form is tried only after the literal ones, so a template that has both a
+    real row and an open axis is never reported as open when the row exists."""
+    monkeypatch.setenv("DPM2_DB", str(DPM2_DB))
+    cells = bim.published(None)
+    found = bim.resolve(bim.Coordinate("F 04.04.1", "0090", "0010"), cells)
+    assert found.exact and not bim.is_open(found)
