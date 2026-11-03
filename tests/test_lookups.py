@@ -887,6 +887,52 @@ def test_a_cell_asked_of_a_release_that_is_not_here_is_refused_rather_than_empti
     assert "fetch_dpm2.py" in answer["message"]
 
 
+def test_what_is_said_about_an_open_sheet_axis_is_said_only_when_there_is_one():
+    """Pure, so it is pinned here rather than through a query: a fixed sheet axis gets no
+    sentence at all, and a sheet named against an open one gets the second."""
+    assert dpm_lookup.about_the_sheet("Y_01.01", False, "0010") == []
+    assert len(dpm_lookup.about_the_sheet("C_72.00.w", True, None)) == 1
+    said = dpm_lookup.about_the_sheet("C_72.00.w", True, "SEK")
+    assert len(said) == 2
+    assert "reporter's own label" in said[1]
+
+
+@needs_dpm2
+def test_a_cell_on_an_open_sheet_axis_is_found_and_carries_its_rules():
+    """The model writes an open sheet axis two ways: the cell is `s*`, and the rule's
+    location has no sheet at all. One `sheet or ""` served both, so C_72.00.w - COREP's
+    liquid assets, filed per currency - answered either no cell (asked without a sheet) or
+    the cell and none of its five rules (asked with `*`). Both halves, now."""
+    answer = dpm_lookup.lookup_dpm_cell("C_72.00.w", "0040", "0010", None, "4.2")
+    assert answer["found"] is True
+    assert answer["cell_code"] == "{C_72.00.w, r0040, c0010, s*}"
+    assert answer["open_sheet_axis"] is True
+    assert {rule["rule_code"] for rule in answer["validation_rules"]} >= {"v4618_m", "v7686_s"}
+    assert "open sheet axis" in answer["message"]
+
+
+@needs_dpm2
+def test_a_sheet_named_against_an_open_axis_is_answered_and_accounted_for():
+    """A reporter's own sheet label - a currency - is not a sheet the DPM has, so the
+    answer is the same cell either way and says why the label went unused."""
+    without = dpm_lookup.lookup_dpm_cell("C_72.00.w", "0040", "0010", None, "4.2")
+    named = dpm_lookup.lookup_dpm_cell("C_72.00.w", "0040", "0010", "SEK", "4.2")
+    assert named["cell_code"] == without["cell_code"]
+    assert len(named["validation_rules"]) == len(without["validation_rules"])
+    assert "reporter's own label" in named["message"]
+
+
+@needs_dpm2
+def test_a_fixed_sheet_axis_is_untouched_by_the_open_one():
+    """Y_01_01's sheets are the six PAY variants, which are codes the reporter does name."""
+    answer = dpm_lookup.lookup_dpm_cell("Y_01_01", "0010", "0010", "0010")
+    assert answer["found"] is True
+    assert answer["cell_code"] == "{Y_01.01, r0010, c0010, s0010}"
+    assert answer["open_sheet_axis"] is False
+    assert answer["validation_rules"], "the template has rules at that cell"
+    assert "open sheet axis" not in answer["message"]
+
+
 @needs_dpm2
 def test_dispatch_carries_the_release_through_to_the_cell_lookup():
     """A parameter in the schema that the dispatcher drops is the worst shape of this bug:
