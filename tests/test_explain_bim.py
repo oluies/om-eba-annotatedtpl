@@ -354,3 +354,51 @@ def test_the_filter_does_not_refuse_what_it_should_keep(monkeypatch):
     kept = bim.resolve(bim.Coordinate("F 04.04.1", "0090", "0010"), cells, {"COREP", "FINREP"})
     assert kept.found and kept.found["framework"] == "FINREP"
     assert kept.refused is None
+
+
+def test_a_filter_list_is_the_cells_of_its_cross_product():
+    """`RadKod IN {0110, 0210, 0260, 0310}` with five columns is twenty cells. That is
+    what the measure says, not an inference about it - the nine measures this could not
+    read were all of this shape, and they are the balance-sheet aggregates.
+    """
+    dax = (
+        "CALCULATE ( SUM ( x ), "
+        "'Dim_F'[TabellKod] = \"F 08.01.A\", "
+        '\'Dim_F\'[RadKod] IN { "0110", "0210", "0260", "0310" }, '
+        '\'Dim_F\'[KolumnKod] IN { "0010", "0020", "0030", "0034", "0035" } )'
+    )
+    coordinates, unpaired = bim.coordinates_in(dax)
+    assert not unpaired
+    assert len(coordinates) == 20, "four rows by five columns"
+    assert bim.Coordinate("F 08.01.A", "0110", "0010") in coordinates
+    assert bim.Coordinate("F 08.01.A", "0310", "0035") in coordinates
+
+
+def test_a_list_of_templates_is_read_too():
+    """`TabellKod IN { "C 02.00", "C 02.00.A" }` is one measure covering a template and
+    the variant that replaced it - which is how a model survives a split."""
+    dax = (
+        'CALCULATETABLE ( t, \'Dim_C\'[TabellKod] IN { "C 02.00", "C 02.00.A" }, '
+        "'Dim_C'[RadKod] = \"0010\", 'Dim_C'[KolumnKod] = \"0010\" )"
+    )
+    coordinates, unpaired = bim.coordinates_in(dax)
+    assert not unpaired
+    assert {c.template for c in coordinates} == {"C 02.00", "C 02.00.A"}
+
+
+def test_filters_out_of_order_are_still_refused():
+    """The reason for reading them in groups is that a group is a cell. Two rows and no
+    column is not one, and guessing which column was meant would invent a fact."""
+    _, unpaired = bim.coordinates_in("'Dim_C'[RadKod] = \"0010\", 'Dim_C'[RadKod] = \"0020\"")
+    assert unpaired
+
+
+def test_the_rendering_replaces_the_whole_filter_including_its_table():
+    """Replacing from the bracket leaves `'Dim_F'` standing in front of what replaced it."""
+    dax = (
+        "CALCULATE ( SUM ( x ), "
+        "'Dim_F'[TabellKod] = \"F 99.99\", 'Dim_F'[RadKod] = \"0010\", 'Dim_F'[KolumnKod] = \"0010\" )"
+    )
+    said = bim.in_words(dax, {})
+    assert "'Dim_F'«" not in said, said
+    assert "«F 99.99" in said

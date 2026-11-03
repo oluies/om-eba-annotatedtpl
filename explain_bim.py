@@ -67,9 +67,26 @@ import gen_wasm_data  # noqa: E402
 # `Fakta_S[Table_code]` on one fact table - 1 565 filters of the first and 418 of the
 # second. Reading only the first undercounted the model by a fifth and never looked at the
 # S framework at all.
-TEMPLATE = re.compile(r"\[(?:TabellKod|Table_code)\]\s*=\s*\"([^\"]+)\"")
-ROW = re.compile(r"\[(?:RadKod|Row_code)\]\s*=\s*\"([^\"]+)\"")
-COLUMN = re.compile(r"\[(?:KolumnKod|Column_code)\]\s*=\s*\"([^\"]+)\"")
+# One filter, whichever convention it is written in and whether it names one value or a
+# list. `IN { "0110", "0210" }` is not a shape to guess at: a filter list is a set, and
+# three of them in one CALCULATE are the cells of their cross product - four rows by five
+# columns is twenty cells, stated exactly, by whoever wrote the measure.
+FILTER = re.compile(
+    # The table qualifier is part of the match so that replacing a group replaces the
+    # whole filter: without it `'Dim_F'` is left standing in front of what replaced it.
+    r"(?:'[^']+'\s*)?"
+    r"\[(?P<kind>TabellKod|Table_code|RadKod|Row_code|KolumnKod|Column_code)\]\s*"
+    r"(?:=\s*\"(?P<one>[^\"]*)\"|IN\s*\{(?P<many>[^}]*)\})"
+)
+
+AXIS = {
+    "TabellKod": "template",
+    "Table_code": "template",
+    "RadKod": "row",
+    "Row_code": "row",
+    "KolumnKod": "column",
+    "Column_code": "column",
+}
 # `IN { "C 01.00", "C 02.00" }` is a different shape and is counted rather than guessed at.
 IN_LIST = re.compile(r"\[(?:TabellKod|RadKod|KolumnKod|Table_code|Row_code|Column_code)\]\s*IN\s*\{")
 
@@ -170,23 +187,69 @@ def flat(value: str | list[str] | None) -> str:
             return str(value)
 
 
-def coordinates_in(expression: str) -> tuple[tuple[Coordinate, ...], bool]:
-    """Every coordinate the expression names, and whether the three lists paired up.
+def chosen(match: re.Match[str]) -> tuple[str, ...]:
+    """What one filter selects: one value, or the values of its list."""
+    if match["many"] is not None:
+        return tuple(value.strip().strip('"') for value in match["many"].split(",") if value.strip())
+    return (match["one"].strip(),)
 
-    Pairing is by document order, which is only sound because the three appear the same
-    number of times in each measure - measured across 2 131 measures of the model this was
-    written for, where 1 284 name exactly one coordinate and the rest name two to twenty,
-    always in balanced threes. A measure where they do not balance is reported rather than
-    paired on a guess.
+
+# Between two filters of one group there is a comma and whitespace and nothing else. The
+# rule is what stops a template in one CALCULATE pairing with a row in the next: read on
+# document order alone, `CALCULATE ( x, [TabellKod] = "C 01.00" )` and the row filter of
+# the CALCULATE after it look like one group, and the cell they would make is a cell
+# nobody wrote.
+BETWEEN = re.compile(r"^[\s,]*$")
+
+
+def groups(expression: str) -> tuple[list[tuple[int, int, dict[str, tuple[str, ...]]]], bool]:
+    """Every run of template, row and column filters that stand together.
+
+    Returns where each run begins and ends, what it selects, and whether anything was left
+    dangling - a template with no row, two rows in a row, a group broken by other code.
+    One reader for both the parsing and the rendering, because two readers of one syntax
+    drift apart.
     """
-    templates, rows, columns = TEMPLATE.findall(expression), ROW.findall(expression), COLUMN.findall(expression)
-    if not templates:
-        return (), False
-    if not len(templates) == len(rows) == len(columns):
-        return (), True
-    return tuple(
-        Coordinate(t.strip(), r.strip(), c.strip()) for t, r, c in zip(templates, rows, columns, strict=True)
-    ), False
+    found: list[tuple[int, int, dict[str, tuple[str, ...]]]] = []
+    group: dict[str, tuple[str, ...]] = {}
+    begins = 0
+    ends = 0
+    dangling = False
+    for match in FILTER.finditer(expression):
+        axis = AXIS[match["kind"]]
+        adjacent = bool(group) and bool(BETWEEN.match(expression[ends : match.start()]))
+        if group and (not adjacent or axis in group or axis == "template"):
+            dangling = True
+            group = {}
+        if not group:
+            begins = match.start()
+        group[axis] = chosen(match)
+        ends = match.end()
+        if len(group) == 3:
+            if "template" in group and "row" in group and "column" in group:
+                found.append((begins, ends, group))
+            else:
+                dangling = True
+            group = {}
+    return found, dangling or bool(group)
+
+
+def coordinates_in(expression: str) -> tuple[tuple[Coordinate, ...], bool]:
+    """Every coordinate the expression names, and whether anything was left dangling.
+
+    A filter may name one value or a list, and three in one group are the cells of their
+    cross product - four rows by five columns is twenty cells. That is what the measure
+    says, not an inference about it, which is why the lists are read rather than counted.
+    """
+    runs, dangling = groups(expression)
+    found = [
+        Coordinate(template, row, column)
+        for _, _, group in runs
+        for template in group["template"]
+        for row in group["row"]
+        for column in group["column"]
+    ]
+    return tuple(found), dangling
 
 
 def measured(table: BimTable, measure: BimMeasure) -> Measure:
@@ -416,7 +479,7 @@ def summarise(model: BimModel, found: list[Measure], show_source: bool) -> list[
         lines.append(f"  {len(unpaired)} measure(s) name a template but not a matching row and column; see --unpaired")
     lists = sum(len(IN_LIST.findall(measure.expression)) for measure in found)
     if lists:
-        lines.append(f"  {lists} filter(s) use `IN {{...}}`, which this does not read apart")
+        lines.append(f"  {lists} filter(s) name a list, read as the cells of their cross product")
     return lines
 
 
@@ -468,15 +531,10 @@ def report(
     return lines
 
 
-# The three filters as they stand next to each other in the DAX. The dimension table
-# differs per framework and is matched only to be dropped: what replaces the triple is
-# what the three of them mean together, which is one cell.
-TRIPLE = re.compile(
-    r"'[^']+'\[(?:TabellKod|Table_code)\]\s*=\s*\"(?P<template>[^\"]+)\"\s*,\s*"
-    r"'[^']+'\[(?:RadKod|Row_code)\]\s*=\s*\"(?P<row>[^\"]+)\"\s*,\s*"
-    r"'[^']+'\[(?:KolumnKod|Column_code)\]\s*=\s*\"(?P<column>[^\"]+)\"",
-    re.MULTILINE,
-)
+def some(values: list[str], most: int = 4) -> str:
+    """A list a reader can take in: the first few, and how many were left."""
+    shown = " | ".join(values[:most])
+    return shown if len(values) <= most else f"{shown} | +{len(values) - most} more"
 
 
 def in_words(
@@ -485,38 +543,52 @@ def in_words(
     swedish: dict[tuple[str, str], dict[str, str]] | None = None,
     frameworks: set[str] | None = None,
 ) -> str:
-    """The DAX with each coordinate written as the cell it is rather than as three codes.
+    """The DAX with each group of filters written as the cells it selects.
 
     The formula is otherwise untouched. Rewriting it into prose would be a second language
     to learn, and it would hide which part of the measure a reader is looking at - what is
     unreadable here is not DAX, it is `r0350 c0010`, so only that is replaced.
 
-    A triple whose three filters do not stand together is left alone rather than
-    reassembled, for the same reason the parser does not pair unbalanced ones: the result
-    would be a formula nobody wrote.
+    The groups are found the same way `coordinates_in` finds them, because two readers of
+    one syntax drift apart: a group that does not come as template, row, column is left
+    exactly as written rather than reassembled into something nobody wrote.
     """
 
-    def said(match: re.Match[str]) -> str:
-        coordinate = Coordinate(match["template"], match["row"], match["column"])
+    def row_said(coordinate: Coordinate) -> str:
         found = resolve(coordinate, cells, frameworks)
         if not found.found:
             whose = f" (a {found.refused} template has that code)" if found.refused else ""
-            return f"«{coordinate} - not in this release{whose}»"
-        # The regulation's own Swedish for the row where it has one, which is not a
-        # translation of the model's English but the wording the Journal published. The
-        # column keeps the model's wording: the Journal's grid names rows, not columns.
+            return f"{coordinate.row}?{whose}"
         says = (swedish or {}).get((found.found["table_code"], found.found["row_code"]), {})
         english = found.found["row_label"]
-        row = says["sv"] if says.get("sv") and agrees(says.get("en", ""), english) else english
-        row = row or "the filed row"
-        # The framework, always. A template code is not unique across them: the DPM's
-        # S_01.01 is PAY, payment fraud reporting, and a model that uses `S 01.01` for its
-        # own national returns matches it and gets "Number of credit transfers" into a
-        # balance sheet. Nothing here can know which was meant - printing whose template
-        # it matched is what lets a reader see it at a glance.
-        return f"«{coordinate.template} ({found.found['framework']}) · {row} · {found.found['column_label']}»"
+        if says.get("sv") and agrees(says.get("en", ""), english):
+            return says["sv"]
+        return english or "the filed row"
 
-    return TRIPLE.sub(said, expression)
+    def column_said(coordinate: Coordinate) -> str:
+        """The column's own wording, or its code where the DPM does not have the cell."""
+        found = resolve(coordinate, cells, frameworks)
+        return (found.found or {}).get("column_label") or coordinate.column
+
+    def group_said(group: dict[str, tuple[str, ...]]) -> str:
+        first = Coordinate(group["template"][0], group["row"][0], group["column"][0])
+        found = resolve(first, cells, frameworks)
+        if not found.found:
+            whose = f" (a {found.refused} template has that code)" if found.refused else ""
+            return f"«{first} - not in this release{whose}»"
+        whose_framework = found.found["framework"]
+        rows = some([row_said(Coordinate(first.template, row, first.column)) for row in group["row"]])
+        columns = some([column_said(Coordinate(first.template, first.row, column)) for column in group["column"]])
+        templates = some(list(group["template"]))
+        return f"«{templates} ({whose_framework}) · {rows} · {columns}»"
+
+    written: list[str] = []
+    last = 0
+    for begins, ends, group in groups(expression)[0]:
+        written += [expression[last:begins], group_said(group)]
+        last = ends
+    written.append(expression[last:])
+    return "".join(written)
 
 
 def explain_measure(
