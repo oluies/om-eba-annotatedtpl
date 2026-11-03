@@ -596,16 +596,46 @@ def in_words(
         found = resolve(coordinate, cells, frameworks)
         return (found.found or {}).get("column_label") or coordinate.column
 
+    def anchor(group: dict[str, tuple[str, ...]]) -> tuple[Coordinate, Resolved]:
+        """The first cell of the product the DPM has, which the labels are read from.
+
+        Reading them from the first cell *written* collapsed a whole group whenever that
+        one was missing: `TabellKod IN { "C 02.00", "C 02.00.A" }` is a measure written to
+        survive a template being split, and it rendered as "not in this release" because
+        the half it was written to outlive is indeed gone.
+        """
+        for template in group["template"]:
+            for row in group["row"]:
+                for column in group["column"]:
+                    here = Coordinate(template, row, column)
+                    found = resolve(here, cells, frameworks)
+                    if found.found:
+                        return here, found
+        written = Coordinate(group["template"][0], group["row"][0], group["column"][0])
+        return written, resolve(written, cells, frameworks)
+
     def group_said(group: dict[str, tuple[str, ...]]) -> str:
-        first = Coordinate(group["template"][0], group["row"][0], group["column"][0])
-        found = resolve(first, cells, frameworks)
+        first, found = anchor(group)
         if not found.found:
             refusal = f" (a {found.refused} template has that code)" if found.refused else ""
             return f"«{first} - not in this release{refusal}»"
         whose_framework = whose(found.found, frameworks)
         rows = some([row_said(Coordinate(first.template, row, first.column)) for row in group["row"]])
         columns = some([column_said(Coordinate(first.template, first.row, column)) for column in group["column"]])
-        templates = some(list(group["template"]))
+        # Each template marked as the rows are, so a group spanning a split says which
+        # half is gone rather than hiding it behind the half that is not.
+        templates = some(
+            [
+                template
+                if any(
+                    resolve(Coordinate(template, row, column), cells, frameworks).found
+                    for row in group["row"]
+                    for column in group["column"]
+                )
+                else f"{template}?"
+                for template in group["template"]
+            ]
+        )
         return f"«{templates} ({whose_framework}) · {rows} · {columns}»"
 
     written: list[str] = []

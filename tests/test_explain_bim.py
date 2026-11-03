@@ -476,3 +476,42 @@ def test_the_tool_can_be_told_which_frameworks_apply(monkeypatch, small):
     properties = parameters.get("properties")
     assert isinstance(properties, dict)
     assert "frameworks" in properties, "the model is never offered the one thing that disambiguates"
+
+
+def test_a_group_is_not_collapsed_by_its_first_cell_being_missing():
+    """`TabellKod IN { "C 02.00", "C 02.00.A" }` is a measure written to survive a
+    template being split. Reading the labels from the first cell *written* made the whole
+    group render as "not in this release" - because the half it was written to outlive is
+    indeed gone - and the twenty cells of a 4x5 group went the same way whenever their
+    first row and column happened to be missing.
+    """
+    cells = {
+        ("C_02.00.A", "0010", "0010"): {
+            "framework": "COREP",
+            "frameworks": {"COREP"},
+            "table_code": "C_02.00.A",
+            "row_code": "0010",
+            "column_code": "0010",
+            "row_label": "TOTAL RISK EXPOSURE AMOUNT",
+            "column_label": "TREA",
+            "datapoint": 1,
+        }
+    }
+    dax = (
+        'CALCULATETABLE ( t, \'Dim_C\'[TabellKod] IN { "C 02.00", "C 02.00.A" }, '
+        "'Dim_C'[RadKod] = \"0010\", 'Dim_C'[KolumnKod] = \"0010\" )"
+    )
+    said = bim.in_words(dax, cells)
+    assert "TOTAL RISK EXPOSURE AMOUNT" in said, said
+    assert "C 02.00?" in said, "the half that is gone should be marked, not hidden"
+    assert "not in this release" not in said
+
+
+def test_a_group_with_nothing_behind_it_still_says_so():
+    """Anchoring on a cell that exists must not turn a group that resolves to nothing into
+    a group that looks resolved."""
+    said = bim.in_words(
+        "CALCULATE ( x, 'Dim_C'[TabellKod] = \"C 99.99\", 'Dim_C'[RadKod] = \"0010\", 'Dim_C'[KolumnKod] = \"0010\" )",
+        {},
+    )
+    assert "not in this release" in said, said
