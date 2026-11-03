@@ -61,11 +61,16 @@ import gen_wasm_data  # noqa: E402
 # `'Dim_C'[TabellKod] = "C 28.00"`. The dimension table differs per framework - Dim_C,
 # Dim_F, Dim_M, Dim_R - so the table name is not anchored; what is anchored is the three
 # column names, which are the convention this model uses for a DPM coordinate.
-TEMPLATE = re.compile(r"\[TabellKod\]\s*=\s*\"([^\"]+)\"")
-ROW = re.compile(r"\[RadKod\]\s*=\s*\"([^\"]+)\"")
-COLUMN = re.compile(r"\[KolumnKod\]\s*=\s*\"([^\"]+)\"")
+# A model may name a coordinate in either of two conventions, and the one this was first
+# written against uses both: `Dim_C[TabellKod]` on the dimension tables and
+# `Fakta_S[Table_code]` on one fact table - 1 565 filters of the first and 418 of the
+# second. Reading only the first undercounted the model by a fifth and never looked at the
+# S framework at all.
+TEMPLATE = re.compile(r"\[(?:TabellKod|Table_code)\]\s*=\s*\"([^\"]+)\"")
+ROW = re.compile(r"\[(?:RadKod|Row_code)\]\s*=\s*\"([^\"]+)\"")
+COLUMN = re.compile(r"\[(?:KolumnKod|Column_code)\]\s*=\s*\"([^\"]+)\"")
 # `IN { "C 01.00", "C 02.00" }` is a different shape and is counted rather than guessed at.
-IN_LIST = re.compile(r"\[(?:TabellKod|RadKod|KolumnKod)\]\s*IN\s*\{")
+IN_LIST = re.compile(r"\[(?:TabellKod|RadKod|KolumnKod|Table_code|Row_code|Column_code)\]\s*IN\s*\{")
 
 
 class BimMeasure(BaseModel):
@@ -256,7 +261,8 @@ def published(release: str | None) -> dict[tuple[str, str, str], dict[str, Any]]
     cells = gen_wasm_data.lookup("cells")
     with dpm_lookup._connect() as con:  # noqa: SLF001 - the one connection helper the lookups have
         con.execute(
-            f"SELECT table_code, row_code, column_code, row_label, column_label, datapoint FROM ({cells.sql})",
+            "SELECT framework, table_code, row_code, column_code, row_label, column_label, datapoint "
+            f"FROM ({cells.sql})",
             gen_wasm_data.release_parameters(cells, release),
         )
         names = [column[0] for column in con.description or []]
@@ -330,6 +336,22 @@ def wording(templates: set[str]) -> dict[tuple[str, str], dict[str, str]]:
         return {(row["template"], row["row"]): row for row in csv.DictReader(handle) if row["template"] in templates}
 
 
+def agrees(journal: str, dpm: str) -> bool:
+    """Whether the Official Journal's row and the DPM's row are the same row.
+
+    They are keyed the same way - template and row code - and they do not always agree:
+    the Journal's grid for F 05.01 starts at a heading, so its row 0010 is "By product"
+    where the DPM's 0010 is "On demand [call] and short notice [current account]". Pairing
+    them by code alone put the Swedish for one row against another, which is worse than
+    showing no Swedish at all.
+
+    So the Swedish is used only where the Journal's own English matches the DPM's label.
+    Case and punctuation are not what is being judged; the wording is.
+    """
+    plainly = lambda text: re.sub(r"[^\w]+", " ", (text or "").casefold(), flags=re.UNICODE).strip()  # noqa: E731
+    return bool(journal) and plainly(journal) == plainly(dpm)
+
+
 def summarise(model: BimModel, found: list[Measure], show_source: bool) -> list[str]:
     """What the model is, before anything is said about what it means."""
     tables = model.tables
@@ -366,7 +388,8 @@ def summarise(model: BimModel, found: list[Measure], show_source: bool) -> list[
         "",
         f"{len(with_coordinates):,} of {len(found):,} measures name a DPM coordinate, "
         f"{len(distinct):,} of them distinct",
-        "  by framework: " + ", ".join(f"{letter} {count:,}" for letter, count in sorted(frameworks.items())),
+        "  as the model writes them: "
+        + ", ".join(f"{letter} {count:,}" for letter, count in sorted(frameworks.items())),
     ]
     unpaired = [measure for measure in found if measure.unpaired]
     if unpaired:
@@ -407,11 +430,11 @@ def report(
             if every is not None:
                 lines.append(f"{'':34} {elsewhere(item.coordinate, every)}")
             continue
-        label = f"{item.found['row_label']} / {item.found['column_label']}"
+        label = f"[{item.found['framework']}] {item.found['row_label']} / {item.found['column_label']}"
         note = f"  (written {item.coordinate.template}, matched {item.how})" if item.how else ""
         lines.append(f"{str(item.coordinate):34} {label[:76]}{note}")
         says = swedish.get((item.found["table_code"], item.found["row_code"]))
-        if says and says.get("sv"):
+        if says and says.get("sv") and agrees(says.get("en", ""), item.found["row_label"]):
             lines.append(f"{'':34} sv: {says['sv'][:76]}")
     return lines
 
@@ -420,9 +443,9 @@ def report(
 # differs per framework and is matched only to be dropped: what replaces the triple is
 # what the three of them mean together, which is one cell.
 TRIPLE = re.compile(
-    r"'[^']+'\[TabellKod\]\s*=\s*\"(?P<template>[^\"]+)\"\s*,\s*"
-    r"'[^']+'\[RadKod\]\s*=\s*\"(?P<row>[^\"]+)\"\s*,\s*"
-    r"'[^']+'\[KolumnKod\]\s*=\s*\"(?P<column>[^\"]+)\"",
+    r"'[^']+'\[(?:TabellKod|Table_code)\]\s*=\s*\"(?P<template>[^\"]+)\"\s*,\s*"
+    r"'[^']+'\[(?:RadKod|Row_code)\]\s*=\s*\"(?P<row>[^\"]+)\"\s*,\s*"
+    r"'[^']+'\[(?:KolumnKod|Column_code)\]\s*=\s*\"(?P<column>[^\"]+)\"",
     re.MULTILINE,
 )
 
@@ -452,8 +475,15 @@ def in_words(
         # translation of the model's English but the wording the Journal published. The
         # column keeps the model's wording: the Journal's grid names rows, not columns.
         says = (swedish or {}).get((found.found["table_code"], found.found["row_code"]), {})
-        row = says.get("sv") or found.found["row_label"] or "the filed row"
-        return f"«{coordinate.template} · {row} · {found.found['column_label']}»"
+        english = found.found["row_label"]
+        row = says["sv"] if says.get("sv") and agrees(says.get("en", ""), english) else english
+        row = row or "the filed row"
+        # The framework, always. A template code is not unique across them: the DPM's
+        # S_01.01 is PAY, payment fraud reporting, and a model that uses `S 01.01` for its
+        # own national returns matches it and gets "Number of credit transfers" into a
+        # balance sheet. Nothing here can know which was meant - printing whose template
+        # it matched is what lets a reader see it at a glance.
+        return f"«{coordinate.template} ({found.found['framework']}) · {row} · {found.found['column_label']}»"
 
     return TRIPLE.sub(said, expression)
 
@@ -483,7 +513,7 @@ def explain_measure(
             lines.append(f"  {coordinate} - not in {release or 'any release this database carries'}")
             continue
         label = f"{item.found['row_label'] or '(the filed row)'} / {item.found['column_label']}"
-        lines.append(f"  {coordinate} - {label}")
+        lines.append(f"  {coordinate} - [{item.found['framework']}] {label}")
         lines.append(f"      datapoint: {item.found['datapoint']}")
         # Bound rather than reached for twice: the axis that matched as open decides both
         # halves of the sentence, and a type checker cannot see through the helper.
@@ -557,7 +587,17 @@ def main() -> None:
         if args.csv:
             out = csv.writer(sys.stdout)
             out.writerow(
-                ["template", "row", "column", "in_release", "matched_as", "row_label", "column_label", "datapoint"]
+                [
+                    "template",
+                    "row",
+                    "column",
+                    "in_release",
+                    "framework",
+                    "matched_as",
+                    "row_label",
+                    "column_label",
+                    "datapoint",
+                ]
             )
             for item in resolved:
                 if args.unresolved and item.found:
@@ -569,6 +609,7 @@ def main() -> None:
                         item.coordinate.row,
                         item.coordinate.column,
                         "yes" if item.found else "no",
+                        got.get("framework", ""),
                         item.how,
                         got.get("row_label", ""),
                         got.get("column_label", ""),
@@ -693,6 +734,7 @@ def explain_bim_measure(bim: str, measure: str, release: str | None = None) -> d
                 "in_release": bool(item.found),
                 "matched_as": item.how or None,
                 "open_table": is_open(item),
+                "framework": (item.found or {}).get("framework"),
                 "row_label": (item.found or {}).get("row_label"),
                 "column_label": (item.found or {}).get("column_label"),
                 "datapoint": (item.found or {}).get("datapoint"),

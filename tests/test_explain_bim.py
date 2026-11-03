@@ -250,7 +250,7 @@ def test_a_formula_can_be_read_with_the_coordinates_written_out(monkeypatch):
     said = bim.in_words(dax, cells)
     assert "CALCULATE ( SUM ( 'Fakta_F'[VardeDecimal] )" in said, "the formula is otherwise untouched"
     assert "TabellKod" not in said, "the three codes are gone"
-    assert "«F 04.04.1 ·" in said
+    assert "«F 04.04.1 (FINREP) ·" in said, said
     assert "Carrying amount»" in said
 
 
@@ -264,7 +264,8 @@ def test_the_rows_are_said_in_the_regulation_s_own_swedish(monkeypatch):
     swedish = bim.wording({"F_04.04.1"})
     if not swedish:
         pytest.skip("source/its_labels.csv is not built")
-    assert "Offentlig" in bim.in_words(dax, cells, swedish), bim.in_words(dax, cells, swedish)
+    said = bim.in_words(dax, cells, swedish)
+    assert "Offentlig" in said, said
 
 
 def test_filters_that_do_not_stand_together_are_left_alone():
@@ -275,3 +276,48 @@ def test_filters_that_do_not_stand_together_are_left_alone():
         "VAR b = CALCULATE ( y, 'Dim_C'[RadKod] = \"0010\", 'Dim_C'[KolumnKod] = \"0010\" )"
     )
     assert bim.in_words(scattered, {}) == scattered
+
+
+def test_both_naming_conventions_are_read():
+    """A model may name a coordinate either way, and the one this was written against uses
+    both: `Dim_C[TabellKod]` on its dimension tables and `Fakta_S[Table_code]` on one fact
+    table - 1 565 filters of the first and 418 of the second. Reading only the first
+    undercounted the model by a fifth and never looked at one framework at all.
+    """
+    swedish_names = "'Dim_C'[TabellKod] = \"C 01.00\", 'Dim_C'[RadKod] = \"0010\", 'Dim_C'[KolumnKod] = \"0010\""
+    english_names = (
+        "'Fakta_S'[Table_code] = \"S 01.01\", 'Fakta_S'[Row_code] = \"0160\", 'Fakta_S'[Column_code] = \"0010\""
+    )
+    for dax, expected in ((swedish_names, "C 01.00"), (english_names, "S 01.01")):
+        coordinates, unpaired = bim.coordinates_in(dax)
+        assert not unpaired
+        assert coordinates[0].template == expected
+
+
+def test_the_swedish_is_used_only_where_the_two_agree():
+    """The Official Journal's grid and the DPM are keyed the same way and do not always
+    agree. For F 05.01 the Journal's row 0010 is "By product" where the DPM's is "On
+    demand [call] and short notice [current account]" - putting one row's Swedish against
+    another is worse than showing no Swedish at all.
+    """
+    assert bim.agrees("Households", "Households")
+    assert bim.agrees("households ", "Households")
+    assert not bim.agrees("By product", "On demand [call] and short notice [current account]")
+    assert not bim.agrees("", "Anything")
+
+
+@needs_dpm2
+def test_a_matched_coordinate_says_whose_template_it_is(monkeypatch):
+    """A template code is not unique across frameworks. The DPM's S_01.01 is PAY - payment
+    fraud reporting - and a model using `S 01.01` for its own national returns matches it
+    and gets "Number of credit transfers" into a balance sheet. Nothing here can know which
+    was meant; naming the framework is what lets a reader see it.
+    """
+    monkeypatch.setenv("DPM2_DB", str(DPM2_DB))
+    cells = bim.published(None)
+    found = bim.resolve(bim.Coordinate("S 01.01", "0010", "0010"), cells)
+    assert found.found and found.found["framework"] == "PAY"
+    said = bim.in_words(
+        "'Fakta_S'[Table_code] = \"S 01.01\", 'Fakta_S'[Row_code] = \"0010\", 'Fakta_S'[Column_code] = \"0010\"", cells
+    )
+    assert "(PAY)" in said, said
