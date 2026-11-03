@@ -959,8 +959,6 @@ def explain_bim_measure(
         return {"found": False, "message": str(refused)}
     if not path.exists():
         return {"found": False, "message": f"{bim} is not there"}
-    if not dpm_lookup.available():
-        return {"found": False, "message": dpm_lookup.BUILD_IT}
 
     try:
         model = read(path)
@@ -970,6 +968,12 @@ def explain_bim_measure(
     wanted = [m for m in measures_of(model) if m.name == measure]
     if not wanted:
         return {"found": False, "measure": measure, "message": f"no measure called {measure!r} in {bim}"}
+
+    # The DPM last: what the file is and whether it holds that measure are facts about the
+    # .bim, and answering them with "download the database" sends the caller to fix the
+    # wrong thing - as it did in CI, where there is no database and both were asserted.
+    if not dpm_lookup.available():
+        return {"found": False, "measure": measure, "message": dpm_lookup.BUILD_IT}
 
     try:
         cells = published(release)
