@@ -2552,6 +2552,17 @@ actually asking, and the unscoped answer mixes the versions - `F_04.04.1` row `0
 column `0010` has six rules unscoped, spread over five module versions of two modules, and
 three under release 4.2.
 
+### An open sheet axis is written twice
+
+The cell is `s*` - one cell standing for every currency or counterparty filed on the axis -
+while the rule that reaches it carries no sheet at all. So a single sheet argument cannot
+serve both halves of the question, and 180 templates have such an axis. `C_72.00.w`, COREP's
+liquid assets, filed per currency, is the case that showed it: asked without a sheet it
+answered that there is no such cell, and asked with `*` it answered the cell and none of the
+five rules that reach it. `lookup_dpm_cell` reads the openness off the template and asks each
+half in its own spelling, and says in the answer that the axis is open - a sheet code passed
+against one is the reporter's own label, not something the model has.
+
 ## Environment
 
 Exactly one variable is required: `OM_JWT_TOKEN`. Everything else has a default that is

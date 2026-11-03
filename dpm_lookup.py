@@ -474,6 +474,11 @@ def _version_asked_for(
     raise DpmError(f"Module {module!r} is not in DPM release {dpm_release!r}.")
 
 
+# How the DPM writes an axis with no fixed members: one cell stands for every value the
+# reporter files on it. The same character explain_bim.py uses for an open row or column.
+OPEN_AXIS = "*"
+
+
 def cell_code(table: str, row: str, column: str, sheet: str = "") -> str:
     """The model's own spelling of a coordinate: {Y_01.01, r0010, c0010, s0010}."""
     parts = [table, f"r{row}", f"c{column}"] + ([f"s{sheet}"] if sheet else [])
@@ -583,6 +588,24 @@ def lookup_dpm_table(table: str) -> dict[str, Any]:
     }
 
 
+def about_the_sheet(table: str, open_sheet: bool, asked: str | None) -> list[str]:
+    """What to say about the sheet axis, if anything. Pure.
+
+    A template with an open sheet axis is filed once per whatever the axis is, and the
+    model carries one cell for all of them. A caller who named a sheet named one of their
+    own reporting, not one the DPM has, and should be told so rather than left to wonder
+    why the answer does not mention it.
+    """
+    if not open_sheet:
+        return []
+    said = [
+        f"{table} has an open sheet axis: it is filed once per whatever the axis is - a currency, "
+        "a counterparty - and the model carries one cell for all of them, written `*`."
+    ]
+    named = ["The sheet asked for is the reporter's own label, not part of the model."] if asked else []
+    return said + named
+
+
 def lookup_dpm_cell(
     table: str, row: str, column: str, sheet: str | None = None, dpm_release: str | None = None
 ) -> dict[str, Any]:
@@ -601,7 +624,13 @@ def lookup_dpm_cell(
     try:
         with _connect() as con:
             version = _table_version(con, table, dpm_release=dpm_release)
-            code = cell_code(version["Code"], row, column, sheet or "")
+            # An open sheet axis is not a sheet anybody names, and the model writes it two
+            # ways: the cell is `s*`, the rule's location has no sheet at all. So one
+            # `sheet or ""` cannot serve both queries. C_72.00.w, which is reported per
+            # currency, is where this showed: asked without a sheet it found no cell, and
+            # asked with `*` it found the cell and none of the five rules that reach it.
+            open_sheet = bool(version["open_sheets"])
+            code = cell_code(version["Code"], row, column, OPEN_AXIS if open_sheet else sheet or "")
             cells = _rows(con, CELL_SQL, version["TableVID"], code)
             if not cells:
                 codes = [h["code"] for h in _rows(con, HEADERS_SQL, version["TableVID"]) if h["direction"] == "Z"]
@@ -613,7 +642,16 @@ def lookup_dpm_cell(
             dimensions = _rows(con, CELL_DIMENSIONS_SQL, cell["VariableVID"])
             types = _rows(con, DATATYPE_SQL, cell["VariableVID"])
             rules = fold_rules(
-                _rows(con, RULES_SQL, version["Code"], row, column, sheet or "", dpm_release, dpm_release)
+                _rows(
+                    con,
+                    RULES_SQL,
+                    version["Code"],
+                    row,
+                    column,
+                    "" if open_sheet else sheet or "",
+                    dpm_release,
+                    dpm_release,
+                )
             )
     except DpmError as exc:
         return {"found": False, "table": table, "message": str(exc)}
@@ -630,12 +668,16 @@ def lookup_dpm_cell(
         "period_type": types[0]["period_type"] if types else None,
         "dimensions": dimensions,
         "validation_rules": rules,
-        "message": (
-            "An excluded cell is a greyed-out box in the template: in the model but not reportable. "
-            "A member definition is empty wherever the EBA has not published one, which is most of "
-            "them - say nothing rather than inventing one. Two entries under validation_rules with "
-            "the same rule_code are not a duplicate: the rule differs between the module versions "
-            "listed on each, in expression or in severity."
+        "open_sheet_axis": open_sheet,
+        "message": " ".join(
+            about_the_sheet(version["Code"], open_sheet, sheet)
+            + [
+                "An excluded cell is a greyed-out box in the template: in the model but not reportable.",
+                "A member definition is empty wherever the EBA has not published one, which is most of "
+                "them - say nothing rather than inventing one.",
+                "Two entries under validation_rules with the same rule_code are not a duplicate: the "
+                "rule differs between the module versions listed on each, in expression or in severity.",
+            ]
         ),
     }
 
