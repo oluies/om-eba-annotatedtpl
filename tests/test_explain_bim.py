@@ -1,0 +1,149 @@
+"""What a .bim says, and what the DPM says about it.
+
+The parsing is pure and is tested against a fixture small enough to read. The resolving
+needs the database and is tested on the shapes that actually went wrong when this was
+written against a real model: a variant written `.A` where the DPM has `.a`, a column code
+written three digits wide where the DPM has four, and a template that exists in an older
+release but in none of the published ones.
+"""
+
+import json
+
+import pytest
+
+import explain_bim as bim
+from conftest import DPM2_DB, needs_dpm2
+
+
+# One measure of each shape that matters: a coordinate, a measure with none, and a measure
+# whose expression TMSL stored as a list of lines rather than as a string.
+def cell(dimension: str, template: str, row: str, column: str) -> str:
+    """One DPM coordinate as this model's DAX writes it."""
+    return (
+        f"'{dimension}'[TabellKod] = \"{template}\", "
+        f"'{dimension}'[RadKod] = \"{row}\", "
+        f"'{dimension}'[KolumnKod] = \"{column}\""
+    )
+
+
+A_MODEL = {
+    "name": "Small",
+    "compatibilityLevel": 1500,
+    "model": {
+        "culture": "sv-SE",
+        "dataSources": [
+            {"name": "SQL/somewhere;report", "connectionDetails": {"address": {"server": "s", "database": "d"}}}
+        ],
+        "relationships": [{"name": "r1"}],
+        "roles": [{"name": "Read Only"}],
+        "tables": [
+            {
+                "name": "Matvarden",
+                "columns": [{"name": "Varde"}],
+                "partitions": [{"source": {"type": "calculated"}}],
+                "measures": [
+                    {
+                        "name": "One cell",
+                        "displayFolder": "Kapital",
+                        "expression": f"CALCULATE ( SUM ( x ), {cell('Dim_C', 'C 28.00', '999', '330')} )",
+                    },
+                    {
+                        "name": "Two cells",
+                        "expression": [
+                            f"VAR a = CALCULATE ( SUM ( x ), {cell('Dim_F', 'F 04.04.1', '0090', '0010')} )",
+                            f"VAR b = CALCULATE ( SUM ( x ), {cell('Dim_F', 'F 04.04.1', '0110', '0010')} )",
+                            "RETURN a + b",
+                        ],
+                    },
+                    {"name": "No cell at all", "expression": "SELECTEDVALUE ( 'Institut'[PeerGroup] )"},
+                    {
+                        "name": "A template and nothing else",
+                        "expression": "CALCULATE ( SUM ( x ), 'Dim_C'[TabellKod] = \"C 01.00\" )",
+                    },
+                ],
+            },
+            {
+                "name": "Kalender",
+                "columns": [{"name": "Datum"}],
+                "partitions": [{"source": {"type": "m"}}],
+                "measures": [],
+            },
+        ],
+    },
+}
+
+
+@pytest.fixture
+def small(tmp_path):
+    path = tmp_path / "Model.bim"
+    path.write_text(json.dumps(A_MODEL), encoding="utf-8")
+    return path
+
+
+def test_a_bim_is_read_as_what_it_is(small):
+    """TMSL carries far more than this reads, so the model ignores what it does not know
+    and validates the handful of fields it does."""
+    model = bim.read(small)
+    assert model.culture == "sv-SE"
+    assert [t.name for t in model.tables] == ["Matvarden", "Kalender"]
+    assert model.tables[0].kinds() == {"calculated"}
+    assert len(model.relationships) == 1
+
+
+def test_an_expression_is_a_string_or_a_list_of_lines(small):
+    """TMSL writes a short expression as a string and a long one as a list, and a measure
+    read as `['VAR a = …', 'RETURN a']` has no coordinates in it at all."""
+    found = {m.name: m for m in bim.measures_of(bim.read(small))}
+    assert "RETURN a + b" in found["Two cells"].expression
+    assert len(found["Two cells"].coordinates) == 2
+
+
+def test_the_coordinates_are_paired_in_document_order(small):
+    found = {m.name: m for m in bim.measures_of(bim.read(small))}
+    assert found["One cell"].coordinates == (bim.Coordinate("C 28.00", "999", "330"),)
+    assert found["Two cells"].coordinates[0].row == "0090"
+    assert found["No cell at all"].coordinates == ()
+
+
+def test_a_template_without_a_row_and_column_is_reported_not_guessed(small):
+    """Pairing by document order is only sound while the three lists balance. One that
+    names a template and no row is a filter over the whole template, and inventing a
+    coordinate for it would be a fact nobody wrote."""
+    found = {m.name: m for m in bim.measures_of(bim.read(small))}
+    assert found["A template and nothing else"].coordinates == ()
+    assert found["A template and nothing else"].unpaired
+
+
+def test_a_variant_written_in_capitals_is_the_same_template():
+    """The DPM writes `C_66.01.a` and this model writes `C 66.01.A`. That one letter made
+    476 coordinates look withdrawn when they were not."""
+    assert bim.template_variants("C 66.01.A") == ["C_66.01.A", "C_66.01.a"]
+    assert bim.template_variants("C 28.00") == ["C_28.00"]
+
+
+def test_a_code_is_tried_at_the_widths_people_write():
+    """FINREP rows are four digits and COREP large-exposure columns are three, and a model
+    may carry either."""
+    assert bim.variants("330")[:2] == ["330", "0330"]
+    assert "330" in bim.variants("0330")
+
+
+@needs_dpm2
+def test_a_coordinate_resolves_to_what_the_regulation_calls_it(small, monkeypatch):
+    monkeypatch.setenv("DPM2_DB", str(DPM2_DB))
+    cells = bim.published(None)
+    found = bim.resolve(bim.Coordinate("F 04.04.1", "0090", "0010"), cells)
+    assert found.found, "F 04.04.1 r0090 c0010 is in the model and should resolve"
+    assert found.exact, "it is written exactly as the DPM has it"
+    assert found.found["row_label"]
+
+
+@needs_dpm2
+def test_a_withdrawn_template_is_told_apart_from_one_that_never_existed(monkeypatch):
+    """The distinction is the whole value of the missing list: one needs the measure
+    rewritten against what replaced it, the other has never returned anything."""
+    monkeypatch.setenv("DPM2_DB", str(DPM2_DB))
+    every = bim.published(None)
+    withdrawn = bim.Coordinate("C 02.00", "0010", "0010")
+    assert "older release" in bim.elsewhere(withdrawn, every), "C 02.00 was split into .a and .b"
+    assert "no release" in bim.elsewhere(bim.Coordinate("C 99.99", "0010", "0010"), every)
