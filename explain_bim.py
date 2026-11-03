@@ -47,7 +47,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 import dpm_lookup
 
@@ -90,6 +90,8 @@ AXIS = {
     "Column_code": "column",
 }
 # `IN { "C 01.00", "C 02.00" }` is a different shape and is counted rather than guessed at.
+# Counted for the summary only. The lists themselves are read by `groups`, which is what
+# this comment used to deny; what is counted here is how many of them a reader will meet.
 IN_LIST = re.compile(r"\[(?:TabellKod|RadKod|KolumnKod|Table_code|Row_code|Column_code)\]\s*IN\s*\{")
 
 
@@ -150,7 +152,17 @@ class BimModel(BaseModel):
 
 def read(path: Path) -> BimModel:
     """The model, validated once, here at the edge."""
-    return BimModel.model_validate(json.loads(path.read_text(encoding="utf-8")).get("model", {}))
+    # utf-8-sig, because Visual Studio and SSDT write a .bim with a byte order mark and
+    # json.loads answers one with "Unexpected UTF-8 BOM" rather than reading it.
+    return BimModel.model_validate(json.loads(path.read_text(encoding="utf-8-sig")).get("model", {}))
+
+
+class UnknownRelease(Exception):
+    """A release asked for that this database does not carry.
+
+    Its own type rather than SystemExit: the CLI turns it into a message and the tool
+    turns it into an answer, and neither should be a traceback.
+    """
 
 
 @dataclass(frozen=True)
@@ -331,6 +343,15 @@ def published(release: str | None) -> dict[tuple[str, str, str], dict[str, Any]]
     """
     cells = gen_wasm_data.lookup("cells")
     with dpm_lookup._connect() as con:  # noqa: SLF001 - the one connection helper the lookups have
+        # A release the database does not carry matches no rows, and every coordinate then
+        # reads as withdrawn - a whole model apparently obsolete because of a typo. The
+        # lookups refuse an unknown release by name; so does this.
+        if release:
+            carried = [row[0] for row in con.execute(dpm_lookup.RELEASES_IN_FILE_SQL).fetchall()]
+            if release not in carried:
+                raise UnknownRelease(
+                    f"No DPM release {release!r} in this copy of the database. It has: {', '.join(carried)}."
+                )
         con.execute(
             "SELECT framework, table_code, row_code, column_code, row_label, column_label, datapoint "
             f"FROM ({cells.sql})",
@@ -465,7 +486,7 @@ def summarise(model: BimModel, found: list[Measure], show_source: bool) -> list[
     """What the model is, before anything is said about what it means."""
     tables = model.tables
     calculated = [table.name for table in tables if "calculated" in table.kinds()]
-    groups = [table.name for table in tables if "calculationGroup" in table.kinds()]
+    calculation_groups = [table.name for table in tables if "calculationGroup" in table.kinds()]
     with_coordinates = [measure for measure in found if measure.coordinates]
     distinct = {coordinate for measure in with_coordinates for coordinate in measure.coordinates}
     frameworks: dict[str, int] = {}
@@ -480,8 +501,8 @@ def summarise(model: BimModel, found: list[Measure], show_source: bool) -> list[
     ]
     if calculated:
         lines.append(f"calculated tables: {', '.join(calculated)}")
-    if groups:
-        lines.append(f"calculation groups: {', '.join(groups)}")
+    if calculation_groups:
+        lines.append(f"calculation groups: {', '.join(calculation_groups)}")
     if show_source:
         for source in model.dataSources:
             where = source.get("connectionDetails", {}).get("address", {})
@@ -502,8 +523,17 @@ def summarise(model: BimModel, found: list[Measure], show_source: bool) -> list[
     ]
     unpaired = [measure for measure in found if measure.unpaired]
     if unpaired:
-        lines.append(f"  {len(unpaired)} measure(s) name a template but not a matching row and column; see --unpaired")
-    lists = sum(len(IN_LIST.findall(measure.expression)) for measure in found)
+        lines.append(
+            f"  {len(unpaired)} measure(s) have filters that do not form a whole "
+            "template/row/column group; see --unpaired"
+        )
+    # Only the lists inside groups that were read: counting the ones in a dangling group
+    # as "read as the cells of their cross product" would be a claim about cells nobody got.
+    lists = sum(
+        len(IN_LIST.findall(measure.expression[begins:ends]))
+        for measure in found
+        for begins, ends, _ in groups(measure.expression)[0]
+    )
     if lists:
         lines.append(f"  {lists} filter(s) name a list, read as the cells of their cross product")
     return lines
@@ -670,7 +700,8 @@ def explain_measure(
     for coordinate in measure.coordinates:
         item = resolve(coordinate, cells, frameworks)
         if not item.found:
-            lines.append(f"  {coordinate} - not in {release or 'any release this database carries'}")
+            refusal = f" (a {item.refused} template has that code)" if item.refused else ""
+            lines.append(f"  {coordinate} - not in {release or 'any release this database carries'}{refusal}")
             continue
         label = f"{item.found['row_label'] or '(the filed row)'} / {item.found['column_label']}"
         lines.append(f"  {coordinate} - [{whose(item.found, frameworks)}] {label}")
@@ -737,6 +768,13 @@ def main() -> None:
     if not dpm_lookup.available():
         raise SystemExit(dpm_lookup.BUILD_IT)
 
+    def cells_for(release: str | None) -> dict[tuple[str, str, str], dict[str, Any]]:
+        """`published`, with an unknown release as a message rather than a traceback."""
+        try:
+            return published(release)
+        except UnknownRelease as refused:
+            raise SystemExit(str(refused)) from refused
+
     if args.measure:
         wanted = [m for m in found if m.name == args.measure]
         if not wanted:
@@ -744,7 +782,7 @@ def main() -> None:
             raise SystemExit(
                 f"no measure called {args.measure!r}." + (f" Did you mean: {', '.join(near)}" if near else "")
             )
-        cells = published(args.release)
+        cells = cells_for(args.release)
         for measure in wanted:
             said = wording({as_dpm(c.template) for c in measure.coordinates}) if args.in_words else {}
             print(
@@ -762,7 +800,7 @@ def main() -> None:
         return
 
     if args.coordinates or args.unresolved:
-        cells = published(args.release)
+        cells = cells_for(args.release)
         distinct = sorted({c for m in found for c in m.coordinates}, key=lambda c: (c.template, c.row, c.column))
         allowed = set(args.frameworks.split()) if args.frameworks else None
         resolved = [resolve(c, cells, allowed) for c in distinct]
@@ -801,7 +839,7 @@ def main() -> None:
             return
         missing = [item for item in resolved if not item.found]
         # Only when something is missing, because it is a second pass over every release.
-        every = published(None) if missing else None
+        every = cells_for(None) if missing else None
         print(
             "\n".join(
                 report(resolved, wording({as_dpm(c.template) for c in distinct}), args.unresolved, every, allowed)
@@ -917,11 +955,19 @@ def explain_bim_measure(
     if not dpm_lookup.available():
         return {"found": False, "message": dpm_lookup.BUILD_IT}
 
-    wanted = [m for m in measures_of(read(path)) if m.name == measure]
+    try:
+        model = read(path)
+    except (ValueError, ValidationError) as unreadable:
+        return {"found": False, "message": f"{bim} is not a .bim this can read: {unreadable}"}
+
+    wanted = [m for m in measures_of(model) if m.name == measure]
     if not wanted:
         return {"found": False, "measure": measure, "message": f"no measure called {measure!r} in {bim}"}
 
-    cells = published(release)
+    try:
+        cells = published(release)
+    except UnknownRelease as refused:
+        return {"found": False, "message": str(refused)}
     asked = set(frameworks) if frameworks else None
     found = wanted[0]
     return {

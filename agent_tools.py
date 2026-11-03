@@ -59,8 +59,9 @@ Trying one from a shell, before any of that:
     uv run agent_tools.py                       # the definitions the model will be shown
     uv run agent_tools.py lookup_dpm_sums table='F 12.01.a' module=FINREP9 version=null
 
-The twelve DPM-backed tools are the exception - the ten lookups and the two that read a
-reported file: they need a 139 MB database that a checkout does not have, so they are
+The thirteen DPM-backed tools are the exception - the ten lookups, the two that read a
+reported file, and the one that reads a tabular model: they need a 139 MB database that a
+checkout does not have, so they are
 registered only when it is there. A tool whose every answer is "not
 downloaded" costs a turn and teaches the model to stop calling it. `dispatch` still knows
 them either way, so a host that registered them before the file moved does not break.

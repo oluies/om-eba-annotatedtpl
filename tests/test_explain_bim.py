@@ -515,3 +515,47 @@ def test_a_group_with_nothing_behind_it_still_says_so():
         {},
     )
     assert "not in this release" in said, said
+
+
+@needs_dpm2
+def test_a_release_the_database_does_not_carry_is_refused_by_name(monkeypatch):
+    """It matched no rows and returned nothing, so every coordinate read as withdrawn: a
+    whole model apparently obsolete because of a typo. The lookups refuse an unknown
+    release by name and list what there is; so does this."""
+    monkeypatch.setenv("DPM2_DB", str(DPM2_DB))
+    with pytest.raises(bim.UnknownRelease) as refused:
+        bim.published("4.33")
+    assert "4.33" in str(refused.value)
+    assert "It has:" in str(refused.value), "a refusal that does not say what there is wastes the next attempt"
+
+
+@needs_dpm2
+def test_the_tool_answers_a_bad_release_rather_than_raising(monkeypatch, small):
+    monkeypatch.setenv("DPM2_DB", str(DPM2_DB))
+    monkeypatch.setenv("BIM_ROOT", str(small.parent))
+    answered = bim.explain_bim_measure("Model.bim", "One cell", release="4.33")
+    assert answered["found"] is False
+    assert "4.33" in answered["message"]
+
+
+def test_a_bim_with_a_byte_order_mark_is_read(tmp_path, monkeypatch):
+    """Visual Studio and SSDT write one, and json.loads answers it with "Unexpected UTF-8
+    BOM" rather than reading it - a traceback from the CLI and a dispatcher error from the
+    tool, for a file that is perfectly well formed."""
+    path = tmp_path / "WithBom.bim"
+    path.write_text("﻿" + json.dumps(A_MODEL), encoding="utf-8")
+    model = bim.read(path)
+    assert [t.name for t in model.tables] == ["Matvarden", "Kalender"]
+
+    monkeypatch.setenv("BIM_ROOT", str(tmp_path))
+    answered = bim.explain_bim_measure("WithBom.bim", "No such measure")
+    assert "no measure called" in answered["message"], "it got far enough to look for the measure"
+
+
+def test_the_tool_answers_a_file_it_cannot_read(tmp_path, monkeypatch):
+    """A refusal the model can read, not an exception the host has to catch."""
+    monkeypatch.setenv("BIM_ROOT", str(tmp_path))
+    (tmp_path / "Broken.bim").write_text("{not json", encoding="utf-8")
+    answered = bim.explain_bim_measure("Broken.bim", "anything")
+    assert answered["found"] is False
+    assert "cannot read" in answered["message"] or "not a .bim this can read" in answered["message"]
