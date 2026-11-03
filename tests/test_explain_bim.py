@@ -321,3 +321,36 @@ def test_a_matched_coordinate_says_whose_template_it_is(monkeypatch):
         "'Fakta_S'[Table_code] = \"S 01.01\", 'Fakta_S'[Row_code] = \"0010\", 'Fakta_S'[Column_code] = \"0010\"", cells
     )
     assert "(PAY)" in said, said
+
+
+@needs_dpm2
+def test_a_code_from_another_framework_is_refused_and_named(monkeypatch):
+    """`Fakta_S` in the model this was written against is described in the model itself as
+    the authority's own standard report for banks, and its `S 01.01` rows 0010-0050 are
+    interest-earning assets. The DPM's S_01.01 is PAY: "Number of credit transfers". Told
+    which frameworks apply, the tool refuses the match and says whose template has that
+    code, which is a different answer from "nothing has it".
+    """
+    monkeypatch.setenv("DPM2_DB", str(DPM2_DB))
+    cells = bim.published(None)
+    coordinate = bim.Coordinate("S 01.01", "0010", "0010")
+
+    unasked = bim.resolve(coordinate, cells)
+    assert unasked.found and unasked.found["framework"] == "PAY", "without a filter it matches PAY"
+
+    asked = bim.resolve(coordinate, cells, {"COREP", "FINREP"})
+    assert not asked.found, "PAY is not among the frameworks asked for"
+    assert asked.refused == "PAY", "and the refusal says which framework had the code"
+    assert "PAY" in bim.elsewhere(coordinate, cells, {"COREP", "FINREP"}) or "no release" in bim.elsewhere(
+        coordinate, cells, {"COREP", "FINREP"}
+    ), "the line under it must not contradict the refusal"
+
+
+@needs_dpm2
+def test_the_filter_does_not_refuse_what_it_should_keep(monkeypatch):
+    """A filter that quietly dropped good matches would be worse than none."""
+    monkeypatch.setenv("DPM2_DB", str(DPM2_DB))
+    cells = bim.published(None)
+    kept = bim.resolve(bim.Coordinate("F 04.04.1", "0090", "0010"), cells, {"COREP", "FINREP"})
+    assert kept.found and kept.found["framework"] == "FINREP"
+    assert kept.refused is None

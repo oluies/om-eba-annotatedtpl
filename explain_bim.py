@@ -23,6 +23,7 @@ model against the DPM and says so.
     uv run explain_bim.py Model.bim --measure "Exponering efter CRM"
     uv run explain_bim.py Model.bim --measure "..." --in-words   # the formula, readable
     uv run explain_bim.py Model.bim --release 4.3        # ask an older release
+    uv run explain_bim.py Model.bim --frameworks "COREP FINREP MREL RES"
     uv run explain_bim.py Model.bim --coordinates --csv  # for a spreadsheet
 
 The unresolved list is the point of the exercise. A model is written by hand against the
@@ -278,6 +279,10 @@ class Resolved:
     coordinate: Coordinate
     found: dict[str, Any] | None
     matched_as: tuple[str, str, str] | None
+    # The framework of a template that matched but was not among those asked for. A code
+    # is not unique across frameworks, and "it is PAY and you said COREP and FINREP" is a
+    # different answer from "nothing has it".
+    refused: str | None = None
 
     @property
     def exact(self) -> bool:
@@ -300,19 +305,34 @@ class Resolved:
 OPEN = "*"
 
 
-def resolve(coordinate: Coordinate, cells: dict[tuple[str, str, str], dict[str, Any]]) -> Resolved:
+def resolve(
+    coordinate: Coordinate,
+    cells: dict[tuple[str, str, str], dict[str, Any]],
+    frameworks: set[str] | None = None,
+) -> Resolved:
     """The coordinate as the DPM has it, trying the forms a human might have written.
 
     Literal forms first, and only then the open-table form, so that a template with both a
     real row and an open one is never reported as open when the row exists.
+
+    `frameworks` is which ones the model is written against. A template code is not unique
+    across them - this model's `S 01.01` is its own standard report and the DPM's is PAY -
+    so a match outside the set is refused and reported as a refusal rather than passed off
+    as the answer.
     """
+    refused = None
     for template in template_variants(coordinate.template):
         for row in [*variants(coordinate.row), OPEN]:
             for column in [*variants(coordinate.column), OPEN]:
                 key = (template, row, column)
-                if key in cells:
-                    return Resolved(coordinate, cells[key], key)
-    return Resolved(coordinate, None, None)
+                found = cells.get(key)
+                if not found:
+                    continue
+                if frameworks and found["framework"] not in frameworks:
+                    refused = refused or found["framework"]
+                    continue
+                return Resolved(coordinate, found, key)
+    return Resolved(coordinate, None, None, refused)
 
 
 def is_open(found: Resolved) -> bool:
@@ -400,7 +420,11 @@ def summarise(model: BimModel, found: list[Measure], show_source: bool) -> list[
     return lines
 
 
-def elsewhere(coordinate: Coordinate, every: dict[tuple[str, str, str], dict[str, Any]]) -> str:
+def elsewhere(
+    coordinate: Coordinate,
+    every: dict[tuple[str, str, str], dict[str, Any]],
+    frameworks: set[str] | None = None,
+) -> str:
     """Whether a coordinate the chosen release lacks exists in any release at all.
 
     The distinction is what makes the missing list worth reading. A coordinate that exists
@@ -408,8 +432,11 @@ def elsewhere(coordinate: Coordinate, every: dict[tuple[str, str, str], dict[str
     rewriting against whatever replaced it. One that exists in no release is a typo, or a
     coordinate someone invented, and it has never returned anything.
     """
-    found = resolve(coordinate, every)
+    found = resolve(coordinate, every, frameworks)
     if not found.found:
+        # Said without the framework it would be a contradiction of the line above it:
+        # "not in this release (a PAY template has that code)" followed by what that PAY
+        # template says is two answers to one question.
         return "in no release this database carries"
     return f"in an older release: {found.found['row_label']} / {found.found['column_label']}"[:96]
 
@@ -419,6 +446,7 @@ def report(
     swedish: dict[tuple[str, str], dict[str, str]],
     only_missing: bool,
     every: dict[tuple[str, str, str], dict[str, Any]] | None = None,
+    frameworks: set[str] | None = None,
 ) -> list[str]:
     """One line per coordinate, with what the DPM calls it."""
     lines = []
@@ -426,9 +454,10 @@ def report(
         if only_missing and item.found:
             continue
         if not item.found:
-            lines.append(f"{str(item.coordinate):34} NOT IN THIS RELEASE")
+            why = f"NOT IN THIS RELEASE{f' (a {item.refused} template has that code)' if item.refused else ''}"
+            lines.append(f"{str(item.coordinate):34} {why}")
             if every is not None:
-                lines.append(f"{'':34} {elsewhere(item.coordinate, every)}")
+                lines.append(f"{'':34} {elsewhere(item.coordinate, every, frameworks)}")
             continue
         label = f"[{item.found['framework']}] {item.found['row_label']} / {item.found['column_label']}"
         note = f"  (written {item.coordinate.template}, matched {item.how})" if item.how else ""
@@ -454,6 +483,7 @@ def in_words(
     expression: str,
     cells: dict[tuple[str, str, str], dict[str, Any]],
     swedish: dict[tuple[str, str], dict[str, str]] | None = None,
+    frameworks: set[str] | None = None,
 ) -> str:
     """The DAX with each coordinate written as the cell it is rather than as three codes.
 
@@ -468,9 +498,10 @@ def in_words(
 
     def said(match: re.Match[str]) -> str:
         coordinate = Coordinate(match["template"], match["row"], match["column"])
-        found = resolve(coordinate, cells)
+        found = resolve(coordinate, cells, frameworks)
         if not found.found:
-            return f"«{coordinate} - not in this release»"
+            whose = f" (a {found.refused} template has that code)" if found.refused else ""
+            return f"«{coordinate} - not in this release{whose}»"
         # The regulation's own Swedish for the row where it has one, which is not a
         # translation of the model's English but the wording the Journal published. The
         # column keeps the model's wording: the Journal's grid names rows, not columns.
@@ -494,6 +525,7 @@ def explain_measure(
     release: str | None,
     plainly: bool = False,
     swedish: dict[tuple[str, str], dict[str, str]] | None = None,
+    frameworks: set[str] | None = None,
 ) -> list[str]:
     """One measure in full: what it computes, and what each cell it names is.
 
@@ -505,10 +537,10 @@ def explain_measure(
     lines = [f"{measure.name}   [{measure.table}]"]
     if measure.folder:
         lines.append(f"  folder: {measure.folder}")
-    written = in_words(measure.expression, cells, swedish) if plainly else measure.expression
+    written = in_words(measure.expression, cells, swedish, frameworks) if plainly else measure.expression
     lines += ["", "  " + written.replace("\n", "\n  "), ""]
     for coordinate in measure.coordinates:
-        item = resolve(coordinate, cells)
+        item = resolve(coordinate, cells, frameworks)
         if not item.found:
             lines.append(f"  {coordinate} - not in {release or 'any release this database carries'}")
             continue
@@ -550,6 +582,16 @@ def main() -> None:
         help="with --measure: the formula with each coordinate written as the cell it is",
     )
     parser.add_argument("--release", default=None, help="which DPM release to resolve against, e.g. 4.3")
+    parser.add_argument(
+        "--frameworks",
+        default=None,
+        help=(
+            "which frameworks the model's codes belong to, space separated, e.g. "
+            "'COREP FINREP MREL RES'. A template code is not unique across frameworks - "
+            "this model's `S 01.01` is its own standard report and the DPM's is PAY - so "
+            "without this a code can match a template nobody meant."
+        ),
+    )
     parser.add_argument("--source", action="store_true", help="print the data source's address, which a .bim carries")
     parser.add_argument("--csv", action="store_true", help="write the coordinates as CSV instead of text")
     args = parser.parse_args()
@@ -577,13 +619,25 @@ def main() -> None:
         cells = published(args.release)
         for measure in wanted:
             said = wording({as_dpm(c.template) for c in measure.coordinates}) if args.in_words else {}
-            print("\n".join(explain_measure(measure, cells, args.release, args.in_words, said)))
+            print(
+                "\n".join(
+                    explain_measure(
+                        measure,
+                        cells,
+                        args.release,
+                        args.in_words,
+                        said,
+                        set(args.frameworks.split()) if args.frameworks else None,
+                    )
+                )
+            )
         return
 
     if args.coordinates or args.unresolved:
         cells = published(args.release)
         distinct = sorted({c for m in found for c in m.coordinates}, key=lambda c: (c.template, c.row, c.column))
-        resolved = [resolve(c, cells) for c in distinct]
+        allowed = set(args.frameworks.split()) if args.frameworks else None
+        resolved = [resolve(c, cells, allowed) for c in distinct]
         if args.csv:
             out = csv.writer(sys.stdout)
             out.writerow(
@@ -620,7 +674,11 @@ def main() -> None:
         missing = [item for item in resolved if not item.found]
         # Only when something is missing, because it is a second pass over every release.
         every = published(None) if missing else None
-        print("\n".join(report(resolved, wording({as_dpm(c.template) for c in distinct}), args.unresolved, every)))
+        print(
+            "\n".join(
+                report(resolved, wording({as_dpm(c.template) for c in distinct}), args.unresolved, every, allowed)
+            )
+        )
         print(
             f"\n{len(resolved) - len(missing):,} of {len(resolved):,} coordinates are in "
             f"{args.release or 'some release this database carries'}; {len(missing):,} are not."
