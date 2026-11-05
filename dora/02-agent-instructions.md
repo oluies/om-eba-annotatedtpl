@@ -47,7 +47,7 @@ There are no variants in DORA, so unlike PAY there is nothing being withheld:
 ```text
 Name of the entity, column 0020 of template B_01.01
 (Entity maintaining the register of information) in the DORA register of information. Datapoint
-3287126 (EBA DPM, module DORA 1.1.0). One row per record; the row
+480323 (EBA DPM, module DORA 1.1.0). One row per record; the row
 number in the column name is an ordinal, not a framework code.
 ```
 

@@ -6,6 +6,7 @@ it. So the shapes it must and must not match are pinned here.
 """
 
 import ast
+import csv
 import datetime
 import decimal
 import json
@@ -19,7 +20,7 @@ import pytest
 import agent_tools
 import dpm_lookup
 import pay42_lookup
-from conftest import needs_dpm2, needs_store
+from conftest import REPO, needs_dpm2, needs_store
 
 # --- the column name -------------------------------------------------------------------
 
@@ -1021,6 +1022,45 @@ def test_a_cell_carries_the_activity_of_each_rule_it_names():
     rules = dpm_lookup.lookup_dpm_cell("C_01.00", "0070", "0010")["validation_rules"]
     assert rules and all("active" in rule for rule in rules)
     assert {rule["rule_code"] for rule in rules} >= {"v0174_m"}
+
+
+# --- the ids the pack cites ------------------------------------------------------------
+
+
+def cited(path: str) -> list[dict[str, str]]:
+    """The rows of one of the pack's CSVs."""
+    with (REPO / path).open(encoding="utf-8", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+@needs_dpm2
+@pytest.mark.parametrize(
+    "path", ["05-datapoints.csv", "source/dpm-dora-1.1.0-datapoints.csv", "source/dpm-psd_frp-1.2.0-datapoints.csv"]
+)
+def test_every_datapoint_id_the_pack_cites_is_a_datapoint(path):
+    """The DPM has two numbers per cell: the datapoint (VariableID), which a reported fact
+    names and which does not move between module versions, and the VariableVID, which is
+    one version's specification of it and is new at every version. The pack cited the
+    VariableVID of PSD_FRP 1.1.0 for all 1830 PAY cells and eight of DORA's 85, so not one
+    of those ids resolved. A set membership rather than a lookup each: 1830 connections to
+    say the same thing."""
+    with dpm_lookup._connect() as con:
+        known = {row[0] for row in con.execute("SELECT DISTINCT VariableID FROM VariableVersion").fetchall()}
+    cites = [int(row["datapoint_id"]) for row in cited(path)]
+    assert cites, f"{path} carries no ids"
+    unknown = sorted({dp for dp in cites if dp not in known})
+    assert not unknown, f"{len(unknown)} of {len(cites)} are not datapoint ids, e.g. {unknown[:5]}"
+
+
+@needs_dpm2
+def test_a_cited_id_resolves_to_the_cell_it_is_cited_for():
+    """Membership is not enough: an id that exists but belongs elsewhere would pass it."""
+    rows = {row["column_name"] + "/" + row["variant"]: row for row in cited("05-datapoints.csv")}
+    row = rows["Y0101_r0190_c0020/0020"]
+    answer = dpm_lookup.lookup_dpm_datapoint(row["datapoint_id"])
+    assert answer["found"] is True
+    assert answer["cells"][0]["CellCode"] == "{Y_01.01, r0190, c0020, s0020}"
+    assert answer["cells"][0]["row_label"] == row["row_label"]
 
 
 # --- a code pasted out of a validation report ------------------------------------------

@@ -131,12 +131,12 @@ So `Y0101_r0010_c0010` is all six of these:
 
 | Datapoint | Variant | Metric | Geography | Unit |
 |---|---|---|---|---|
-| 3264309 | 0010 | Amount of payment | Domestic | €£$ |
-| 3260072 | 0020 | Number of transactions | Domestic | # |
-| 3260968 | 0030 | Amount of payment | European Economic Area (EEA) | €£$ |
-| 3263386 | 0040 | Number of transactions | European Economic Area (EEA) | # |
-| 3260980 | 0050 | Amount of payment | Non-European Economic Area (EEA) | €£$ |
-| 3263397 | 0060 | Number of transactions | Non-European Economic Area (EEA) | # |
+| 437810 | 0010 | Amount of payment | Domestic | €£$ |
+| 436590 | 0020 | Number of transactions | Domestic | # |
+| 437768 | 0030 | Amount of payment | European Economic Area (EEA) | €£$ |
+| 436548 | 0040 | Number of transactions | European Economic Area (EEA) | # |
+| 437789 | 0050 | Amount of payment | Non-European Economic Area (EEA) | €£$ |
+| 436569 | 0060 | Number of transactions | Non-European Economic Area (EEA) | # |
 
 Resolve the variant from the table, not the column: which metric and which geography the
 table holds is a property of the table, whether that is in its name, a partition, or a

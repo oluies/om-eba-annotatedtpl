@@ -1,20 +1,20 @@
 column_name_pattern,table_name,template,template_name,template_desc,row_code,row_label,column_code,column_label,datapoint_id,sign,row_kind
-B0101_r*_c0020,B_01_01,B_01.01,Entity maintaining the register of information,,*,"",0020,Name of the entity,3287126,,open
+B0101_r*_c0020,B_01_01,B_01.01,Entity maintaining the register of information,,*,,0020,Name of the entity,480323,,open
 B0101_r*_c0030,B_01_01,B_01.01,Entity maintaining the register of information,,*,"",0030,Country of the entity ,487507,,open
 B0101_r*_c0040,B_01_01,B_01.01,Entity maintaining the register of information,,*,"",0040,Type of entity,487476,,open
 B0101_r*_c0050,B_01_01,B_01.01,Entity maintaining the register of information,,*,"",0050,Competent Authority,487479,,open
 B0101_r*_c0060,B_01_01,B_01.01,Entity maintaining the register of information,,*,"",0060,Date of the reporting,487477,,open
-B0102_r*_c0020,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0020,Name of the entity ,3282420,,open
+B0102_r*_c0020,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,,0020,Name of the entity ,480324,,open
 B0102_r*_c0030,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0030,Country of the entity,487508,,open
 B0102_r*_c0040,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0040,Type of entity ,487136,,open
 B0102_r*_c0050,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0050,Hierarchy of the entity within the group (where applicable),487510,,open
-B0102_r*_c0060,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0060,LEI of the direct parent undertaking of the entity,3287585,,open
+B0102_r*_c0060,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,,0060,LEI of the direct parent undertaking of the entity,480859,,open
 B0102_r*_c0070,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0070,Date of last update,482938,,open
 B0102_r*_c0080,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0080,Date of integration in the Register of information,482939,,open
 B0102_r*_c0090,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0090,Date of deletion in the Register of information,482940,,open
 B0102_r*_c0100,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0100,Currency,487511,,open
-B0102_r*_c0110,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,"",0110,Value of total assets - of the financial entity,3289510,positive,open
-B0103_r*_c0030,B_01_03,B_01.03,List of branches,,*,"",0030,Name of the branch,3287125,,open
+B0102_r*_c0110,B_01_02,B_01.02,List of entities within the scope of the register of information,,*,,0110,Value of total assets - of the financial entity,482941,positive,open
+B0103_r*_c0030,B_01_03,B_01.03,List of branches,,*,,0030,Name of the branch,480322,,open
 B0103_r*_c0040,B_01_03,B_01.03,List of branches,,*,"",0040,Country of the branch,487509,,open
 B0201_r*_c0020,B_02_01,B_02.01,Contractual arrangements – General Information,,*,"",0020,Type of contractual arrangement,483167,,open
 B0201_r*_c0030,B_02_01,B_02.01,Contractual arrangements – General Information,,*,"",0030,Overarching contractual arrangement reference number,487321,,open
@@ -30,10 +30,10 @@ B0202_r*_c0120,B_02_02,B_02.02,Contractual arrangements – Specific information
 B0202_r*_c0140,B_02_02,B_02.02,Contractual arrangements – Specific information,,*,"",0140,Storage of data,3291603,,open
 B0202_r*_c0170,B_02_02,B_02.02,Contractual arrangements – Specific information,,*,"",0170,Sensitiveness of the data stored by the ICT third-party service provider,3291602,,open
 B0202_r*_c0180,B_02_02,B_02.02,Contractual arrangements – Specific information,,*,"",0180,Level of reliance on the ICT service supporting the critical or important function.,3291601,,open
-B0203_r*_c0030,B_02_03,B_02.03,List of intra-group contractual arrangements,,*,"",0030,Link,3282928,,open
-B0301_r*_c0030,B_03_01,B_03.01,Entities signing the Contractual arrangements for receiving ICT service(s) or on behalf of the entities making use of the ICT service(s),,*,"",0030,Link,3287587,,open
+B0203_r*_c0030,B_02_03,B_02.03,List of intra-group contractual arrangements,,*,,0030,Link,480864,,open
+B0301_r*_c0030,B_03_01,B_03.01,Entities signing the Contractual arrangements for receiving ICT service(s) or on behalf of the entities making use of the ICT service(s),,*,,0030,Link,480865,,open
 B0302_r*_c0030,B_03_02,B_03.02,ICT third-party service providers signing the Contractual arrangements for providing ICT service(s),,*,"",0030,Type of code to identify the ICT third-party service provider,3296067,,open
-B0303_r*_c0031,B_03_03,B_03.03,Entities signing the Contractual arrangements for providing ICT service(s) to other entity within the scope of consolidation,,*,"",0031,Link,3287586,,open
+B0303_r*_c0031,B_03_03,B_03.03,Entities signing the Contractual arrangements for providing ICT service(s) to other entity within the scope of consolidation,,*,,0031,Link,480863,,open
 B0401_r*_c0030,B_04_01,B_04.01,Entities making use of the ICT services,,*,"",0030,Nature of the entity making use of the ICT service(s),483520,,open
 B0501_r*_c0020,B_05_01,B_05.01,ICT third-party service providers,,*,"",0020,Type of code to identify the ICT third-party service provider,3296070,,open
 B0501_r*_c0030,B_05_01,B_05.01,ICT third-party service providers,,*,"",0030,Name of the ICT third-party service provider,3296075,,open
