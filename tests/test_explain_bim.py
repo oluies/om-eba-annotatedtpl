@@ -60,6 +60,13 @@ A_MODEL = {
                         "name": "A template and nothing else",
                         "expression": "CALCULATE ( SUM ( x ), 'Dim_C'[TabellKod] = \"C 01.00\" )",
                     },
+                    # A measure holding no coordinate of its own, which is what 499 of the
+                    # 2 131 measures of the model this was written for look like.
+                    {
+                        "name": "A ratio of other measures",
+                        "expression": "DIVIDE ( [One cell] + [Two cells], [No cell at all] )",
+                    },
+                    {"name": "A ratio of the ratio", "expression": "[A ratio of other measures] * 100"},
                 ],
             },
             {
@@ -559,3 +566,108 @@ def test_the_tool_answers_a_file_it_cannot_read(tmp_path, monkeypatch):
     answered = bim.explain_bim_measure("Broken.bim", "anything")
     assert answered["found"] is False
     assert "cannot read" in answered["message"] or "not a .bim this can read" in answered["message"]
+
+
+# --- a measure written in terms of other measures ---------------------------------------
+
+
+def test_a_reference_is_told_from_a_column_by_asking_the_model(small):
+    """`[One cell]` is a measure and `'Dim_C'[Varde]` is a column, and unqualified they are
+    the same syntax: `Dim_C[RadKod]` inside a FILTER is a column reference written exactly
+    like a measure reference. The model's own measure names are what tells them apart."""
+    among = frozenset(bim.by_name(bim.measures_of(bim.read(small))))
+    dax = "DIVIDE ( [One cell] + [Two cells], 'Dim_C'[Varde] ) + Dim_C[RadKod] + [RadKod]"
+    assert bim.references_in(dax, among) == ("One cell", "Two cells")
+
+
+def test_a_reference_is_named_once_however_often_it_is_written(small):
+    among = frozenset(bim.by_name(bim.measures_of(bim.read(small))))
+    assert bim.references_in("[One cell] + [One cell] - [One cell]", among) == ("One cell",)
+
+
+def test_a_measure_stands_for_the_coordinates_of_the_measures_it_names(small):
+    """The point of the exercise: `A ratio of other measures` holds no filter at all, and
+    before this it was a formula printed back with nothing said about it."""
+    measures = bim.by_name(bim.measures_of(bim.read(small)))
+    walk = bim.reached(measures["A ratio of other measures"], measures)
+    assert [(path, str(c)) for path, c in walk] == [
+        (("One cell",), "C 28.00 r999 c330"),
+        (("Two cells",), "F 04.04.1 r0090 c0010"),
+        (("Two cells",), "F 04.04.1 r0110 c0010"),
+    ]
+
+
+def test_a_measure_names_its_own_coordinates_first_and_with_no_path(small):
+    measures = bim.by_name(bim.measures_of(bim.read(small)))
+    assert bim.reached(measures["One cell"], measures) == (((), bim.Coordinate("C 28.00", "999", "330")),)
+
+
+def test_a_coordinate_two_measures_away_says_the_way_there(small):
+    """A coordinate reached through two hops is a different thing to maintain from one the
+    measure names itself, so the path is part of the answer rather than a detail."""
+    measures = bim.by_name(bim.measures_of(bim.read(small)))
+    walk = bim.reached(measures["A ratio of the ratio"], measures)
+    assert {path for path, _ in walk} == {
+        ("A ratio of other measures", "One cell"),
+        ("A ratio of other measures", "Two cells"),
+    }
+
+
+def test_a_cycle_does_not_loop():
+    """DAX forbids a circular reference and a file on disk can hold one anyway. Reading a
+    model should say what it can rather than hang."""
+    model = bim.BimModel.model_validate(
+        {
+            "tables": [
+                {
+                    "name": "T",
+                    "measures": [
+                        {"name": "A", "expression": f"[B] + CALCULATE ( x, {cell('Dim_C', 'C 28.00', '999', '330')} )"},
+                        {"name": "B", "expression": "[A] * 2"},
+                    ],
+                }
+            ]
+        }
+    )
+    measures = bim.by_name(bim.measures_of(model))
+    assert [str(c) for _, c in bim.reached(measures["B"], measures)] == ["C 28.00 r999 c330"]
+
+
+def test_a_composed_measure_is_counted_in_the_summary(small):
+    """The count of measures naming a coordinate reads as "the rest is not about
+    reporting", and for a model written this way that is wrong by hundreds."""
+    model = bim.read(small)
+    said = "\n".join(bim.summarise(model, bim.measures_of(model), show_source=False))
+    assert "2 more name none of their own but reference a measure that does" in said
+
+
+@needs_dpm2
+def test_a_reference_to_one_cell_is_written_out_in_words(monkeypatch, small):
+    """A measure that is itself a sum of several is not a cell, so it stays as written and
+    the list below the formula says what it holds."""
+    monkeypatch.setenv("DPM2_DB", str(DPM2_DB))
+    measures = bim.by_name(bim.measures_of(bim.read(small)))
+    said = bim.in_words("DIVIDE ( [One cell], [Two cells] )", bim.published(None), measures=measures)
+    assert "«C 28.00 (COREP) ·" in said, said
+    assert "[Two cells]" in said, "a measure of two cells is not one cell"
+
+
+@needs_dpm2
+def test_the_tool_follows_the_references_and_says_which(monkeypatch, small):
+    monkeypatch.setenv("DPM2_DB", str(DPM2_DB))
+    monkeypatch.setenv("BIM_ROOT", str(small.parent))
+    answered = bim.explain_bim_measure("Model.bim", "A ratio of other measures")
+    assert answered["found"] is True
+    assert [c["through"] for c in answered["coordinates"]] == [["One cell"], ["Two cells"], ["Two cells"]]
+    # The second: C 28.00's row 999 is an open table and has no label by design, which is
+    # a fact about the template rather than a coordinate that failed to resolve.
+    assert answered["coordinates"][1]["row_label"], "the cell was resolved, not only reached"
+    assert all(c["in_release"] for c in answered["coordinates"])
+
+
+@needs_dpm2
+def test_a_measure_that_reaches_nothing_says_so(monkeypatch, small):
+    monkeypatch.setenv("DPM2_DB", str(DPM2_DB))
+    measures = bim.by_name(bim.measures_of(bim.read(small)))
+    said = "\n".join(bim.explain_measure(measures["No cell at all"], bim.published(None), None, measures=measures))
+    assert "nor in any measure it references" in said
