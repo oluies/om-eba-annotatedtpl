@@ -101,13 +101,14 @@ extraction uses openpyxl — a plain cell reader gives you the values but not th
 ## The DPM 2.0 database
 
 The annotated table layout is a spreadsheet rendering of the model. The model itself is
-published as an Access database, and four scripts use it:
+published as an Access database, and five scripts use it:
 
 ```bash
-uv run source/fetch_dpm2.py          # download, unpack, load into DuckDB (needs mdbtools)
-uv run source/check_against_dpm2.py  # does this pack match the model, cell for cell?
-uv run source/extract_rules.py       # → 09-validation-rules.csv
-uv run source/gen_dpm2_doc.py        # → README_DPM2.md
+uv run source/fetch_dpm2.py            # download, unpack, load into DuckDB (needs mdbtools)
+uv run source/check_against_dpm2.py    # does this pack match the model, cell for cell?
+uv run source/check_datapoint_ids.py   # are the ids it cites the model's datapoints?
+uv run source/extract_rules.py         # → 09-validation-rules.csv
+uv run source/gen_dpm2_doc.py          # → README_DPM2.md
 ```
 
 **[`README_DPM2.md`](README_DPM2.md) is the map**: the 73 tables, the relationships that
@@ -133,6 +134,22 @@ Two details it has to absorb. The DPM writes a table code `Y_01.01` where the la
 the warehouse write `Y 01.01`. And a cell with `IsExcluded` set is a greyed-out box in
 the template — in the model, not reportable — which the pack leaves out, so the
 comparison does too. `Y_01.01` has 396 cells, 72 of them excluded, and the pack has 324.
+
+### The datapoint id is not the VariableVID
+
+The model has two numbers per cell, and citing the wrong one costs the reader the only
+thread back to the model that a description gives them:
+
+| | |
+|---|---|
+| **VariableID** | the datapoint. `436318` is `{Y_01.01, r0190, c0020, s0020}` in PSD_FRP 1.0.1, 1.1.0 and 1.2.0 alike. A reported fact names this, `lookup_dpm_datapoint` resolves it, and the annotated layout prints it. |
+| **VariableVID** | one module version's specification of that variable. New at every version: the same cell is `436318`, then `3263044`, then `5461648`. Nothing outside the model names it. |
+
+The pack cited the VariableVID of PSD_FRP 1.1.0 for all 1830 PAY cells and for eight
+of DORA's 85, so not one PAY description carried an id that resolves. `check_datapoint_ids.py`
+is the check, `--fix` writes the ids back, and `test_every_datapoint_id_the_pack_cites_is_a_datapoint`
+keeps it from coming back. The ids do not move between module versions, so this is a
+correction and not a version bump.
 
 ### Trying a lookup before wiring it into anything
 
