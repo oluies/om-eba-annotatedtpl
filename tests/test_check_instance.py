@@ -113,16 +113,24 @@ def test_an_unsupported_operator_inside_an_arm_raises_too():
 
 
 @needs_dpm2
-def test_every_psd_frp_rule_for_y_01_01_can_be_evaluated():
-    """The claim the docstring makes: four operators cover that module completely."""
-    from check_instance import load
+def test_the_four_operators_cover_all_but_the_three_implications():
+    """What the docstring claims, counted rather than asserted in prose: four operators
+    covered every rule of PSD_FRP 1.1.0, and 1.2.0 added three implications written with
+    `or` at the root. Anything else raising Unsupported here is a rule shape nobody has
+    looked at, which is exactly what this is meant to notice."""
+    from check_instance import Unsupported, load
 
-    grid, rules = load("Y_01.01", "PSD_FRP", "1.1.0")
+    grid, rules = load("Y_01.01", "PSD_FRP", "1.2.0")
     assert len(grid) == 324, "the pack has 324 datapoints for Y_01_01"
     values = dict.fromkeys(grid.values(), 1.0)
+    col, sheet = sorted({(c, s) for _, c, s in values})[0]
+    refused = {}
     for rule in rules:
-        for col, sheet in sorted({(c, s) for _, c, s in values})[:1]:
-            evaluate(rule, values, col, sheet)  # raises Unsupported if any operator is missing
+        try:
+            evaluate(rule, values, col, sheet)
+        except Unsupported as needs:
+            refused[rule.code] = str(needs)
+    assert refused == {"v903611_m": "or", "v903612_m": "or", "v903614_m": "or"}
 
 
 # --- the whole run, as the tool answers it ---------------------------------------------
@@ -163,7 +171,7 @@ def test_a_missing_report_names_the_file_and_not_its_content(tmp_path, monkeypat
     tool becomes a way to read one, so only the name comes back."""
     monkeypatch.setattr(check_instance, "DB", tmp_path / "dpm2.duckdb")
     (tmp_path / "dpm2.duckdb").write_text("not really a database")
-    answer = check_instance.check_report("Y_01.01", "PSD_FRP", "1.1.0", str(tmp_path / "absent.csv"))
+    answer = check_instance.check_report("Y_01.01", "PSD_FRP", "1.2.0", str(tmp_path / "absent.csv"))
     assert answer["found"] is False
     assert "absent.csv" in answer["message"]
 
@@ -173,7 +181,7 @@ def test_a_file_that_is_not_an_xbrl_csv_report_says_so(tmp_path, monkeypatch):
     (tmp_path / "dpm2.duckdb").write_text("not really a database")
     report = tmp_path / "wrong.csv"
     report.write_text("a,b\n1,2\n", encoding="utf-8")
-    answer = check_instance.check_report("Y_01.01", "PSD_FRP", "1.1.0", str(report))
+    answer = check_instance.check_report("Y_01.01", "PSD_FRP", "1.2.0", str(report))
     assert answer["found"] is False
     assert "factValue" in answer["message"]
     assert "1,2" not in answer["message"], "the content of the file must not come back"
@@ -181,29 +189,32 @@ def test_a_file_that_is_not_an_xbrl_csv_report_says_so(tmp_path, monkeypatch):
 
 def test_without_the_database_it_says_what_to_run(tmp_path, monkeypatch):
     monkeypatch.setattr(check_instance, "DB", tmp_path / "absent.duckdb")
-    answer = check_instance.check_report("Y_01.01", "PSD_FRP", "1.1.0", str(tmp_path / "any.csv"))
+    answer = check_instance.check_report("Y_01.01", "PSD_FRP", "1.2.0", str(tmp_path / "any.csv"))
     assert answer["found"] is False
     assert "fetch_dpm2.py" in answer["message"]
 
 
 @needs_dpm2
-def test_a_report_of_ones_fails_the_sums_and_skips_nothing(tmp_path):
-    """Against PSD_FRP 1.1.0 every rule is evaluable, so not_evaluated must be empty -
-    the claim the module docstring makes, checked through the tool rather than around it.
+def test_a_report_of_ones_fails_the_sums_and_names_what_it_cannot_do(tmp_path):
+    """Four operators covered every rule of PSD_FRP 1.1.0. 1.2.0, which the pack now
+    carries, added three written `if (a > 0) then (b > 0) endif` and modelled with `or` at
+    the root, so the checker reports exactly those three as unevaluated - pinned by code,
+    because "some rules were skipped" is the shape of answer this tool exists to refuse.
     A report where every cell is 1.0 cannot satisfy a sum, so the failures are expected."""
     from check_instance import load
 
-    grid, _ = load("Y_01.01", "PSD_FRP", "1.1.0")
+    grid, _ = load("Y_01.01", "PSD_FRP", "1.2.0")
     report = tmp_path / "ones.csv"
     rows = "\n".join(f"dp{dp},1.0" for dp in sorted(grid))
     report.write_text(f"datapoint,factValue\n{rows}\n", encoding="utf-8")
 
-    answer = check_instance.check_report("Y_01.01", "PSD_FRP", "1.1.0", str(report))
+    answer = check_instance.check_report("Y_01.01", "PSD_FRP", "1.2.0", str(report))
     assert answer["found"] is True
-    assert answer["module"] == "PSD_FRP 1.1.0"
+    assert answer["module"] == "PSD_FRP 1.2.0"
     assert answer["facts"] == answer["mapped"] == len(grid)
     assert answer["unmapped"] == 0
-    assert answer["not_evaluated"] == [], "four operators cover this module"
+    skipped = {entry["rule_code"]: entry["needs"] for entry in answer["not_evaluated"]}
+    assert skipped == {"v903611_m": "or", "v903612_m": "or", "v903614_m": "or"}
     assert answer["fail"], "a report of ones does not add up"
     assert {bad["severity"] for bad in answer["fail"]} <= {"error", "warning"}
 
@@ -214,7 +225,7 @@ def test_an_unreadable_database_answers_rather_than_raising(tmp_path, monkeypatc
     (tmp_path / "dpm2.duckdb").write_text("not really a database")
     report = tmp_path / "ok.csv"
     report.write_text("datapoint,factValue\ndp1,1.0\n", encoding="utf-8")
-    answer = check_instance.check_report("Y_01.01", "PSD_FRP", "1.1.0", str(report))
+    answer = check_instance.check_report("Y_01.01", "PSD_FRP", "1.2.0", str(report))
     assert answer["found"] is False
     assert "could not be read" in answer["message"]
 
@@ -326,7 +337,7 @@ def test_a_file_from_another_release_says_so_rather_than_mapping_nothing(tmp_pat
 def test_a_file_of_this_release_names_its_template_and_modules(tmp_path):
     from check_instance import load
 
-    grid, _ = load("Y_01.01", "PSD_FRP", "1.1.0")
+    grid, _ = load("Y_01.01", "PSD_FRP", "1.2.0")
     report = tmp_path / "y0101.csv"
     rows = "\n".join(f"dp{dp},1.0" for dp in sorted(grid))
     report.write_text(f"datapoint,factValue\n{rows}\n", encoding="utf-8")
@@ -404,7 +415,7 @@ def test_a_closed_template_has_nothing_to_compare():
     an empty one, which would read as "checked, and the report carries no keys"."""
     from check_instance import load
 
-    grid, _ = load("Y_01.01", "PSD_FRP", "1.1.0")
+    grid, _ = load("Y_01.01", "PSD_FRP", "1.2.0")
     rows = "\n".join(f"dp{dp},1.0" for dp in sorted(grid)[:3])
     answer = check_instance.explain_report(text=f"datapoint,factValue\n{rows}\n", limit=3)
     assert answer["tables"] == ["Y_01.01"]

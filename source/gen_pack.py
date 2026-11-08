@@ -28,6 +28,11 @@ VOCAB = json.loads(VOCAB_JSON.read_text(encoding="utf-8"))
 RULES_CSV = REPO / "09-validation-rules.csv"
 RULE_ROWS = list(csv.DictReader(RULES_CSV.open(encoding="utf-8"))) if RULES_CSV.exists() else []
 PAY_RULES = len({r["rule_code"] for r in RULE_ROWS if r["module"].startswith("PSD_FRP")})
+# Counted rather than stated: the figure was written when the pack carried PSD_FRP 1.1.0's
+# 114 rules and read "93 of the 90" the moment it carried 1.2.0's.
+PAY_RULES_WITH_PLUS = len(
+    {r["rule_code"] for r in RULE_ROWS if r["module"].startswith("PSD_FRP") and "+" in r["expression"]}
+)
 DORA_RULES = len({r["rule_code"] for r in RULE_ROWS if r["module"].startswith("DORA")})
 
 LEADING_CODE = re.compile(r"^(?P<code>\d{4})\s+(?P<label>.+)$")
@@ -95,8 +100,9 @@ IDS_VERSION = "PSD_FRP 1.2.0"
 DPM_IDS = SOURCE_DIR / "dpm-psd_frp-1.2.0-datapoints.csv"
 
 # What the pack says it describes, in the prose and in the descriptions: the module
-# version whose rules it carries.
-DPM_VERSION = "PSD_FRP 1.1.0"
+# version whose rules it carries. 1.2.0 is in force from 2026-03-31; 1.1.0, which this
+# said until then, covered no reporting period at all.
+DPM_VERSION = "PSD_FRP 1.2.0"
 
 
 def load_dpm_ids() -> dict[tuple[str, str, str, str], dict[str, str]]:
@@ -1047,7 +1053,7 @@ knows the warehouse column naming and these two do not.
 Two things to be careful of in their answers. Two entries with the same `rule_code` are
 not a duplicate — the rule differs between the module versions listed on each, in
 expression or in severity, and `v09247_s` really is a warning in PSD_FRP 1.1.0 and an
-error in 1.2.0. And a template that comes back with no rows and no columns is one the
+error in 1.2.0, which is the one this pack carries. And a template that comes back with no rows and no columns is one the
 model records nothing for, 143 of 1052 in this release; it does not mean the report has no
 columns.
 
@@ -1888,7 +1894,7 @@ on a difference:
 
 ```
 DPM 2.0 release 4.2.1 (2026-02-15)
-PSD_FRP 1.1.0: all {len(DPS)} pack rows match the model, none missing
+{DPM_VERSION}: all {len(DPS)} pack rows match the model, none missing
 DORA 1.1.0: all 85 pack rows match the model, none missing
 ```
 
@@ -1925,7 +1931,7 @@ uv run agent_tools.py lookup_dpm_sums table='F 12.01.a' module=FINREP9 version=n
 uv run agent_tools.py lookup_dpm_dimensions table=F_04.04.1 module=FINREP9 version=null
 uv run agent_tools.py lookup_dpm_cells table=F_04.04.1 dimension='Counterparty sector' \\
     member='Credit institutions' module=FINREP9 version=null
-uv run agent_tools.py check_report table=Y_01.01 module=PSD_FRP version=1.1.0 instance=report.csv
+uv run agent_tools.py check_report table=Y_01.01 module=PSD_FRP version=1.2.0 instance=report.csv
 uv run agent_tools.py explain_report instance=report.csv text=null limit=null
 uv run agent_tools.py lookup_dpm_datapoint datapoint=dp152217
 uv run agent_tools.py lookup_dpm_rule rule_code=v0174_m
@@ -2039,7 +2045,7 @@ checks as "nothing mapped", which reads like a bad report rather than a newer fi
 `check_report` then runs every rule of that module version against the file:
 
 ```json
-{{ "found": true, "table": "Y_01.01", "module": "PSD_FRP 1.1.0",
+{{ "found": true, "table": "Y_01.01", "module": "PSD_FRP 1.2.0",
   "facts": 324, "mapped": 324, "unmapped": 0,
   "hold": ["v09124_m", "v09198_s", "v09247_s"],
   "fail": [{{"rule_code": "v09123_m", "severity": "warning", "fails": 12, "of": 12}}],
@@ -2093,12 +2099,12 @@ ones there are, which is also why they must not be invented.
 
 ## Validation rules
 
-`09-validation-rules.csv` holds the {PAY_RULES} rules of PSD_FRP 1.1.0 and the
+`09-validation-rules.csv` holds the {PAY_RULES} rules of {DPM_VERSION} and the
 {DORA_RULES} of DORA 1.1.0, one row per rule and each cell it reaches:
 
 | Field | |
 |---|---|
-| `module` | `PSD_FRP 1.1.0` or `DORA 1.1.0` |
+| `module` | `{DPM_VERSION}` or `DORA 1.1.0` |
 | `rule_code`, `severity` | e.g. `v09123_m`, `warning` |
 | `table_name`, `row_code`, `column_code`, `sheet_code` | the cell, in warehouse spelling; `*` is an open axis, empty is an axis the table does not have |
 | `expression` | the rule in DPM-XL, verbatim |
@@ -2113,7 +2119,7 @@ A column description names the rules that reach it and stops there:
 > ... Non-negative. Validation rules (EBA DPM, warning): v09123_m, v09124_m, v09247_s,
 > v89551_h. v89551_h reaches only variant(s) 0030.
 
-The expression is deliberately not in it. 93 of the {PAY_RULES} PAY expressions contain a plus
+The expression is deliberately not in it. {PAY_RULES_WITH_PLUS} of the {PAY_RULES} PAY expressions contain a plus
 sign, which the OpenMetadata viewer renders as a literal `&amp;#43;` — the same reason the
 build guard refuses one anywhere in this pack. The code is the handle: the EBA's own rule
 lists are indexed by it, the CSV has the expression, and `lookup_datapoint` hands an agent
@@ -2582,7 +2588,9 @@ the page itself.
 ### A rule code is not one rule
 
 The same code is re-issued per module version, and both the expression and the severity
-change between them. `v09247_s` is a `warning` in PSD_FRP 1.1.0 and an `error` in 1.2.0.
+change between them. `v09247_s` is a `warning` in PSD_FRP 1.1.0 and an `error` in 1.2.0 —
+and the move from the one to the other is why this pack now carries 1.2.0's: a severity is
+the difference between a report that is rejected and one that is queried.
 `09-validation-rules.csv` is scoped to the two module versions this pack describes;
 `lookup_dpm_cell` is not unless it is asked to be, and returns one entry per version with
 the versions listed, so two entries with the same code there are a change, not a duplicate.

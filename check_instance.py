@@ -5,16 +5,19 @@ already resolved every leaf to the cells it names. So checking a report is an ev
 over that tree rather than a parser: a leaf is the cells it names or a literal, and an
 inner node applies its operator to its children.
 
-    uv run check_instance.py Y_01.01 PSD_FRP 1.1.0 path/to/y_01.01.csv
+    uv run check_instance.py Y_01.01 PSD_FRP 1.2.0 path/to/y_01.01.csv
 
 The instance keys each fact by a datapoint id and nothing else. `dp<N>` is
 `VariableVersion.VariableID` - not CellID and not VariableVID - which is what joins a
 reported value back to a cell of a template.
 
-**This covers four of the model's thirty-eight operators**: addition, and the three
-comparisons PSD_FRP 1.1.0 uses. That is every rule of that module, and nowhere near every
-rule of the model - DORA alone needs `isnull` and `if-then-else`. A rule using anything
-else is reported as not evaluated, with the operator named. It is never counted as passing,
+**This covers four of the model's thirty-eight operators**: addition and the three
+comparisons. That was every rule of PSD_FRP 1.1.0; 1.2.0 added three that it cannot do -
+v903611_m, v903612_m and v903614_m, written `if ({s00x0} > 0) then ({s00y0} > 0) endif` on
+Y_01.01 and modelled with `or` at the root, which is the operator they are reported as
+needing. 87 of 1.2.0's 90 are evaluable here. Nowhere near every rule of the model either:
+DORA alone needs `isnull` and `if-then-else`. A rule using anything else is reported as not
+evaluated, with the operator named. It is never counted as passing,
 because a validator that quietly skips what it cannot do is worse than one that cannot do
 it: the silence reads as a clean report.
 

@@ -32,7 +32,14 @@ DPM2 = Path(os.environ.get("DPM2_DB") or DIR / "dpm2.duckdb")
 OUT = REPO / "09-validation-rules.csv"
 
 # The module versions the pack describes, as (ModuleVersion.Code, VersionNumber).
-MODULES = (("PSD_FRP", "1.1.0"), ("DORA", "1.1.0"))
+#
+# PSD_FRP 1.2.0 is the version in force from 2026-03-31. 1.1.0, which this used to read,
+# has FromReferenceDate == ToReferenceDate == 2024-12-31: published and superseded without
+# ever covering a reporting period, so nothing is filed under it and no engine runs its
+# rules. The two differ in substance, not only in numbering - 32 of 1.1.0's 114 rules are
+# gone, 8 are new, and 36 differ in severity or expression - so this is a change of what
+# the pack says, not a relabelling.
+MODULES = (("PSD_FRP", "1.2.0"), ("DORA", "1.1.0"))
 
 # A rule is in scope for a module version through OperationScope, and reaches cells
 # through its nodes' operands. DISTINCT because an operand can appear in several nodes of
