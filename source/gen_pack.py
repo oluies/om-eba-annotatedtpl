@@ -1796,6 +1796,7 @@ Two published pages, neither of which needs anything installed:
 | `check_instance.py` | Runs a module's validation rules against a reported xBRL-CSV file, as a CLI and as the `check_report` tool | You want to know whether a report adds up before you send it, or want an agent to check its own arithmetic |
 | `web/` | A query page in Scala.js over that tree: pick a question, fill it in, see the answer and the SQL, with a small model that turns a question into one of eleven — published at [oluies.github.io/om-eba-annotatedtpl](https://oluies.github.io/om-eba-annotatedtpl/) | You want the model without installing anything |
 | `docs/read-only-api-and-dcat-ap-se.md` | Parked: the published tree is already queryable with DuckDB over HTTPS, what a static REST contract would add, why GraphQL needs a server, and what DCAT-AP-SE 3.0.1 would require of a Swedish publisher | Someone asks for an API, or for the data to reach dataportal.se |
+| `docs/auto-ontology/` | A trial, staged and unstarted: NVIDIA's auto-ontology pointed at `pay42.duckdb` with inference on premise, to measure what the annotated layout is worth against an ontology derived from the schema alone | Someone proposes inferring the glossary instead of reading it from the regulation |
 | `obs/` | A page per template in Observable Framework: every cell searchable, the official Swedish and German beside the English, and the release a control rather than a build — published at [/templates/](https://oluies.github.io/om-eba-annotatedtpl/templates/) | You are reading about one template |
 | `source/gen_wasm_data.py` | Writes the model as partitioned parquet a browser can query with DuckDB-WASM | You are building a web page over the DPM |
 | `source/score_translation.py` | Scores a local translation model against the Official Journal's own wording, since we hold it | Someone proposes machine-translating the labels |
@@ -2873,7 +2874,13 @@ _NOT_IMPORTED = {"README_DPM2.md"}
 # The same scoping, by directory: `source`, `obs` and `web` hold code. `obs/src/t/[code].md`
 # is an Observable page - JavaScript in a markdown file, never imported - and the regex in
 # it that keeps a file name safe cannot be written without a plus.
-_NOT_IMPORTED_FROM = {"source", "obs", "web"}
+#
+# `docs` holds notes about things that are not the pack - a parked API design, a trial of
+# somebody else's tool - and import_to_openmetadata.py names every file it publishes:
+# 04-tables, 03-glossary, the three top-level documents, dora/ and the Quarto renders.
+# Not one of them is under docs/, and a note quoting `docker compose up` or
+# `Postgres 17 + pgvector` should not have to spell the plus out of it.
+_NOT_IMPORTED_FROM = {"source", "obs", "web", "docs"}
 
 _GUARDED = [
     p for p in sorted(OUT.rglob("*.md")) if not (_NOT_IMPORTED_FROM & set(p.parts)) and p.name not in _NOT_IMPORTED

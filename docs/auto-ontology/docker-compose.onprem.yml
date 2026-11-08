@@ -1,0 +1,10 @@
+# Mounts the DuckDB store read-only into the two services that touch a source:
+# ingestion-service reads the schema and profiles columns, auto-ontology runs the
+# generated SQL at query time. Same path in both, matching CONNECTION_STRINGS.
+services:
+  auto-ontology:
+    volumes:
+      - ./data/pay42.duckdb:/data/pay42.duckdb:ro
+  ingestion-service:
+    volumes:
+      - ./data/pay42.duckdb:/data/pay42.duckdb:ro
