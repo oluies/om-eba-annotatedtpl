@@ -50,7 +50,7 @@ Two published pages, neither of which needs anything installed:
 | `04-tables/<TEMPLATE>.md` | One per template: variants, columns, rows, datapoint ids | You are describing a table |
 | `05-datapoints.csv` | All 1830 datapoints, keyed by `table_name` and `column_name` | You have a column to describe |
 | `06-openmetadata-glossary.csv` | Bulk glossary import, 93 terms | You are loading the glossary |
-| `09-validation-rules.csv` | The 185 EBA validation rules of both modules, and every cell each one reaches | You want to know what constrains a column |
+| `09-validation-rules.csv` | The 161 EBA validation rules of both modules, and every cell each one reaches | You want to know what constrains a column |
 | `README_DPM2.md` | The DPM 2.0 database's data model, as diagrams, with worked queries | You are querying the model directly |
 
 ## Warehouse column names
@@ -127,7 +127,7 @@ on a difference:
 
 ```
 DPM 2.0 release 4.2.1 (2026-02-15)
-PSD_FRP 1.1.0: all 1830 pack rows match the model, none missing
+PSD_FRP 1.2.0: all 1830 pack rows match the model, none missing
 DORA 1.1.0: all 85 pack rows match the model, none missing
 ```
 
@@ -164,7 +164,7 @@ uv run agent_tools.py lookup_dpm_sums table='F 12.01.a' module=FINREP9 version=n
 uv run agent_tools.py lookup_dpm_dimensions table=F_04.04.1 module=FINREP9 version=null
 uv run agent_tools.py lookup_dpm_cells table=F_04.04.1 dimension='Counterparty sector' \
     member='Credit institutions' module=FINREP9 version=null
-uv run agent_tools.py check_report table=Y_01.01 module=PSD_FRP version=1.1.0 instance=report.csv
+uv run agent_tools.py check_report table=Y_01.01 module=PSD_FRP version=1.2.0 instance=report.csv
 uv run agent_tools.py explain_report instance=report.csv text=null limit=null
 uv run agent_tools.py lookup_dpm_datapoint datapoint=dp152217
 uv run agent_tools.py lookup_dpm_rule rule_code=v0174_m
@@ -278,7 +278,7 @@ checks as "nothing mapped", which reads like a bad report rather than a newer fi
 `check_report` then runs every rule of that module version against the file:
 
 ```json
-{ "found": true, "table": "Y_01.01", "module": "PSD_FRP 1.1.0",
+{ "found": true, "table": "Y_01.01", "module": "PSD_FRP 1.2.0",
   "facts": 324, "mapped": 324, "unmapped": 0,
   "hold": ["v09124_m", "v09198_s", "v09247_s"],
   "fail": [{"rule_code": "v09123_m", "severity": "warning", "fails": 12, "of": 12}],
@@ -332,12 +332,12 @@ ones there are, which is also why they must not be invented.
 
 ## Validation rules
 
-`09-validation-rules.csv` holds the 114 rules of PSD_FRP 1.1.0 and the
+`09-validation-rules.csv` holds the 90 rules of PSD_FRP 1.2.0 and the
 71 of DORA 1.1.0, one row per rule and each cell it reaches:
 
 | Field | |
 |---|---|
-| `module` | `PSD_FRP 1.1.0` or `DORA 1.1.0` |
+| `module` | `PSD_FRP 1.2.0` or `DORA 1.1.0` |
 | `rule_code`, `severity` | e.g. `v09123_m`, `warning` |
 | `table_name`, `row_code`, `column_code`, `sheet_code` | the cell, in warehouse spelling; `*` is an open axis, empty is an axis the table does not have |
 | `expression` | the rule in DPM-XL, verbatim |
@@ -352,7 +352,7 @@ A column description names the rules that reach it and stops there:
 > ... Non-negative. Validation rules (EBA DPM, warning): v09123_m, v09124_m, v09247_s,
 > v89551_h. v89551_h reaches only variant(s) 0030.
 
-The expression is deliberately not in it. 93 of the 114 PAY expressions contain a plus
+The expression is deliberately not in it. 66 of the 90 PAY expressions contain a plus
 sign, which the OpenMetadata viewer renders as a literal `&amp;#43;` — the same reason the
 build guard refuses one anywhere in this pack. The code is the handle: the EBA's own rule
 lists are indexed by it, the CSV has the expression, and `lookup_datapoint` hands an agent
@@ -821,7 +821,9 @@ the page itself.
 ### A rule code is not one rule
 
 The same code is re-issued per module version, and both the expression and the severity
-change between them. `v09247_s` is a `warning` in PSD_FRP 1.1.0 and an `error` in 1.2.0.
+change between them. `v09247_s` is a `warning` in PSD_FRP 1.1.0 and an `error` in 1.2.0 —
+and the move from the one to the other is why this pack now carries 1.2.0's: a severity is
+the difference between a report that is rejected and one that is queried.
 `09-validation-rules.csv` is scoped to the two module versions this pack describes;
 `lookup_dpm_cell` is not unless it is asked to be, and returns one entry per version with
 the versions listed, so two entries with the same code there are a change, not a duplicate.

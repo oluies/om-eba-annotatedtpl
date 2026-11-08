@@ -33,6 +33,7 @@ import re
 from collections import defaultdict
 from collections.abc import Sequence
 from fnmatch import fnmatch
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -148,6 +149,21 @@ def rule_count_sentence(count: int) -> str:
 def rules_of_table(index: dict[tuple[str, str, str], list[Rule]], table: str) -> int:
     """How many distinct rules reach a template."""
     return len({rule.rule_code for key, rules in index.items() if key[0] == table for rule in rules})
+
+
+@cache
+def pay_module() -> str:
+    """The PAY module version the pack describes, read out of the rules file.
+
+    Written in by hand until the pack moved from PSD_FRP 1.1.0 to 1.2.0 and a table
+    description went on naming a module version nothing is filed under. The `module`
+    column of 09-validation-rules.csv is where that fact already lives.
+    """
+    if not RULES.exists():
+        return ""
+    with RULES.open(encoding="utf-8") as fh:
+        found = {row["module"] for row in csv.DictReader(fh) if row["module"].startswith("PSD_FRP")}
+    return found.pop() if len(found) == 1 else ""
 
 
 def load_rules() -> dict[tuple[str, str, str], list[Rule]]:
@@ -418,7 +434,9 @@ def pay_table_description(
         )
 
     return (
-        f"Template {first.template} ({first.template_name}) of EBA PAY 4.2, module PSD_FRP 1.1.0. "
+        f"Template {first.template} ({first.template_name}) of EBA PAY 4.2"
+        + (f", module {pay_module()}" if pay_module() else "")
+        + ". "
         f"{per_variant} datapoint column(s) per variant, {len(variants)} variant(s) - metric crossed "
         f"with geography. {holds} Datapoint columns are named for their template, row and column, as in "
         f"{min(dp.column_name for dp in datapoints)}. Every other column is warehouse context and "

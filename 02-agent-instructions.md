@@ -485,7 +485,7 @@ knows the warehouse column naming and these two do not.
 Two things to be careful of in their answers. Two entries with the same `rule_code` are
 not a duplicate — the rule differs between the module versions listed on each, in
 expression or in severity, and `v09247_s` really is a warning in PSD_FRP 1.1.0 and an
-error in 1.2.0. And a template that comes back with no rows and no columns is one the
+error in 1.2.0, which is the one this pack carries. And a template that comes back with no rows and no columns is one the
 model records nothing for, 143 of 1052 in this release; it does not mean the report has no
 columns.
 

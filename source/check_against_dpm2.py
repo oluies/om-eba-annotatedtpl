@@ -31,7 +31,7 @@ DPM2 = Path(os.environ.get("DPM2_DB") or DIR / "dpm2.duckdb")
 PACK = Path(os.environ.get("PAY42_DB") or REPO / "pay42.duckdb")
 
 # The two modules the pack covers, by ModuleVersion.Code and VersionNumber.
-MODULES = {"PAY": ("PSD_FRP", "1.1.0"), "DORA": ("DORA", "1.1.0")}
+MODULES = {"PAY": ("PSD_FRP", "1.2.0"), "DORA": ("DORA", "1.1.0")}
 
 # The pack's PAY cell code, normalised to the DPM's spelling, against the module's
 # reportable cells. A full outer join so a cell missing on either side shows up.
