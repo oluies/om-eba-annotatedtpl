@@ -34,7 +34,7 @@ LEADING_CODE = re.compile(r"^(?P<code>\d{4})\s+(?P<label>.+)$")
 PAIR_RE = re.compile(r"^\((?P<a>[A-Za-z0-9]+):(?P<b>[A-Za-z0-9]+)\)\s*(?P<label>.+)$")
 SOURCE = (
     "EBA PAY 4.2 (FRPPAY 4.2) annotated table layout, 2026-01-06; "
-    "datapoint ids from the DPM 2.0 database, module PSD_FRP 1.1.0; both from the EBA DPM "
+    "datapoint ids verified against the DPM 2.0 database; both from the EBA DPM "
     f"Data Dictionary, {DICTIONARY_URL}"
 )
 AUTHORITY = "EBA Guidelines on fraud reporting under PSD2 (EBA/GL/2018/05, as amended)"
@@ -72,14 +72,31 @@ def dim_label(code: str) -> str:
 # --------------------------------------------------------------------------------------
 
 
-# The annotated table layout renders module version PSD_FRP 1.0.1. Reporting is on 1.1.0,
-# which has the same 1830 cells at the same coordinates and the same labels, but an
-# entirely different set of VariableVIDs - not one id is shared between the two. Taking
-# the ids from the layout would cite 1830 identifiers that do not exist in what is
-# reported, so they are overridden from the DPM database, exported to the CSV beside this
-# file. Verified: same coordinates both versions, zero shared ids.
+# The DPM has two numbers per cell and they are easy to confuse:
+#
+#   VariableID   the datapoint. The same across module versions - 436318 is
+#                {Y_01.01, r0190, c0020, s0020} in PSD_FRP 1.0.1, 1.1.0 and 1.2.0 alike -
+#                and what a reported fact and `lookup_dpm_datapoint` name.
+#   VariableVID  one version of that variable's specification. New at every module
+#                version: the same cell is 436318, then 3263044, then 5461648.
+#
+# This file used to take the VariableVID of PSD_FRP 1.1.0 for every cell, in the belief
+# that the layout's ids belonged to 1.0.1 and were therefore not reported. The layout
+# prints the VariableID, which is the id that *is* reported, so the override replaced
+# 1830 correct ids with 1830 that resolve to nothing. The export is still the authority -
+# it also carries the sign - but the two are now checked against each other, and
+# source/check_datapoint_ids.py is the check that would have caught it.
+#
+# Exported from PSD_FRP 1.2.0, the version in force from 2026-03-31: the datapoint ids
+# are the same in 1.1.0, so this changes no id, but the sign and the cell set come from
+# the version that is actually reported. The rules in 09-validation-rules.csv are still
+# 1.1.0's, which is a separate question - they do differ between the two.
+IDS_VERSION = "PSD_FRP 1.2.0"
+DPM_IDS = SOURCE_DIR / "dpm-psd_frp-1.2.0-datapoints.csv"
+
+# What the pack says it describes, in the prose and in the descriptions: the module
+# version whose rules it carries.
 DPM_VERSION = "PSD_FRP 1.1.0"
-DPM_IDS = SOURCE_DIR / "dpm-psd_frp-1.1.0-datapoints.csv"
 
 
 def load_dpm_ids() -> dict[tuple[str, str, str, str], dict[str, str]]:
@@ -124,13 +141,19 @@ def datapoint_rows() -> list[dict]:
                 # template Y_01.01 lands in table Y_01_01, whose datapoint columns are
                 # Y0101_rXXXX_cXXXX. One table per template, not per variant.
                 table_name = template.replace(".", "_")
-                # Swap the layout's id for the reported one. A coordinate with no match
-                # means the layout and the DPM export disagree, which must not pass
-                # silently - every description cites this id.
+                # The layout and the DPM against each other, because every description
+                # cites this id and neither source is worth more than the other being
+                # wrong. A missing coordinate or a disagreement must not pass silently.
                 key = (template, row_code, col_code, variant)
                 reported = DPM_BY_COORDINATE.get(key)
                 if reported is None:
-                    raise SystemExit(f"No {DPM_VERSION} datapoint for {key}; regenerate the DPM export.")
+                    raise SystemExit(f"No {IDS_VERSION} datapoint for {key}; regenerate the DPM export.")
+                if str(reported["datapoint_id"]) != str(dp["id"]):
+                    raise SystemExit(
+                        f"{key}: the layout says datapoint {dp['id']} and {IDS_VERSION} says "
+                        f"{reported['datapoint_id']}. One of them is not a datapoint id - see "
+                        "source/check_datapoint_ids.py."
+                    )
 
                 # The join key to a warehouse's own form metadata. FI's BA_Form_Cell
                 # carries DPM_Cell_Code in this shape - template with a space rather than
@@ -147,7 +170,6 @@ def datapoint_rows() -> list[dict]:
                         "table_name": table_name,
                         "dpm_cell_code": dpm_cell_code,
                         "datapoint_id": reported["datapoint_id"],
-                        "datapoint_id_1_0_1": dp["id"],
                         "template": template,
                         "template_name": s["title"].split(" - ", 1)[-1],
                         "variant": variant,
@@ -1841,13 +1863,14 @@ extraction uses openpyxl — a plain cell reader gives you the values but not th
 ## The DPM 2.0 database
 
 The annotated table layout is a spreadsheet rendering of the model. The model itself is
-published as an Access database, and four scripts use it:
+published as an Access database, and five scripts use it:
 
 ```bash
-uv run source/fetch_dpm2.py          # download, unpack, load into DuckDB (needs mdbtools)
-uv run source/check_against_dpm2.py  # does this pack match the model, cell for cell?
-uv run source/extract_rules.py       # → 09-validation-rules.csv
-uv run source/gen_dpm2_doc.py        # → README_DPM2.md
+uv run source/fetch_dpm2.py            # download, unpack, load into DuckDB (needs mdbtools)
+uv run source/check_against_dpm2.py    # does this pack match the model, cell for cell?
+uv run source/check_datapoint_ids.py   # are the ids it cites the model's datapoints?
+uv run source/extract_rules.py         # → 09-validation-rules.csv
+uv run source/gen_dpm2_doc.py          # → README_DPM2.md
 ```
 
 **[`README_DPM2.md`](README_DPM2.md) is the map**: the 73 tables, the relationships that
@@ -1873,6 +1896,22 @@ Two details it has to absorb. The DPM writes a table code `Y_01.01` where the la
 the warehouse write `Y 01.01`. And a cell with `IsExcluded` set is a greyed-out box in
 the template — in the model, not reportable — which the pack leaves out, so the
 comparison does too. `Y_01.01` has 396 cells, 72 of them excluded, and the pack has 324.
+
+### The datapoint id is not the VariableVID
+
+The model has two numbers per cell, and citing the wrong one costs the reader the only
+thread back to the model that a description gives them:
+
+| | |
+|---|---|
+| **VariableID** | the datapoint. `436318` is `{{Y_01.01, r0190, c0020, s0020}}` in PSD_FRP 1.0.1, 1.1.0 and 1.2.0 alike. A reported fact names this, `lookup_dpm_datapoint` resolves it, and the annotated layout prints it. |
+| **VariableVID** | one module version's specification of that variable. New at every version: the same cell is `436318`, then `3263044`, then `5461648`. Nothing outside the model names it. |
+
+The pack cited the VariableVID of PSD_FRP 1.1.0 for all {len(DPS)} PAY cells and for eight
+of DORA's 85, so not one PAY description carried an id that resolves. `check_datapoint_ids.py`
+is the check, `--fix` writes the ids back, and `test_every_datapoint_id_the_pack_cites_is_a_datapoint`
+keeps it from coming back. The ids do not move between module versions, so this is a
+correction and not a version bump.
 
 ### Trying a lookup before wiring it into anything
 
