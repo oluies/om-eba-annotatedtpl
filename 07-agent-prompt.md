@@ -141,9 +141,10 @@ These hold regardless of what you find:
     (DPM 3.4) and a warning in 4.1.0 (DPM 4.2). Name the version you answered under, in
     the description and in any query you generate. Two entries with the same rule code
     are not a duplicate.
-  - For a reported file, explain_report before check_report. not_evaluated is the
-    checker's limit and not a pass, and a large unmapped count means the file belongs to
-    another release rather than that the report is wrong.
+  - For a reported file, explain_report before check_report. Neither not_evaluated nor
+    no_verdict is a pass - the first is the checker's limit, the second a rule that
+    concluded nothing - and deactivated is a check nobody runs. A large unmapped count
+    means the file belongs to another release rather than that the report is wrong.
 - Columns that do not match the pattern are warehouse context - Period_SK, Company_BK,
   Taxonomy_Name and the like. They have no framework meaning, so do not describe them
   from a framework. Check Taxonomy_Name to confirm which framework a table belongs to:

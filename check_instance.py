@@ -11,15 +11,21 @@ The instance keys each fact by a datapoint id and nothing else. `dp<N>` is
 `VariableVersion.VariableID` - not CellID and not VariableVID - which is what joins a
 reported value back to a cell of a template.
 
-**This covers four of the model's thirty-eight operators**: addition and the three
-comparisons. That was every rule of PSD_FRP 1.1.0; 1.2.0 added three that it cannot do -
-v903611_m, v903612_m and v903614_m, written `if ({s00x0} > 0) then ({s00y0} > 0) endif` on
-Y_01.01 and modelled with `or` at the root, which is the operator they are reported as
-needing. 87 of 1.2.0's 90 are evaluable here. Nowhere near every rule of the model either:
-DORA alone needs `isnull` and `if-then-else`. A rule using anything else is reported as not
-evaluated, with the operator named. It is never counted as passing,
-because a validator that quietly skips what it cannot do is worse than one that cannot do
-it: the silence reads as a clean report.
+**This covers eleven of the model's thirty-eight operators**: addition, the six
+comparisons, `isnull`, `not`, `and`, `or` and `if-then-else` with or without its else
+branch. That is every rule of PSD_FRP 1.2.0, and all but four of DORA 1.1.0's - those four
+need `match`, a regular expression over a reported string. A rule using anything else is
+reported as not evaluated, with the operator named. It is never counted as passing, because
+a validator that quietly skips what it cannot do is worse than one that cannot do it: the
+silence reads as a clean report.
+
+**Reading a rule is not the same as reaching a verdict.** The loop evaluates one column and
+sheet at a time, so a rule comparing cells across columns or across sheets finds nothing to
+compare on either axis and concludes nothing. That is 43 of DORA's rules, and the three PAY
+implications, which pair a sheet of amounts with a sheet of transaction counts. An `if`
+whose condition is false says nothing either: the model gives it no else branch, so there
+is nothing to answer with. Those are reported under `no_verdict` rather than dropped, and
+widening the axis is the next thing worth doing here.
 
 A caveat on the EBA's published sample instances: they are structural, not valid. Their
 values are uniform noise, so every arithmetic rule fails against them by construction.
@@ -99,7 +105,16 @@ COMPARISONS = {
     "=": lambda a, b: a == b,
     "<=": lambda a, b: a <= b,
     ">=": lambda a, b: a >= b,
+    ">": lambda a, b: a > b,
+    "<": lambda a, b: a < b,
+    "!=": lambda a, b: a != b,
 }
+
+# Three-valued, because the model is. None is "not applicable here", which is what an
+# `if` with no `else` yields when its condition is false, and what a leaf naming no cell
+# of this column and sheet yields. It is not the same as holding, and `verdicts` counts it
+# in neither direction - the whole point of the bucket.
+BOOLEAN = {"()", "not", "and", "or", "isnull", "if-then-else"}
 
 
 def operand(rule: Rule, node_id: int, values: dict[Cell, float], col: str, sheet: str) -> list[float] | None:
@@ -133,23 +148,103 @@ def operand(rule: Rule, node_id: int, values: dict[Cell, float], col: str, sheet
     raise Unsupported(node.symbol or "?")
 
 
+def absent(rule: Rule, node_id: int, values: dict[Cell, float], col: str, sheet: str) -> bool | None:
+    """Whether the cells named here went unreported - what `isnull` asks. Pure.
+
+    Presence, not value: `operand` reads an unreported cell as zero, which is what
+    `default: 0` means for arithmetic, and a reported zero and an empty box would then be
+    the same thing. `isnull` is the one place the difference is the question.
+
+    A leaf naming several cells of this column and sheet, some reported and some not, has
+    no single answer - DPM-XL would map `isnull` over the set and this evaluator has one
+    verdict per axis - so it refuses instead of picking one.
+    """
+    node = rule.nodes[node_id]
+    kids = rule.children.get(node_id, [])
+    if node.symbol == "()" and len(kids) == 1:
+        return absent(rule, kids[0], values, col, sheet)
+    if not node.is_leaf:
+        raise Unsupported(f"isnull of {node.symbol or '?'}")
+    here = [cell for cell in rule.cells.get(node_id, []) if cell[1] == col and cell[2] == sheet]
+    if not here:
+        return None
+    missing = [cell for cell in here if cell not in values]
+    if missing and len(missing) != len(here):
+        raise Unsupported("isnull over cells that are neither all reported nor all absent")
+    return bool(missing)
+
+
+def every(held: list[bool | None]) -> bool | None:
+    """`and` over three-valued truth: false beats unknown, unknown beats true. Pure."""
+    if any(one is False for one in held):
+        return False
+    return None if any(one is None for one in held) else True
+
+
+def some(held: list[bool | None]) -> bool | None:
+    """`or` over three-valued truth: true beats unknown, unknown beats false. Pure."""
+    if any(one is True for one in held):
+        return True
+    return None if any(one is None for one in held) else False
+
+
 def evaluate(rule: Rule, values: dict[Cell, float], col: str, sheet: str) -> bool | None:
     """Whether the rule holds for one column and sheet, or None where it does not reach.
 
     Raises Unsupported rather than guessing, so the caller can report the rule as
     unevaluated instead of counting it as passed.
     """
-    symbol = rule.nodes[rule.root].symbol
-    if symbol not in COMPARISONS:
-        raise Unsupported(symbol or "?")
-    sides = rule.children[rule.root]
+    return truth(rule, rule.root, values, col, sheet)
+
+
+def truth(rule: Rule, node_id: int, values: dict[Cell, float], col: str, sheet: str) -> bool | None:
+    """One boolean node, recursively. Pure.
+
+    `if A then B endif` is an implication, and the model gives it two children rather than
+    three: with no else branch there is nothing to say when A is false, so the answer is
+    None - not applicable - rather than true. That is the difference between a rule that
+    passed and a rule that had nothing to check, and it is why `or` and `and` here are
+    three-valued.
+    """
+    node = rule.nodes[node_id]
+    symbol = node.symbol
+    kids = rule.children.get(node_id, [])
+    match symbol:
+        case "()" if len(kids) == 1:
+            return truth(rule, kids[0], values, col, sheet)
+        case "not" if len(kids) == 1:
+            held = truth(rule, kids[0], values, col, sheet)
+            return None if held is None else not held
+        case "and" if kids:
+            return every([truth(rule, kid, values, col, sheet) for kid in kids])
+        case "or" if kids:
+            return some([truth(rule, kid, values, col, sheet) for kid in kids])
+        case "isnull" if len(kids) == 1:
+            return absent(rule, kids[0], values, col, sheet)
+        case "if-then-else" if len(kids) in (2, 3):
+            condition = truth(rule, kids[0], values, col, sheet)
+            if condition is None:
+                return None
+            if condition:
+                return truth(rule, kids[1], values, col, sheet)
+            return truth(rule, kids[2], values, col, sheet) if len(kids) == 3 else None
+        case _ if symbol in COMPARISONS:
+            return compared(rule, node_id, values, col, sheet)
+        case _:
+            raise Unsupported(symbol or "?")
+
+
+def compared(rule: Rule, node_id: int, values: dict[Cell, float], col: str, sheet: str) -> bool | None:
+    """One comparison node: the two operands, and the operator between them. Pure."""
+    symbol = rule.nodes[node_id].symbol
+    sides = rule.children[node_id]
     if len(sides) != 2:
         return None
     left = operand(rule, sides[0], values, col, sheet)
     right = operand(rule, sides[1], values, col, sheet)
     if left is None or right is None:
         return None
-    holds = COMPARISONS[symbol]
+    holds = COMPARISONS[str(symbol)]
     if len(right) == 1 and len(left) > 1:
         return all(holds(x, right[0]) for x in left)
     if len(left) == 1 and len(right) > 1:
@@ -271,8 +366,8 @@ def load(table: str, module: str, version: str) -> tuple[dict[int, Cell], list[R
 
 def verdicts(
     rules: list[Rule], values: dict[Cell, float]
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, str], list[str]]:
-    """Each rule over every column/sheet the report carries: held, failed, skipped, off.
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, str], list[str], list[str]]:
+    """Each rule over every column/sheet the report carries, in five buckets.
 
     Pure over what was loaded, so it is testable without a database or a file. A rule the
     checker cannot evaluate lands in `skipped` and never in `passed`: a validator that
@@ -281,12 +376,19 @@ def verdicts(
     A rule the EBA has deactivated lands in `off` and is not evaluated at all. Failing a
     report on a check nobody runs is the same error in the other direction, and 22 of DORA
     1.1.0's 71 rules are on that list.
+
+    A rule that evaluated to None on every axis lands in `none_of_them`: it was read, it
+    needed nothing this evaluator lacks, and it still reached no verdict - because an `if`
+    without an `else` says nothing when its condition is false, or because the cells it
+    names lie on axes this loop visits one at a time. It used to be dropped here without
+    a word, which is the one outcome this function exists to avoid.
     """
     axes = sorted({(col, sheet) for _, col, sheet in values})
     passed: dict[str, Any] = {}
     failed: dict[str, Any] = {}
     skipped: dict[str, str] = {}
     off: list[str] = []
+    none_of_them: list[str] = []
     for rule in rules:
         if not rule.active:
             off.append(rule.code)
@@ -301,18 +403,20 @@ def verdicts(
             skipped[rule.code] = str(exc)
             continue
         if sum(outcome) == 0:
+            none_of_them.append(rule.code)
             continue
         (failed if outcome[1] else passed)[rule.code] = (rule.severity, outcome)
-    return passed, failed, skipped, sorted(off)
+    return passed, failed, skipped, sorted(off), sorted(none_of_them)
 
 
 def check_report(table: str, module: str, version: str, instance: str) -> dict[str, Any]:
     """Every rule of one module version, run against one reported file.
 
-    The answer separates four things a caller must not confuse: rules that hold, rules
-    that fail, rules this checker cannot evaluate - four of the model's thirty-eight
-    operators - and rules the EBA has deactivated. An unevaluated rule is named with the
-    operator it needs, never counted as passing; a deactivated one is named and not run.
+    The answer separates five things a caller must not confuse: rules that hold, rules
+    that fail, rules this checker cannot evaluate, rules the EBA has deactivated, and rules
+    that reached no verdict. An unevaluated rule is named with the operator it needs, never
+    counted as passing; a deactivated one is named and not run; and one that concluded
+    nothing is named too, rather than quietly leaving the count.
 
     `unmapped` is the count of facts whose datapoint id is not a cell of this template:
     a large one usually means the file is for another module version, not that the report
@@ -345,7 +449,7 @@ def check_report(table: str, module: str, version: str, instance: str) -> dict[s
         return {"found": False, "message": f"{DB} could not be read ({type(exc).__name__}): {exc}"}
 
     values = {grid[dp]: value for dp, value in facts.items() if dp in grid}
-    passed, failed, skipped, off = verdicts(rules, values)
+    passed, failed, skipped, off, undecided = verdicts(rules, values)
     return {
         "found": True,
         "table": table,
@@ -361,13 +465,17 @@ def check_report(table: str, module: str, version: str, instance: str) -> dict[s
         ],
         "not_evaluated": [{"rule_code": code, "needs": needs} for code, needs in sorted(skipped.items())],
         "deactivated": off,
+        "no_verdict": undecided,
         "message": (
             "fail lists rules that do not hold, with how many column/sheet combinations of how "
             "many. not_evaluated is this checker's limit, not a pass: it implements four of the "
             "model's thirty-eight operators and names the one each skipped rule needs. "
             "deactivated is the EBA's own list: the rule is published, no validator runs it, and "
-            "it is not evaluated here either - so it is neither a pass nor a failure. A large "
-            "unmapped count means the file is probably for another module version."
+            "it is not evaluated here either - so it is neither a pass nor a failure. no_verdict "
+            "is a rule that was read and reached no conclusion: an `if` whose condition is false "
+            "says nothing, and a rule comparing cells across columns or sheets is evaluated one "
+            "column and sheet at a time. Every rule of the module is in exactly one of the five. "
+            "A large unmapped count means the file is probably for another module version."
             + (
                 f" records ({records}) exceeds facts ({len(facts)}): this template has an open "
                 "axis, so the report's rows are records sharing one set of datapoint ids. Only "
