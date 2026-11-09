@@ -27,7 +27,7 @@ def tree(root_symbol, *, leaves, root_children, nested=None):
     for nid, (symbol, kids) in (nested or {}).items():
         nodes[nid] = Node(parent=0, is_leaf=False, symbol=symbol, scalar=None)
         children[nid] = list(kids)
-    return Rule("test_rule", "warning", 0, nodes, children, cells)
+    return Rule("test_rule", "warning", True, 0, nodes, children, cells)
 
 
 C = ("0010", "0010", "0010")  # row, column, sheet
@@ -150,20 +150,31 @@ def test_each_rule_lands_in_exactly_one_bucket():
     cannot = holds._replace(code="cannot", nodes=holds.nodes | {0: Node(None, False, "*", None)})
     values = {C: 100.0, ("0030", "0010", "0010"): 40.0, ("0040", "0010", "0010"): 60.0}
 
-    passed, failed, skipped = verdicts([holds, cannot], values)
+    passed, failed, skipped, off = verdicts([holds, cannot], values)
     assert set(passed) == {"holds"}
     assert failed == {}
     assert set(skipped) == {"cannot"}
+    assert off == []
 
-    passed, failed, skipped = verdicts([fails], {**values, C: 99.0})
+    passed, failed, skipped, off = verdicts([fails], {**values, C: 99.0})
     assert set(failed) == {"fails"}
-    assert passed == {} and skipped == {}
+    assert passed == {} and skipped == {} and off == []
+
+
+def test_a_deactivated_rule_is_named_and_never_evaluated():
+    """The EBA deactivates a rule and no validator runs it, so failing a report on one is
+    as wrong as counting it as passed. It is reported, because a check that exists and is
+    not applied is something a reader has to know about: 22 of DORA 1.1.0's 71 are off."""
+    fails = tree("=", leaves={1: [C], 2: 0.0}, root_children=[1, 2])._replace(code="dead", active=False)
+    passed, failed, skipped, off = verdicts([fails], {C: 100.0})
+    assert off == ["dead"]
+    assert passed == {} and failed == {} and skipped == {}
 
 
 def test_a_rule_naming_no_reported_axis_is_counted_nowhere():
     """An empty report evaluates nothing, which is not the same as everything holding."""
     rule = tree("=", leaves={1: [C], 2: 0}, root_children=[1, 2])
-    assert verdicts([rule], {}) == ({}, {}, {})
+    assert verdicts([rule], {}) == ({}, {}, {}, [])
 
 
 def test_a_missing_report_names_the_file_and_not_its_content(tmp_path, monkeypatch):

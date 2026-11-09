@@ -68,6 +68,10 @@ class Rule(NamedTuple):
 
     code: str
     severity: str
+    # OperationScope.IsActive: the EBA's deactivated-rules list. A deactivated rule is
+    # loaded and never evaluated - running it could fail a report on a check no validator
+    # applies, and dropping it silently would hide that the check exists.
+    active: bool
     root: int
     nodes: dict[int, Node]
     children: dict[int, list[int]]
@@ -181,7 +185,7 @@ WHERE  tv.Code = ? AND mv.Code = ? AND mv.VersionNumber = ?
 """
 
 NODES_SQL = """
-SELECT op.Code AS code, os.Severity AS severity, n.NodeID AS node_id,
+SELECT op.Code AS code, os.Severity AS severity, os.IsActive <> 0 AS active, n.NodeID AS node_id,
        n.ParentNodeID AS parent, n.IsLeaf <> 0 AS is_leaf, o.Symbol AS symbol, n.Scalar AS scalar
 FROM   Operation op
 JOIN   OperationVersion ov ON ov.OperationID = op.OperationID
@@ -242,9 +246,11 @@ def load(table: str, module: str, version: str) -> tuple[dict[int, Cell], list[R
 
     nodes: dict[str, dict[int, Node]] = defaultdict(dict)
     severity: dict[str, str] = {}
-    for code, sev, node_id, parent, is_leaf, symbol, raw_scalar in raw:
+    active: dict[str, bool] = {}
+    for code, sev, is_active, node_id, parent, is_leaf, symbol, raw_scalar in raw:
         nodes[code][node_id] = Node(parent, bool(is_leaf), symbol, scalar(raw_scalar))
         severity[code] = sev
+        active[code] = bool(is_active)
 
     rules = []
     for code, tree in nodes.items():
@@ -259,22 +265,32 @@ def load(table: str, module: str, version: str) -> tuple[dict[int, Cell], list[R
             else:
                 children[node.parent].append(nid)
         if root is not None:
-            rules.append(Rule(code, severity[code], root, tree, children, cells))
+            rules.append(Rule(code, severity[code], active[code], root, tree, children, cells))
     return grid, rules
 
 
-def verdicts(rules: list[Rule], values: dict[Cell, float]) -> tuple[dict[str, Any], dict[str, Any], dict[str, str]]:
-    """Each rule evaluated over every column/sheet the report carries: held, failed, skipped.
+def verdicts(
+    rules: list[Rule], values: dict[Cell, float]
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, str], list[str]]:
+    """Each rule over every column/sheet the report carries: held, failed, skipped, off.
 
     Pure over what was loaded, so it is testable without a database or a file. A rule the
     checker cannot evaluate lands in `skipped` and never in `passed`: a validator that
     quietly skips what it cannot do reads as a clean report, which is worse than refusing.
+
+    A rule the EBA has deactivated lands in `off` and is not evaluated at all. Failing a
+    report on a check nobody runs is the same error in the other direction, and 22 of DORA
+    1.1.0's 71 rules are on that list.
     """
     axes = sorted({(col, sheet) for _, col, sheet in values})
     passed: dict[str, Any] = {}
     failed: dict[str, Any] = {}
     skipped: dict[str, str] = {}
+    off: list[str] = []
     for rule in rules:
+        if not rule.active:
+            off.append(rule.code)
+            continue
         outcome = [0, 0]
         try:
             for col, sheet in axes:
@@ -287,16 +303,16 @@ def verdicts(rules: list[Rule], values: dict[Cell, float]) -> tuple[dict[str, An
         if sum(outcome) == 0:
             continue
         (failed if outcome[1] else passed)[rule.code] = (rule.severity, outcome)
-    return passed, failed, skipped
+    return passed, failed, skipped, sorted(off)
 
 
 def check_report(table: str, module: str, version: str, instance: str) -> dict[str, Any]:
     """Every rule of one module version, run against one reported file.
 
-    The answer separates three things a caller must not confuse: rules that hold, rules
-    that fail, and rules this checker cannot evaluate - four of the model's thirty-eight
-    operators. An unevaluated rule is named with the operator it needs, never counted as
-    passing.
+    The answer separates four things a caller must not confuse: rules that hold, rules
+    that fail, rules this checker cannot evaluate - four of the model's thirty-eight
+    operators - and rules the EBA has deactivated. An unevaluated rule is named with the
+    operator it needs, never counted as passing; a deactivated one is named and not run.
 
     `unmapped` is the count of facts whose datapoint id is not a cell of this template:
     a large one usually means the file is for another module version, not that the report
@@ -329,7 +345,7 @@ def check_report(table: str, module: str, version: str, instance: str) -> dict[s
         return {"found": False, "message": f"{DB} could not be read ({type(exc).__name__}): {exc}"}
 
     values = {grid[dp]: value for dp, value in facts.items() if dp in grid}
-    passed, failed, skipped = verdicts(rules, values)
+    passed, failed, skipped, off = verdicts(rules, values)
     return {
         "found": True,
         "table": table,
@@ -344,10 +360,13 @@ def check_report(table: str, module: str, version: str, instance: str) -> dict[s
             for code, (severity, (ok, bad)) in sorted(failed.items())
         ],
         "not_evaluated": [{"rule_code": code, "needs": needs} for code, needs in sorted(skipped.items())],
+        "deactivated": off,
         "message": (
             "fail lists rules that do not hold, with how many column/sheet combinations of how "
             "many. not_evaluated is this checker's limit, not a pass: it implements four of the "
-            "model's thirty-eight operators and names the one each skipped rule needs. A large "
+            "model's thirty-eight operators and names the one each skipped rule needs. "
+            "deactivated is the EBA's own list: the rule is published, no validator runs it, and "
+            "it is not evaluated here either - so it is neither a pass nor a failure. A large "
             "unmapped count means the file is probably for another module version."
             + (
                 f" records ({records}) exceeds facts ({len(facts)}): this template has an open "
@@ -606,6 +625,9 @@ def main() -> None:
         print(f"\n{len(answer['not_evaluated'])} rule(s) NOT evaluated - this checker implements four operators:")
         for skipped in answer["not_evaluated"]:
             print(f"  {skipped['rule_code']:12} needs {skipped['needs']!r}")
+    if answer["deactivated"]:
+        print(f"\n{len(answer['deactivated'])} rule(s) on the EBA's deactivated list, not run by anyone:")
+        print("  " + ", ".join(answer["deactivated"]))
     sys.exit(1 if answer["fail"] else 0)
 
 

@@ -34,6 +34,10 @@ PAY_RULES_WITH_PLUS = len(
     {r["rule_code"] for r in RULE_ROWS if r["module"].startswith("PSD_FRP") and "+" in r["expression"]}
 )
 DORA_RULES = len({r["rule_code"] for r in RULE_ROWS if r["module"].startswith("DORA")})
+# The EBA's deactivated-rules list, as it falls on the two modules the pack carries.
+DORA_RULES_OFF = len({r["rule_code"] for r in RULE_ROWS if r["module"].startswith("DORA") and r["active"] != "True"})
+PAY_RULES_OFF = len({r["rule_code"] for r in RULE_ROWS if r["module"].startswith("PSD_FRP") and r["active"] != "True"})
+RULE_CELL_ROWS = len(RULE_ROWS)
 
 LEADING_CODE = re.compile(r"^(?P<code>\d{4})\s+(?P<label>.+)$")
 PAIR_RE = re.compile(r"^\((?P<a>[A-Za-z0-9]+):(?P<b>[A-Za-z0-9]+)\)\s*(?P<label>.+)$")
@@ -2107,12 +2111,21 @@ ones there are, which is also why they must not be invented.
 | `module` | `{DPM_VERSION}` or `DORA 1.1.0` |
 | `rule_code`, `severity` | e.g. `v09123_m`, `warning` |
 | `table_name`, `row_code`, `column_code`, `sheet_code` | the cell, in warehouse spelling; `*` is an open axis, empty is an axis the table does not have |
+| `active` | `False` for a rule on the EBA's deactivated list: published, and run by nobody |
 | `expression` | the rule in DPM-XL, verbatim |
+
+**A deactivated rule is still a rule.** `OperationScope.IsActive` is the EBA's own
+deactivation list, and it falls unevenly: {DORA_RULES_OFF} of DORA 1.1.0's {DORA_RULES}
+are off, {PAY_RULES_OFF} of {DPM_VERSION}'s {PAY_RULES}. Dropping them would hide that the
+check exists; listing them as live would tell a reader to satisfy one no validator applies.
+So they are carried with `active` false, a column description names them in a sentence of
+their own, `lookup_datapoint` returns `active` on every rule, and `check_report` puts them
+under `deactivated` — neither a pass nor a failure.
 
 Which cells a rule reaches is **not** parsed out of the expression. The model resolves
 its own operands, in `OperandReferenceLocation`, and that is what the extraction reads —
 so a rule is attached to a column because the EBA says it is, not because a regular
-expression agreed. All 4635 rule-cell rows resolve to a datapoint this pack has.
+expression agreed. All {RULE_CELL_ROWS} rule-cell rows resolve to a datapoint this pack has.
 
 A column description names the rules that reach it and stops there:
 

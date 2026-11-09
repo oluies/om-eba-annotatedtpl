@@ -52,6 +52,12 @@ SELECT DISTINCT
        coalesce(l."Row",    CASE WHEN t.HasOpenRows   <> 0 THEN '*' ELSE '' END) AS row_code,
        coalesce(l."Column", CASE WHEN t.HasOpenColumns <> 0 THEN '*' ELSE '' END) AS column_code,
        coalesce(l.Sheet,    CASE WHEN t.HasOpenSheets  <> 0 THEN '*' ELSE '' END) AS sheet_code,
+       -- OperationScope.IsActive is the EBA's deactivated-rules list, in the model. A
+       -- description that names a deactivated rule tells a reader to satisfy a check
+       -- nobody runs; leaving it out hides that the EBA ever published it. 22 of DORA
+       -- 1.1.0's 71 rules are off, and none of PSD_FRP 1.2.0's 90. Unique per rule and
+       -- module version - checked - so it never splits a cell into two rows.
+       os.IsActive <> 0                                  AS active,
        ov.Expression                                     AS expression
 FROM   OperationScopeComposition osc
 JOIN   OperationScope os       ON os.OperationScopeID = osc.OperationScopeID
@@ -66,7 +72,17 @@ WHERE  osc.ModuleVID = ?
 ORDER  BY table_name, row_code, column_code, sheet_code, rule_code
 """
 
-FIELDS = ("module", "rule_code", "severity", "table_name", "row_code", "column_code", "sheet_code", "expression")
+FIELDS = (
+    "module",
+    "rule_code",
+    "severity",
+    "table_name",
+    "row_code",
+    "column_code",
+    "sheet_code",
+    "active",
+    "expression",
+)
 
 
 def module_vid(con: duckdb.DuckDBPyConnection, code: str, version: str) -> int:
@@ -97,10 +113,11 @@ def main() -> None:
 
     modules = {row[0] for row in rows}
     per_module = {m: len({r[1] for r in rows if r[0] == m}) for m in sorted(modules)}
+    off = {m: len({r[1] for r in rows if r[0] == m and not r[7]}) for m in sorted(modules)}
     size = OUT.stat().st_size / 1024
     print(
         f"{OUT.name}: {len(rows)} rule-cell rows, "
-        + ", ".join(f"{m} {n} rules" for m, n in per_module.items())
+        + ", ".join(f"{m} {n} rules ({off[m]} deactivated)" for m, n in per_module.items())
         + f"  ({size:.0f} KiB)"
     )
 
