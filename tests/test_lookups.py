@@ -51,11 +51,26 @@ def test_warehouse_context_columns_do_not_split(name):
 # --- the rules the lookup hands an agent -----------------------------------------------
 
 
-def rule_row(code, sheets, severity="warning"):
-    return {"rule_code": code, "severity": severity, "expression": "{r0020} <= {r0010}", "sheets": sheets}
+def rule_row(code, sheets, severity="warning", active=True):
+    return {
+        "rule_code": code,
+        "severity": severity,
+        "active": active,
+        "expression": "{r0020} <= {r0010}",
+        "sheets": sheets,
+    }
 
 
 SIX = ["0010", "0020", "0030", "0040", "0050", "0060"]
+
+
+def test_fold_rules_says_whether_a_rule_is_still_run():
+    """The EBA's deactivated list, on every rule rather than only the dead ones: an agent
+    reading one entry cannot tell a missing key from a live rule."""
+    (live,) = pay42_lookup.fold_rules([rule_row("v1", [""])])
+    (dead,) = pay42_lookup.fold_rules([rule_row("v2", [""], active=False)])
+    assert live["active"] is True
+    assert dead["active"] is False
 
 
 def test_fold_rules_keeps_the_expression_verbatim():
@@ -1061,6 +1076,36 @@ def test_a_cited_id_resolves_to_the_cell_it_is_cited_for():
     assert answer["found"] is True
     assert answer["cells"][0]["CellCode"] == "{Y_01.01, r0190, c0020, s0020}"
     assert answer["cells"][0]["row_label"] == row["row_label"]
+
+
+# --- the EBA's deactivated-rules list, in the shipped CSV -------------------------------
+
+
+def test_the_rules_file_says_which_rules_are_still_run():
+    """`active` is the EBA's own deactivation list. It falls unevenly and that is the
+    point: DORA 1.1.0 has 22 of 71 off, PSD_FRP 1.2.0 none of 90. Read from the committed
+    CSV, so it holds without the database."""
+    rows = cited("09-validation-rules.csv")
+    assert rows and "active" in rows[0], "the rules file carries the activity column"
+    off = {
+        module: len({r["rule_code"] for r in rows if r["module"].startswith(module) and r["active"] != "True"})
+        for module in ("DORA", "PSD_FRP")
+    }
+    every = {
+        module: len({r["rule_code"] for r in rows if r["module"].startswith(module)}) for module in ("DORA", "PSD_FRP")
+    }
+    assert (off["DORA"], every["DORA"]) == (22, 71)
+    assert (off["PSD_FRP"], every["PSD_FRP"]) == (0, 90)
+
+
+def test_the_activity_is_one_value_per_rule():
+    """A rule with both states in one module version would mean two rows per cell, and the
+    folding would then show the same code twice with nothing to tell them apart."""
+    rows = cited("09-validation-rules.csv")
+    states: dict[tuple[str, str], set[str]] = {}
+    for row in rows:
+        states.setdefault((row["module"], row["rule_code"]), set()).add(row["active"])
+    assert not [key for key, seen in states.items() if len(seen) > 1]
 
 
 # --- a code pasted out of a validation report ------------------------------------------

@@ -60,6 +60,8 @@ con.execute(
                coalesce(row_code, '')    AS row_code,
                coalesce(column_code, '') AS column_code,
                coalesce(sheet_code, '')  AS sheet_code,
+               -- all_varchar made this the string 'True'; the lookups want the boolean.
+               active = 'True'           AS active,
                expression
         FROM   read_csv('{REPO / "09-validation-rules.csv"}', header=true, all_varchar=true)"""
 )

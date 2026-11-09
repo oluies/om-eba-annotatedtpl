@@ -14,10 +14,12 @@ from conftest import needs_store
 from describe_table import (
     Datapoint,
     DoraDatapoint,
+    Rule,
     column_fqn,
     dora_table_description,
     dora_terms_by_column,
     find_open_axis,
+    rules_sentence,
     split_column_name,
 )
 
@@ -261,3 +263,44 @@ def test_the_prompt_carries_no_character_the_viewer_mangles():
     """It is published as a Context Center article like the rest of the pack, and the
     OpenMetadata viewer renders a plus sign as a literal &amp;#43;."""
     assert "+" not in PROMPT.read_text(encoding="utf-8")
+
+
+# --- the EBA's deactivated-rules list, in a description --------------------------------
+
+
+def rule(code, *, active=True, sheet="", severity="warning"):
+    return Rule.model_validate(
+        {
+            "module": "DORA 1.1.0",
+            "rule_code": code,
+            "severity": severity,
+            "table_name": "B_01_01",
+            "row_code": "*",
+            "column_code": "0020",
+            "sheet_code": sheet,
+            "active": active,
+            "expression": "with {tB_01.01}: not ( isnull ({c*}) )",
+        }
+    )
+
+
+def test_a_deactivated_rule_is_named_apart_from_the_live_ones():
+    """Listing it with the others tells a reader to satisfy a check no validator applies;
+    leaving it out hides that the EBA ever published it. 22 of DORA 1.1.0's 71 are off."""
+    said = rules_sentence([rule("v1"), rule("e23677_e", active=False)])
+    assert "Validation rules (EBA DPM, warning): v1." in said
+    assert "deactivated list, published but not run: e23677_e." in said
+    assert "v1, e23677_e" not in said, "a dead rule must not read as one to satisfy"
+
+
+def test_a_column_whose_every_rule_is_deactivated_still_says_so():
+    """The early return for "no rule reaches this variant" must not swallow them."""
+    said = rules_sentence([rule("e1", active=False), rule("e2", active=False)])
+    assert "Validation rules (EBA DPM" not in said
+    assert "published but not run: e1, e2." in said
+
+
+def test_an_active_rule_reads_exactly_as_it_did():
+    """The sentence for a column with nothing deactivated is unchanged - the whole pack's
+    PAY descriptions are that case, and a reworded one would be 1 710 columns of churn."""
+    assert rules_sentence([rule("v1"), rule("v2")]) == " Validation rules (EBA DPM, warning): v1, v2."

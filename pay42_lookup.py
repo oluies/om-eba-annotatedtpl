@@ -227,10 +227,10 @@ def warehouse_column_context(column_name: str) -> dict[str, Any]:
 
 
 RULES = """
-SELECT rule_code, severity, expression, list_sort(array_agg(DISTINCT sheet_code)) AS sheets
+SELECT rule_code, severity, active, expression, list_sort(array_agg(DISTINCT sheet_code)) AS sheets
 FROM   rules
 WHERE  table_name = ? AND row_code = ? AND column_code = ?
-GROUP  BY rule_code, severity, expression
+GROUP  BY rule_code, severity, active, expression
 ORDER  BY rule_code
 """
 
@@ -251,13 +251,25 @@ def fold_rules(
     `variants` is every variant the column has, and only narrows what is said: a rule
     that reaches all of them says nothing about variants, so the key appears exactly when
     it carries information.
+
+    `active` is false for a rule on the EBA's deactivated list - 22 of DORA 1.1.0's 71.
+    It is still returned: a reader has to know the check exists and is not run, and an
+    answer that omits it cannot be told from one where the rule was never published.
     """
     folded = []
     for row in rows:
         sheets = [sheet for sheet in row["sheets"] if sheet not in ("", "*")]
         if variant and sheets and variant not in sheets:
             continue
-        rule = {"rule_code": row["rule_code"], "severity": row["severity"], "expression": row["expression"]}
+        # `active` always, not only when false: an agent reading one rule's entry cannot
+        # tell a missing key from a live rule, and the EBA deactivating a check is exactly
+        # the thing a description must not leave out.
+        rule = {
+            "rule_code": row["rule_code"],
+            "severity": row["severity"],
+            "active": bool(row["active"]),
+            "expression": row["expression"],
+        }
         partial = sheets and not variant and not set(variants) <= set(sheets)
         folded.append(rule | {"variants": sheets} if partial else rule)
     return folded

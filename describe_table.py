@@ -98,6 +98,9 @@ class Rule(BaseModel):
     row_code: str = ""
     column_code: str = ""
     sheet_code: str = ""
+    # The EBA's deactivated-rules list, in the model. Defaulted true: a rules file written
+    # before the column existed described rules that were all live.
+    active: bool = True
     expression: str
 
 
@@ -117,25 +120,40 @@ def rules_sentence(rules: Sequence[Rule], variants: Sequence[str] = ()) -> str:
         return ""
     sheets: dict[str, set[str]] = defaultdict(set)
     severity: dict[str, str] = {}
+    deactivated: set[str] = set()
     for rule in rules:
         sheets[rule.rule_code].add(rule.sheet_code)
         severity[rule.rule_code] = rule.severity
+        if not rule.active:
+            deactivated.add(rule.rule_code)
 
     # Which of this column's variants each rule actually reaches. A rule recorded against
     # no sheet, or against the open sheet axis as a whole, reaches all of them.
     wanted = set(variants)
     reach = {code: wanted if got <= {"", "*"} else got & wanted for code, got in sheets.items()}
 
-    whole = sorted(code for code, got in reach.items() if got == wanted)
-    partial = sorted(code for code, got in reach.items() if got and got != wanted)
-    if not whole and not partial:
+    # Which rules reach this column at all. `wanted` is empty for a table with no variant
+    # axis - every DORA table - and then `got` is empty too and equal to it, so the three
+    # buckets below have to be read off one predicate rather than each testing truthiness.
+    appears = {code: got for code, got in reach.items() if got == wanted or got}
+    whole = sorted(code for code, got in appears.items() if got == wanted and code not in deactivated)
+    partial = sorted(code for code, got in appears.items() if got != wanted and code not in deactivated)
+    # A deactivated rule is named in its own sentence rather than in the list. Leaving it
+    # out would hide that the EBA ever published the check; listing it with the others
+    # tells a reader to satisfy one that no validator runs.
+    off = sorted(code for code in appears if code in deactivated)
+    if not whole and not partial and not off:
         return ""  # every rule on this cell is for a variant this table does not hold
 
-    kinds = sorted({severity[code] for code in whole + partial})
-    label = f"EBA DPM, {kinds[0]}" if len(kinds) == 1 else "EBA DPM"
-    said = f" Validation rules ({label}): {', '.join(whole + partial)}."
+    said = ""
+    if whole or partial:
+        kinds = sorted({severity[code] for code in whole + partial})
+        label = f"EBA DPM, {kinds[0]}" if len(kinds) == 1 else "EBA DPM"
+        said += f" Validation rules ({label}): {', '.join(whole + partial)}."
     for code in partial:
         said += f" {code} reaches only variant(s) {', '.join(sorted(reach[code]))}."
+    if off:
+        said += f" On the EBA's deactivated list, published but not run: {', '.join(off)}."
     return said
 
 
