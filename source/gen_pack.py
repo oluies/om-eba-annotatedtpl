@@ -1600,9 +1600,10 @@ These hold regardless of what you find:
     (DPM 3.4) and a warning in 4.1.0 (DPM 4.2). Name the version you answered under, in
     the description and in any query you generate. Two entries with the same rule code
     are not a duplicate.
-  - For a reported file, explain_report before check_report. not_evaluated is the
-    checker's limit and not a pass, and a large unmapped count means the file belongs to
-    another release rather than that the report is wrong.
+  - For a reported file, explain_report before check_report. Neither not_evaluated nor
+    no_verdict is a pass - the first is the checker's limit, the second a rule that
+    concluded nothing - and deactivated is a check nobody runs. A large unmapped count
+    means the file belongs to another release rather than that the report is wrong.
 - Columns that do not match the pattern are warehouse context - Period_SK, Company_BK,
   Taxonomy_Name and the like. They have no framework meaning, so do not describe them
   from a framework. Check Taxonomy_Name to confirm which framework a table belongs to:
@@ -2053,14 +2054,20 @@ checks as "nothing mapped", which reads like a bad report rather than a newer fi
   "facts": 324, "mapped": 324, "unmapped": 0,
   "hold": ["v09124_m", "v09198_s", "v09247_s"],
   "fail": [{{"rule_code": "v09123_m", "severity": "warning", "fails": 12, "of": 12}}],
-  "not_evaluated": [] }}
+  "not_evaluated": [], "deactivated": [], "no_verdict": ["v903611_m"] }}
 ```
 
-Read `not_evaluated` before `hold`: it is the checker's limit, not a pass — four of the
-model's thirty-eight operators, each skipped rule named with the operator it needs. An
-empty list, as here, is the claim that this module is covered completely. `unmapped` is
-the next one to read: a large count almost always means the file is for another module
-version rather than that the report is wrong.
+Every rule of the module version is in exactly one of the five, and the three that are not
+`hold` or `fail` are the ones to read first:
+
+| | |
+|---|---|
+| `not_evaluated` | the checker's limit, not a pass. It implements eleven of the model's thirty-eight operators — addition, the six comparisons, `isnull`, `not`, `and`, `or` and `if-then-else` — and names the operator each skipped rule needs. Empty for PSD_FRP {DPM_VERSION.split()[-1]}; four DORA rules need `match`, a regular expression over a reported string. |
+| `deactivated` | the EBA's own list: published, run by nobody, so not run here either. 22 of DORA 1.1.0's 71. |
+| `no_verdict` | read, needing nothing, and concluding nothing. An `if` whose condition is false has no else branch to answer with, and a rule comparing cells across columns or sheets finds nothing to compare because the checker evaluates one column and sheet at a time. 43 of DORA's rules, and the three PAY implications that pair a sheet of amounts with a sheet of transaction counts. |
+
+`unmapped` is the next one to read: a large count almost always means the file is for
+another module version rather than that the report is wrong.
 
 Two phrases worth reusing in any of these: **"do not write any column name yourself"**,
 and **"say which module version the answer is for"** — a rule changes both its expression

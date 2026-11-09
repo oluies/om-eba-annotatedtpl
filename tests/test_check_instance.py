@@ -92,10 +92,74 @@ def test_a_scalar_is_compared_against_every_cell_the_other_side_names():
 
 
 def test_an_operator_the_evaluator_does_not_implement_raises():
-    """`isnull`, which DORA needs. Never silently skipped, never counted as passing."""
-    rule = tree("isnull", leaves={1: [C]}, root_children=[1])
-    with pytest.raises(Unsupported, match="isnull"):
+    """`match`, a regular expression over a reported string, which four DORA rules need.
+    Never silently skipped, never counted as passing."""
+    rule = tree("match", leaves={1: [C]}, root_children=[1])
+    with pytest.raises(Unsupported, match="match"):
         evaluate(rule, {C: 1.0}, "0010", "0010")
+
+
+# --- isnull, and the implication ------------------------------------------------------
+
+
+def test_isnull_asks_whether_the_cell_was_reported():
+    """Presence, not value. `operand` reads an unreported cell as zero - that is what
+    `default: 0` means for arithmetic - and a reported zero would otherwise be
+    indistinguishable from an empty box, which is the one thing isnull is for."""
+    rule = tree("isnull", leaves={1: [C]}, root_children=[1])
+    assert evaluate(rule, {C: 0.0}, "0010", "0010") is False, "a reported zero is not null"
+    assert evaluate(rule, {}, "0010", "0010") is True, "an unreported cell is"
+
+
+def test_isnull_refuses_a_set_that_is_half_reported():
+    """DPM-XL maps isnull over the set; this has one verdict per axis. Rather than pick
+    one, it says it cannot - the same answer it gives for an operator it lacks."""
+    other = ("0020", "0010", "0010")
+    rule = tree("isnull", leaves={1: [C, other]}, root_children=[1])
+    assert evaluate(rule, {C: 1.0, other: 1.0}, "0010", "0010") is False
+    assert evaluate(rule, {}, "0010", "0010") is True
+    with pytest.raises(Unsupported, match="neither all reported nor all absent"):
+        evaluate(rule, {C: 1.0}, "0010", "0010")
+
+
+def test_an_if_without_an_else_says_nothing_when_its_condition_is_false():
+    """The model gives `if A then B endif` two children, not three. When A is false there
+    is no branch to answer with, so the answer is None - not applicable - and emphatically
+    not "holds": a rule that never applied has not been satisfied."""
+    rule = tree(
+        "if-then-else",
+        leaves={},
+        root_children=[1, 2],
+        nested={1: ("isnull", [3]), 2: ("isnull", [4])},
+    )
+    rule = rule._replace(
+        nodes=rule.nodes
+        | {
+            3: Node(parent=1, is_leaf=True, symbol=None, scalar=None),
+            4: Node(parent=2, is_leaf=True, symbol=None, scalar=None),
+        },
+        cells={3: [C], 4: [("0020", "0010", "0010")]},
+    )
+    other = ("0020", "0010", "0010")
+    # condition true (C absent -> isnull), consequent true (other absent) -> holds
+    assert evaluate(rule, {}, "0010", "0010") is True
+    # condition true, consequent false -> fails
+    assert evaluate(rule, {other: 1.0}, "0010", "0010") is False
+    # condition false -> nothing to say
+    assert evaluate(rule, {C: 1.0, other: 1.0}, "0010", "0010") is None
+
+
+def test_or_and_and_are_three_valued():
+    """True beats unknown in an `or`, false beats unknown in an `and`, and unknown beats
+    the rest - the one place a validator must not round up to a pass."""
+    from check_instance import every, some
+
+    assert some([None, True]) is True
+    assert some([None, False]) is None
+    assert some([False, False]) is False
+    assert every([None, False]) is False
+    assert every([None, True]) is None
+    assert every([True, True]) is True
 
 
 def test_an_unsupported_operator_inside_an_arm_raises_too():
@@ -113,11 +177,10 @@ def test_an_unsupported_operator_inside_an_arm_raises_too():
 
 
 @needs_dpm2
-def test_the_four_operators_cover_all_but_the_three_implications():
-    """What the docstring claims, counted rather than asserted in prose: four operators
-    covered every rule of PSD_FRP 1.1.0, and 1.2.0 added three implications written with
-    `or` at the root. Anything else raising Unsupported here is a rule shape nobody has
-    looked at, which is exactly what this is meant to notice."""
+def test_every_pay_rule_can_be_read_now():
+    """What the docstring claims, counted rather than asserted in prose: the implications
+    1.2.0 added are read as well, so nothing in PSD_FRP raises. Anything raising here is a
+    rule shape nobody has looked at, which is what this is meant to notice."""
     from check_instance import Unsupported, load
 
     grid, rules = load("Y_01.01", "PSD_FRP", "1.2.0")
@@ -130,7 +193,7 @@ def test_the_four_operators_cover_all_but_the_three_implications():
             evaluate(rule, values, col, sheet)
         except Unsupported as needs:
             refused[rule.code] = str(needs)
-    assert refused == {"v903611_m": "or", "v903612_m": "or", "v903614_m": "or"}
+    assert refused == {}
 
 
 # --- the whole run, as the tool answers it ---------------------------------------------
@@ -150,15 +213,15 @@ def test_each_rule_lands_in_exactly_one_bucket():
     cannot = holds._replace(code="cannot", nodes=holds.nodes | {0: Node(None, False, "*", None)})
     values = {C: 100.0, ("0030", "0010", "0010"): 40.0, ("0040", "0010", "0010"): 60.0}
 
-    passed, failed, skipped, off = verdicts([holds, cannot], values)
+    passed, failed, skipped, off, undecided = verdicts([holds, cannot], values)
     assert set(passed) == {"holds"}
     assert failed == {}
     assert set(skipped) == {"cannot"}
-    assert off == []
+    assert off == [] and undecided == []
 
-    passed, failed, skipped, off = verdicts([fails], {**values, C: 99.0})
+    passed, failed, skipped, off, undecided = verdicts([fails], {**values, C: 99.0})
     assert set(failed) == {"fails"}
-    assert passed == {} and skipped == {} and off == []
+    assert passed == {} and skipped == {} and off == [] and undecided == []
 
 
 def test_a_deactivated_rule_is_named_and_never_evaluated():
@@ -166,15 +229,17 @@ def test_a_deactivated_rule_is_named_and_never_evaluated():
     as wrong as counting it as passed. It is reported, because a check that exists and is
     not applied is something a reader has to know about: 22 of DORA 1.1.0's 71 are off."""
     fails = tree("=", leaves={1: [C], 2: 0.0}, root_children=[1, 2])._replace(code="dead", active=False)
-    passed, failed, skipped, off = verdicts([fails], {C: 100.0})
+    passed, failed, skipped, off, undecided = verdicts([fails], {C: 100.0})
     assert off == ["dead"]
-    assert passed == {} and failed == {} and skipped == {}
+    assert passed == {} and failed == {} and skipped == {} and undecided == []
 
 
-def test_a_rule_naming_no_reported_axis_is_counted_nowhere():
-    """An empty report evaluates nothing, which is not the same as everything holding."""
+def test_a_rule_that_concludes_nothing_is_named_rather_than_dropped():
+    """An empty report evaluates nothing, which is not the same as everything holding -
+    and used to leave the count without a word. Every rule is in exactly one bucket, so
+    the one that concluded nothing has to be in the fifth."""
     rule = tree("=", leaves={1: [C], 2: 0}, root_children=[1, 2])
-    assert verdicts([rule], {}) == ({}, {}, {}, [])
+    assert verdicts([rule], {}) == ({}, {}, {}, [], ["test_rule"])
 
 
 def test_a_missing_report_names_the_file_and_not_its_content(tmp_path, monkeypatch):
@@ -224,8 +289,10 @@ def test_a_report_of_ones_fails_the_sums_and_names_what_it_cannot_do(tmp_path):
     assert answer["module"] == "PSD_FRP 1.2.0"
     assert answer["facts"] == answer["mapped"] == len(grid)
     assert answer["unmapped"] == 0
-    skipped = {entry["rule_code"]: entry["needs"] for entry in answer["not_evaluated"]}
-    assert skipped == {"v903611_m": "or", "v903612_m": "or", "v903614_m": "or"}
+    assert answer["not_evaluated"] == [], "every PSD_FRP rule is read"
+    # The three implications pair a sheet of amounts with a sheet of transaction counts,
+    # and this evaluates one sheet at a time, so they conclude nothing rather than hold.
+    assert set(answer["no_verdict"]) == {"v903611_m", "v903612_m", "v903614_m"}
     assert answer["fail"], "a report of ones does not add up"
     assert {bad["severity"] for bad in answer["fail"]} <= {"error", "warning"}
 
@@ -301,7 +368,12 @@ def test_an_open_template_has_cells_and_every_rule_refuses(tmp_path):
     assert answer["records"] == 3 * len(grid)
     assert "open axis" in answer["message"]
     assert answer["hold"] == [] and answer["fail"] == [], "DORA's rules are not arithmetic"
-    assert {skipped["needs"] for skipped in answer["not_evaluated"]} >= {"if-then-else"}
+    # `match` is a regular expression over a reported string and is the one operator these
+    # rules still need; isnull, not, or and if-then-else are implemented. The rest reach no
+    # verdict because they compare cells across columns and this evaluates one at a time.
+    assert {skipped["needs"] for skipped in answer["not_evaluated"]} == {"match"}
+    assert answer["no_verdict"], "a rule that concluded nothing is named, not dropped"
+    assert set(answer["deactivated"]) == {"e23677_e"}
 
 
 # --- what a file is, before whether it holds -------------------------------------------
