@@ -292,7 +292,7 @@ Every rule of the module version is in exactly one of the five, and the three th
 |---|---|
 | `not_evaluated` | the checker's limit, not a pass. It implements eleven of the model's thirty-eight operators — addition, the six comparisons, `isnull`, `not`, `and`, `or` and `if-then-else` — and names the operator each skipped rule needs. Empty for PSD_FRP 1.2.0; four DORA rules need `match`, a regular expression over a reported string. |
 | `deactivated` | the EBA's own list: published, run by nobody, so not run here either. 22 of DORA 1.1.0's 71. |
-| `no_verdict` | read, needing nothing, and concluding nothing. An `if` whose condition is false has no else branch to answer with, and a rule comparing cells across columns or sheets finds nothing to compare because the checker evaluates one column and sheet at a time. 43 of DORA's rules, and the three PAY implications that pair a sheet of amounts with a sheet of transaction counts. |
+| `no_verdict` | read, needing nothing, and concluding nothing: an `if` whose condition is false has no else branch to answer with. Three DORA rules on a complete report, and none of PSD_FRP's. |
 
 `unmapped` is the next one to read: a large count almost always means the file is for
 another module version rather than that the report is wrong.

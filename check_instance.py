@@ -19,13 +19,17 @@ reported as not evaluated, with the operator named. It is never counted as passi
 a validator that quietly skips what it cannot do is worse than one that cannot do it: the
 silence reads as a clean report.
 
-**Reading a rule is not the same as reaching a verdict.** The loop evaluates one column and
-sheet at a time, so a rule comparing cells across columns or across sheets finds nothing to
-compare on either axis and concludes nothing. That is 43 of DORA's rules, and the three PAY
-implications, which pair a sheet of amounts with a sheet of transaction counts. An `if`
-whose condition is false says nothing either: the model gives it no else branch, so there
-is nothing to answer with. Those are reported under `no_verdict` rather than dropped, and
-widening the axis is the next thing worth doing here.
+**An axis a rule fixes is not an axis to iterate.** The loop walks the columns and sheets
+the report carries, and a leaf resolves against the axis only where the rule leaves it
+free: `{r0030}` under a scope of `c*, s*` is one cell per column and sheet, while `{s0010}`
+or a DORA rule's `{c0030}` names its own and keeps it whatever is being walked. Reading the
+second kind as free was what left a rule comparing one sheet with another unable to compare
+anything, and 46 rules concluded nothing for that reason alone - 3 of PSD_FRP 1.2.0's 90
+and 43 of DORA 1.1.0's 71. Now 0 and 3.
+
+A rule can still reach no verdict, and it is still reported rather than dropped: an `if`
+whose condition is false has no else branch to answer with, which is what the last three
+DORA rules come to on a complete report.
 
 A caveat on the EBA's published sample instances: they are structural, not valid. Their
 values are uniform noise, so every arithmetic rule fails against them by construction.
@@ -117,6 +121,38 @@ COMPARISONS = {
 BOOLEAN = {"()", "not", "and", "or", "isnull", "if-then-else"}
 
 
+def named(rule: Rule, node_id: int, col: str, sheet: str) -> list[Cell]:
+    """The cells a leaf stands for here. Pure.
+
+    An axis the leaf is *free* on is the one the caller is iterating: `{r0030}` under a
+    scope of `c*, s*` resolves to one cell per column and sheet, and the column and sheet
+    being asked about pick which. An axis the leaf *fixes* - `{s0010}`, or a DORA rule
+    naming `{c0030}` - is the rule's own, and is used whatever is being iterated. The
+    model says which by how many values the leaf's cells take on that axis.
+
+    Reading `{s0010}` as free was what left a rule comparing one sheet with another
+    unable to compare anything: on the sheet-0010 pass the other leaf had no cell, and on
+    the sheet-0020 pass neither did the first.
+    """
+    cells = rule.cells.get(node_id, [])
+    free_col = len({cell[1] for cell in cells}) > 1
+    free_sheet = len({cell[2] for cell in cells}) > 1
+    return [cell for cell in cells if (cell[1] == col or not free_col) and (cell[2] == sheet or not free_sheet)]
+
+
+def free_axes(rule: Rule) -> tuple[bool, bool]:
+    """Whether any leaf of the rule leaves the column, and the sheet, free. Pure.
+
+    What `verdicts` iterates. A rule every leaf of which fixes both axes - the three PAY
+    implications, every DORA rule - is one question, not one per reported column: running
+    it once per axis would answer the same thing twelve times and call it "fails 12 of 12".
+    """
+    spans = [
+        (len({cell[1] for cell in cells}) > 1, len({cell[2] for cell in cells}) > 1) for cells in rule.cells.values()
+    ]
+    return any(col for col, _ in spans), any(sheet for _, sheet in spans)
+
+
 def operand(rule: Rule, node_id: int, values: dict[Cell, float], col: str, sheet: str) -> list[float] | None:
     """A node's value here: a literal, a sum, or the cells it names. None if out of scope.
 
@@ -133,7 +169,7 @@ def operand(rule: Rule, node_id: int, values: dict[Cell, float], col: str, sheet
             raise Unsupported(f"the literal {node.scalar!r}")
         if node.scalar is not None:
             return [node.scalar]
-        here = [c for c in rule.cells.get(node_id, []) if c[1] == col and c[2] == sheet]
+        here = named(rule, node_id, col, sheet)
         return [values.get(c, 0.0) for c in here] if here else None
     if node.symbol == "+":
         # A loop rather than a comprehension: `any(p is None for p in parts)` does not
@@ -165,7 +201,7 @@ def absent(rule: Rule, node_id: int, values: dict[Cell, float], col: str, sheet:
         return absent(rule, kids[0], values, col, sheet)
     if not node.is_leaf:
         raise Unsupported(f"isnull of {node.symbol or '?'}")
-    here = [cell for cell in rule.cells.get(node_id, []) if cell[1] == col and cell[2] == sheet]
+    here = named(rule, node_id, col, sheet)
     if not here:
         return None
     missing = [cell for cell in here if cell not in values]
@@ -383,7 +419,7 @@ def verdicts(
     names lie on axes this loop visits one at a time. It used to be dropped here without
     a word, which is the one outcome this function exists to avoid.
     """
-    axes = sorted({(col, sheet) for _, col, sheet in values})
+    reported = sorted({(col, sheet) for _, col, sheet in values})
     passed: dict[str, Any] = {}
     failed: dict[str, Any] = {}
     skipped: dict[str, str] = {}
@@ -393,6 +429,10 @@ def verdicts(
         if not rule.active:
             off.append(rule.code)
             continue
+        # Only the axes this rule leaves free: the rest it fixes itself, and asking it
+        # once per reported column would multiply one answer into twelve.
+        wide_col, wide_sheet = free_axes(rule)
+        axes = sorted({(col if wide_col else "", sheet if wide_sheet else "") for col, sheet in reported})
         outcome = [0, 0]
         try:
             for col, sheet in axes:

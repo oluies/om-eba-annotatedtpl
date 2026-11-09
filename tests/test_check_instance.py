@@ -33,6 +33,17 @@ def tree(root_symbol, *, leaves, root_children, nested=None):
 C = ("0010", "0010", "0010")  # row, column, sheet
 
 
+def templates_of(module: str) -> list[str]:
+    """The templates one module's rules reach, as `load` spells them: Y_01_01 -> Y_01.01."""
+    import csv
+
+    from conftest import REPO
+
+    with (REPO / "09-validation-rules.csv").open(encoding="utf-8") as handle:
+        names = {row["table_name"] for row in csv.DictReader(handle) if row["module"].startswith(module)}
+    return sorted(f"{name.rpartition('_')[0]}.{name.rpartition('_')[2]}" for name in names)
+
+
 def test_a_sum_that_holds():
     rule = tree(
         "=",
@@ -68,8 +79,12 @@ def test_an_unreported_cell_of_a_sum_counts_as_zero():
 
 
 def test_a_rule_that_does_not_reach_this_column_answers_nothing():
-    rule = tree("=", leaves={1: [C], 2: [("0030", "0010", "0010")]}, root_children=[1, 2])
-    assert evaluate(rule, {C: 1.0}, "0020", "0010") is None
+    """Out of scope means a leaf that is free on the column and does not name this one.
+    A leaf naming a single column fixes it instead, and is read whatever is being walked -
+    which is why the rule here spans two columns and is asked about a third."""
+    across = [("0010", "0010", "0010"), ("0010", "0020", "0010")]
+    rule = tree("=", leaves={1: across, 2: 0.0}, root_children=[1, 2])
+    assert evaluate(rule, {C: 1.0}, "0030", "0010") is None
 
 
 @pytest.mark.parametrize(
@@ -290,9 +305,11 @@ def test_a_report_of_ones_fails_the_sums_and_names_what_it_cannot_do(tmp_path):
     assert answer["facts"] == answer["mapped"] == len(grid)
     assert answer["unmapped"] == 0
     assert answer["not_evaluated"] == [], "every PSD_FRP rule is read"
-    # The three implications pair a sheet of amounts with a sheet of transaction counts,
-    # and this evaluates one sheet at a time, so they conclude nothing rather than hold.
-    assert set(answer["no_verdict"]) == {"v903611_m", "v903612_m", "v903614_m"}
+    assert answer["no_verdict"] == [], "and every one of them reaches a verdict"
+    # The three implications pair a sheet of amounts with a sheet of transaction counts.
+    # Both are 1.0 here, so each holds - and until the axis was read off the rule rather
+    # than off the report, neither could be evaluated at all.
+    assert {"v903611_m", "v903612_m", "v903614_m"} <= set(answer["hold"])
     assert answer["fail"], "a report of ones does not add up"
     assert {bad["severity"] for bad in answer["fail"]} <= {"error", "warning"}
 
@@ -348,7 +365,7 @@ def test_records_of_an_open_table_are_counted_even_though_one_is_checked():
 
 
 @needs_dpm2
-def test_an_open_template_has_cells_and_every_rule_refuses(tmp_path):
+def test_an_open_template_has_cells_and_its_rules_are_checked(tmp_path):
     """Every DORA template is open-rowed, so its cells carry no row header and the DPM
     writes the coordinate `r*`. An inner join on that header dropped all fourteen
     templates silently - a report checked against nothing reads as a report that passed."""
@@ -367,13 +384,100 @@ def test_an_open_template_has_cells_and_every_rule_refuses(tmp_path):
     assert answer["mapped"] == len(grid) and answer["unmapped"] == 0
     assert answer["records"] == 3 * len(grid)
     assert "open axis" in answer["message"]
-    assert answer["hold"] == [] and answer["fail"] == [], "DORA's rules are not arithmetic"
+    # DORA's rules are presence checks rather than arithmetic, and a report with every
+    # cell filled satisfies them. Before the axis was read off the rule, not one of them
+    # could be evaluated: the cells they compare sit on different columns.
+    assert answer["hold"] and answer["fail"] == []
     # `match` is a regular expression over a reported string and is the one operator these
-    # rules still need; isnull, not, or and if-then-else are implemented. The rest reach no
-    # verdict because they compare cells across columns and this evaluates one at a time.
+    # rules still need; isnull, not, or and if-then-else are implemented.
     assert {skipped["needs"] for skipped in answer["not_evaluated"]} == {"match"}
-    assert answer["no_verdict"], "a rule that concluded nothing is named, not dropped"
     assert set(answer["deactivated"]) == {"e23677_e"}
+
+
+# --- which axis a rule is asked on ------------------------------------------------------
+
+
+def test_a_leaf_that_spans_columns_is_read_on_the_axis_being_walked():
+    """`{r0030}` under a scope of `c*, s*` is one cell per column and sheet, and the
+    column being asked about is what picks which."""
+    from check_instance import named
+
+    across = [("0030", "0010", "0010"), ("0030", "0020", "0010")]
+    rule = tree("=", leaves={1: across}, root_children=[1])
+    assert named(rule, 1, "0010", "0010") == [("0030", "0010", "0010")]
+    assert named(rule, 1, "0020", "0010") == [("0030", "0020", "0010")]
+    assert named(rule, 1, "0030", "0010") == [], "a column the leaf does not name is out of scope"
+
+
+def test_a_leaf_that_fixes_its_column_keeps_it_whatever_is_walked():
+    """A DORA rule naming `{c0030}`, or a PAY implication naming `{s0010}`: the rule has
+    chosen the axis, so walking a different column must not hide the cell. Reading this as
+    free is what left 46 rules unable to compare anything."""
+    from check_instance import named
+
+    one = [("*", "0030", "")]
+    rule = tree("=", leaves={1: one}, root_children=[1])
+    assert named(rule, 1, "0020", "") == one
+    assert named(rule, 1, "0030", "") == one
+
+
+def test_a_rule_that_fixes_both_axes_is_one_question():
+    """Asking it once per reported column would answer the same thing twelve times and
+    report it as "fails 12 of 12"."""
+    from check_instance import free_axes
+
+    fixed = tree("=", leaves={1: [("*", "0030", "")], 2: [("*", "0040", "")]}, root_children=[1, 2])
+    assert free_axes(fixed) == (False, False)
+    spread = tree("=", leaves={1: [("0030", "0010", "0010"), ("0030", "0020", "0010")]}, root_children=[1])
+    assert free_axes(spread) == (True, False)
+
+
+@needs_dpm2
+def test_a_dora_implication_now_fails_a_report_that_breaks_it(tmp_path):
+    """v8803_m is `if (not isnull({c0110})) then (not isnull({c0100}))`. Reporting the
+    first and not the second breaks it, and until the axis was read off the rule this
+    check could not reach a verdict at all - the condition and the consequent sit on
+    different columns."""
+    from check_instance import load
+
+    grid, _ = load("B_01.02", "DORA", "1.1.0")
+    without = {dp for dp, (_, col, _) in grid.items() if col == "0100"}
+    assert without, "c0100 is a column of this template"
+    report = tmp_path / "b0102.csv"
+    rows = "\n".join(f"dp{dp},1.0" for dp in sorted(grid) if dp not in without)
+    report.write_text(f"datapoint,factValue\n{rows}\n", encoding="utf-8")
+
+    answer = check_instance.check_report("B_01.02", "DORA", "1.1.0", str(report))
+    assert [(bad["rule_code"], bad["fails"], bad["of"]) for bad in answer["fail"]] == [("v8803_m", 1, 1)]
+
+
+@needs_dpm2
+def test_every_rule_of_both_modules_lands_somewhere(tmp_path):
+    """The whole point, counted: a report of ones over every template, and every rule of
+    the module version in exactly one bucket. PSD_FRP's three implications hold now rather
+    than concluding nothing, and DORA goes from 2 rules with a verdict to 42."""
+    from check_instance import load
+
+    expected = {
+        ("PSD_FRP", "1.2.0"): {"hold": 24, "fail": 66, "not_evaluated": 0, "deactivated": 0, "no_verdict": 0},
+        ("DORA", "1.1.0"): {"hold": 42, "fail": 0, "not_evaluated": 4, "deactivated": 22, "no_verdict": 3},
+    }
+    for (module, version), counts in expected.items():
+        seen: dict[str, set[str]] = {key: set() for key in counts}
+        for table in templates_of(module):
+            grid, _ = load(table, module, version)
+            report = tmp_path / f"{table}-{module}.csv"
+            rows = "\n".join(f"dp{dp},1.0" for dp in sorted(grid))
+            report.write_text(f"datapoint,factValue\n{rows}\n", encoding="utf-8")
+            answer = check_instance.check_report(table, module, version, str(report))
+            seen["hold"].update(answer["hold"])
+            seen["fail"].update(bad["rule_code"] for bad in answer["fail"])
+            seen["not_evaluated"].update(bad["rule_code"] for bad in answer["not_evaluated"])
+            seen["deactivated"].update(answer["deactivated"])
+            seen["no_verdict"].update(answer["no_verdict"])
+        assert {key: len(codes) for key, codes in seen.items()} == counts, module
+        every = set().union(*seen.values())
+        assert len(every) == sum(counts.values()), f"{module}: a rule is in two buckets"
 
 
 # --- what a file is, before whether it holds -------------------------------------------
