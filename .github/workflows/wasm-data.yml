@@ -15,7 +15,12 @@ on:
       drafts:
         description: "Which of them are draft technical packages. The page says so when one is picked. Empty when none are."
         required: false
-        default: ""
+        # README says release 4.4 is a draft technical package, and that a reader should
+        # not have to open NOTICE to learn the EBA is still changing it. An empty default
+        # meant that accepting the defaults published 4.4 unmarked, which is what the
+        # 2026-10-31 publish did. This tracks the claim in README; both move together when
+        # the EBA settles 4.4, and a release added to `releases` needs a decision here.
+        default: "4.4"
       framework:
         description: "Also render a page per template of these frameworks, space separated, under /templates/. Empty skips it."
         required: false
