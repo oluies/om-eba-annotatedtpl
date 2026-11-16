@@ -286,8 +286,8 @@ Inputs.table(found, {
 ```js
 display(wording.numRows === 0
   ? html`<p><em>No published wording for ${code}. The regulation that carries these
-      translations is the supervisory reporting ITS; DORA, MiCA and remuneration are
-      separate regulations, not yet read.</em></p>`
+      translations is the supervisory reporting ITS; payments, DORA, MiCA and remuneration
+      are separate regulations, not yet read.</em></p>`
   : html`<p>Not a translation. ${wording.numRows} of this template's rows have a wording
       published in every official language, from
       <a href="https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:${wording.get(0).celex}">${wording.get(0).celex}</a>,
