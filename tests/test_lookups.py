@@ -1118,6 +1118,39 @@ def test_the_worked_example_resolves_to_the_cell_its_anatomy_claims():
     )
 
 
+def instructions() -> str:
+    return (REPO / "02-agent-instructions.md").read_text(encoding="utf-8")
+
+
+def test_every_id_the_agent_instructions_cite_is_in_the_datapoints_csv():
+    """The CI half of the two tests above. The DPM 2.0 database is a 139 MB download and
+    gitignored, so on a runner every @needs_dpm2 test skips - including the guards for the
+    very drift this file carried. 05-datapoints.csv is committed and holds all 1830 ids, so
+    the cheaper question still gets asked everywhere: it would have caught 3260891."""
+    cites = {int(n) for n in PROSE_ID.findall(instructions())}
+    known = {int(row["datapoint_id"]) for row in cited("05-datapoints.csv")}
+    assert cites, "the agent instructions cite no datapoint id"
+    assert not cites - known, f"{sorted(cites - known)} are not in 05-datapoints.csv"
+
+
+def test_the_worked_examples_anatomy_matches_the_datapoints_csv():
+    """Keyed on the CSV's own template, row, column and variant rather than on its
+    dpm_cell_code: the cell code is written `{Y 03.01, ...}` here and `{Y_03.01, ...}` by
+    dpm_lookup, and the four fields say the same thing without anyone normalising a format
+    in passing."""
+    example = ANATOMY.search(instructions())
+    assert example, "the anatomy of an identifier no longer has the shape this test reads"
+    by_cell = {
+        (row["template"], row["row_code"], row["column_code"], row["variant"]): row["datapoint_id"]
+        for row in cited("05-datapoints.csv")
+    }
+    cell = (example["template"], example["row"], example["col"], example["variant"])
+    assert cell in by_cell, f"{cell} is not a cell of 05-datapoints.csv"
+    assert by_cell[cell] == example["datapoint"], (
+        f"the anatomy cites {example['datapoint']} for {cell}, which carries {by_cell[cell]}"
+    )
+
+
 # --- the EBA's deactivated-rules list, in the shipped CSV -------------------------------
 
 
