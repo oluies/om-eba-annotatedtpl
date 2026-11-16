@@ -614,7 +614,7 @@ Note the group widths: `major` and `minor` are **two** digits each, `row` and `c
 four. For `Y0101_r0010_c0010` that gives `prefix=Y`, `major=01`, `minor=01`, `row=0010`,
 `col=0010`.
 
-The same identity appears in three forms. The only difference between them is
+The same identity appears in five forms. The only difference between them is
 punctuation, and the column prefix is the one that has none:
 
 | Form | Example | Shape |
@@ -622,8 +622,23 @@ punctuation, and the column prefix is the one that has none:
 | Column prefix | `Y0101` | prefix, major, minor, run together, no separator |
 | Template code | `Y_01.01` | underscore after the prefix, dot between major and minor |
 | Table name | `Y_01_01` | underscore after the prefix, underscore between major and minor |
+| DPM cell code | `{{Y_01.01, r0010, c0010, s0010}}` | the template code, then row, column and sheet |
+| Warehouse cell code | `{{Y 01.01, r0010, c0010, s0010}}` | the same, with a space where the template code has its underscore |
 
-So going from a column name to either of the others is substitution, not inference:
+**The last two differ by one character and both look like "the cell code".**
+`{{Y_01.01, ...}}` is the DPM's own: it is what `TableVersionCell.CellCode` holds, with a
+space nowhere among its 7182 rows, and it is what `lookup_dpm_datapoint` returns.
+`{{Y 01.01, ...}}` is the warehouse's: it is what this pack writes as `dpm_cell_code`,
+and what `ba_form_cell.fetch` matches against `DPM_Cell_Code` on the whole value.
+Comparing one against the other as a string fails and says nothing about why. Convert, or
+compare the template, row, column and sheet separately.
+
+Only the first three are derivable from one another. A cell code also names the sheet and
+a column name carries none, which is why `Y0101_r0030_c0020` is six datapoints in a `.01`
+template rather than one.
+
+So going from a column name to either of the other two code forms is substitution, not
+inference:
 
 | From | To | Rule |
 |---|---|---|
