@@ -585,7 +585,7 @@ derived from the EBA PAY 4.2 (FRPPAY 4.2) reporting framework.
 A fully qualified datapoint has four parts. Physical table and column names usually
 encode some of them:
 
-    Y_03.01 ( 0010 )      R0080          C0020            3260891
+    Y_03.01 ( 0040 )      R0080          C0020            436354
     template  variant     row code       column code      datapoint id
     │         │           │              │                │
     │         │           │              │                └── unique on its own
@@ -792,10 +792,11 @@ State, in this order: what is measured, for which payment instrument, under whic
 breakdown, and the source. Keep it to two or three sentences.
 
 ```text
-Number of fraudulent card-based payment transactions initiated electronically and
-authenticated via strong customer authentication, reported by the issuing payment
-service provider, for transactions cross-border within the EEA. Datapoint 3260891 of
-template Y_03.01 (EBA PAY 4.2), row 0080, column 0020. Unit: count, non-negative.
+Number of fraudulent card-based payment transactions initiated electronically
+through a remote payment channel and authenticated via strong customer
+authentication, reported by the issuing payment service provider, for
+transactions cross-border within the EEA. Datapoint 436354 of template
+Y_03.01 (EBA PAY 4.2), row 0080, column 0020. Unit: count, non-negative.
 ```
 
 The display name alongside it carries the labels - "Of which authenticated via strong

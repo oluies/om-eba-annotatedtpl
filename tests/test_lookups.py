@@ -10,6 +10,7 @@ import csv
 import datetime
 import decimal
 import json
+import re
 import textwrap
 from pathlib import Path
 from typing import Any
@@ -1076,6 +1077,45 @@ def test_a_cited_id_resolves_to_the_cell_it_is_cited_for():
     assert answer["found"] is True
     assert answer["cells"][0]["CellCode"] == "{Y_01.01, r0190, c0020, s0020}"
     assert answer["cells"][0]["row_label"] == row["row_label"]
+
+
+# --- the ids the prose cites -----------------------------------------------------------
+
+ANATOMY = re.compile(
+    r"^\s*(?P<template>[A-Z]_\d\d\.\d\d) \( (?P<variant>\d{4}) \)\s+"
+    r"R(?P<row>\d{4})\s+C(?P<col>\d{4})\s+(?P<datapoint>\d+)\s*$",
+    re.MULTILINE,
+)
+PROSE_ID = re.compile(r"\b\d{6,}\b")
+
+
+@needs_dpm2
+def test_every_id_the_agent_instructions_cite_is_a_datapoint():
+    """The test above covers the generated CSVs. This covers the prose, which is written by
+    hand in source/gen_pack.py and so does not move when the data is regenerated: the
+    worked example went on citing 3260891, the VariableVID of 437613, long after the CSVs
+    had been migrated to VariableIDs. Scoped to this one file deliberately - README.md
+    names VariableVIDs on purpose, to explain the distinction."""
+    cites = [int(n) for n in PROSE_ID.findall((REPO / "02-agent-instructions.md").read_text(encoding="utf-8"))]
+    assert cites, "the agent instructions cite no datapoint id"
+    with dpm_lookup._connect() as con:
+        known = {row[0] for row in con.execute("SELECT DISTINCT VariableID FROM VariableVersion").fetchall()}
+    unknown = sorted({dp for dp in cites if dp not in known})
+    assert not unknown, f"{unknown} are not datapoint ids - a VariableVID looks like one"
+
+
+@needs_dpm2
+def test_the_worked_example_resolves_to_the_cell_its_anatomy_claims():
+    """Membership is not enough here either. The example once cited an id from another id
+    space AND pointed at r0030 while its own prose described r0080, so an agent following
+    it would have written a confident description of a different cell."""
+    example = ANATOMY.search((REPO / "02-agent-instructions.md").read_text(encoding="utf-8"))
+    assert example, "the anatomy of an identifier no longer has the shape this test reads"
+    answer = dpm_lookup.lookup_dpm_datapoint(example["datapoint"])
+    assert answer["found"] is True, f"{example['datapoint']} is not a datapoint id"
+    assert answer["cells"][0]["CellCode"] == (
+        f"{{{example['template']}, r{example['row']}, c{example['col']}, s{example['variant']}}}"
+    )
 
 
 # --- the EBA's deactivated-rules list, in the shipped CSV -------------------------------
