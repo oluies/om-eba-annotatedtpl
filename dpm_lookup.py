@@ -24,6 +24,8 @@ from typing import Any
 
 import duckdb
 
+import row_chain
+
 PACK = Path(__file__).parent
 # DPM2_DIR has to be honoured wherever DPM2_DB is, because fetch_dpm2.py puts the database
 # inside it: resolving only DPM2_DB leaves this looking in the default directory for a file
@@ -639,6 +641,10 @@ def lookup_dpm_cell(
                     + (f" This template has a sheet axis: {', '.join(codes)}." if codes and not sheet else "")
                 )
             cell = cells[0]
+            # The headers of the whole table version, which is what the row's path down to
+            # itself is built from - one more query per cell rather than climbing the model
+            # one parent at a time.
+            headers = _rows(con, HEADERS_SQL, version["TableVID"])
             dimensions = _rows(con, CELL_DIMENSIONS_SQL, cell["VariableVID"])
             types = _rows(con, DATATYPE_SQL, cell["VariableVID"])
             rules = fold_rules(
@@ -656,6 +662,17 @@ def lookup_dpm_cell(
     except DpmError as exc:
         return {"found": False, "table": table, "message": str(exc)}
 
+    # A header anomaly must not cost the caller the cell. row_chain raises rather than
+    # return half a path, because half a path reads like a whole one - so an unbuildable
+    # path is absent and said to be, the way maybe() treats an absent partition on the
+    # template pages. Measured over 4.2.1, 4.3 and 4.4 this has never fired.
+    try:
+        steps = row_chain.ancestry(headers, row)
+        chain_problem = ""
+    except row_chain.ChainError as problem:
+        steps, chain_problem = (), str(problem)
+    column_label = next((h["label"] for h in headers if h["direction"] == "X" and h["code"] == column), None)
+
     return {
         "found": True,
         "cell_code": cell["CellCode"],
@@ -667,12 +684,19 @@ def lookup_dpm_cell(
         "data_type": types[0]["data_type"] if types else None,
         "period_type": types[0]["period_type"] if types else None,
         "dimensions": dimensions,
+        "row_chain": [{"code": s.code, "label": s.label, "abstract": s.abstract} for s in steps],
+        "breadcrumb": row_chain.breadcrumb(steps, column_label),
         "validation_rules": rules,
         "open_sheet_axis": open_sheet,
         "message": " ".join(
             about_the_sheet(version["Code"], open_sheet, sheet)
+            + ([f"The row chain is absent: {chain_problem}."] if chain_problem else [])
             + [
                 "An excluded cell is a greyed-out box in the template: in the model but not reportable.",
+                "breadcrumb and row_chain say where the row sits in the layout. They are a label and "
+                "not a derivation of its members: a level can carry two members, one or none, and a "
+                "deeper level can supersede a shallower one on the same axis. Read the members from "
+                "dimensions.",
                 "A member definition is empty wherever the EBA has not published one, which is most of "
                 "them - say nothing rather than inventing one.",
                 "Two entries under validation_rules with the same rule_code are not a duplicate: the "

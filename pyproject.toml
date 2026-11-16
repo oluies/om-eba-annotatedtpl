@@ -58,6 +58,7 @@ known-first-party = [
     "conftest",
     "describe_table",
     "aliases",
+    "row_chain",
     "display_names",
     "dpm_lookup",
     "fetch_dpm2",
