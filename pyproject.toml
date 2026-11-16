@@ -57,6 +57,7 @@ known-first-party = [
     "ba_form_cell",
     "conftest",
     "describe_table",
+    "aliases",
     "display_names",
     "dpm_lookup",
     "fetch_dpm2",
