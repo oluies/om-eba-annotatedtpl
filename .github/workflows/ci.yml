@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v7
       # Pinned exactly: setup-uv publishes no floating major tag past v7, so `@v10`
       # does not resolve. Dependabot's github-actions ecosystem is what keeps this current.
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - run: uv sync --locked
@@ -40,7 +40,7 @@ jobs:
         python: ["3.12", "3.14"]
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
           python-version: ${{ matrix.python }}
@@ -61,7 +61,7 @@ jobs:
       # The page is Scala.js and has no npm in its build: scala-cli emits ES modules and
       # the browser resolves the CDN import itself, so compiling is the whole check.
       # Driving it in a browser needs the DPM and a Chromium download, which is web/e2e.mjs.
-      - uses: VirtusLab/scala-cli-setup@v1.18.0
+      - uses: VirtusLab/scala-cli-setup@v1.19.0
         with:
           jvm: temurin:21
           # Pinned: the action's default was old enough to ship a bloop that cannot
@@ -80,7 +80,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - run: uv sync --locked
