@@ -24,7 +24,7 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.9",
     "sqlfluff>=4.4.0",
-    "ty>=0.0.85",
+    "ty>=0.0.107",
 ]
 # Quarto's Python engine, for the quarto/ spike only. Its own group rather than dev,
 # because `uv sync` installs dev and nothing here is needed to run the pack, the tools or
