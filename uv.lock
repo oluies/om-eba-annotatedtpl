@@ -690,7 +690,7 @@ dev = [
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = ">=0.16.9" },
     { name = "sqlfluff", specifier = ">=4.4.0" },
-    { name = "ty", specifier = ">=0.0.85" },
+    { name = "ty", specifier = ">=0.0.107" },
 ]
 docs = [
     { name = "ipykernel", specifier = ">=7.1.1" },
