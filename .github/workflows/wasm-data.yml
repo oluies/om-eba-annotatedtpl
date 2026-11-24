@@ -57,7 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       # --group docs as well: the template pages are rendered here, and Quarto's Python
@@ -128,7 +128,7 @@ jobs:
           cp -r obs/dist/. web/public/templates/
           echo "$(find web/public/templates -name '*.html' | wc -l) template pages"
 
-      - uses: VirtusLab/scala-cli-setup@v1.18.0
+      - uses: VirtusLab/scala-cli-setup@v1.19.0
         with:
           jvm: temurin:21
           scala-cli-version: 1.18.0
